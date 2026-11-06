@@ -42,12 +42,27 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     await expect(pcard).toContainText('WD-40');
     await page.screenshot({ path: path.join(outDir, '03_conteo_tarjeta.png') });
 
+    // Validar regla "solo un producto a la vez": mientras la tarjeta está abierta, se ignora todo nuevo escaneo
+    await page.evaluate(() => (window as any).__simulateScan('071153000115'));
+    await expect(pcard).toContainText('WD-40');
+    await expect(page.locator('.cam-cooldown')).toContainText('1 producto a la vez');
+
     // Cambiar cantidad a 20 (teórico era 24, así que quedará faltante de 4)
     await page.locator('#pcard input.qty').fill('20');
     await page.getByRole('button', { name: 'Registrar' }).click();
+    await expect(pcard).toBeHidden();
 
-    // Escanear Guantes L (071153000115): teórico 30, registramos 35 (sobrante de 5)
+    // Validar regla "pausa forzosa de 2 segundos": inmediatamente tras registrar, el escáner ignora lecturas
     await page.evaluate(() => (window as any).__simulateScan('071153000115'));
+    await expect(pcard).toBeHidden();
+    await expect(page.locator('.cam-cooldown')).toContainText('Pausa');
+
+    // Esperar a que se cumplan los 2 segundos de pausa
+    await page.waitForTimeout(2100);
+
+    // Ahora que la pausa terminó, escanea Guantes L (071153000115): teórico 30, registramos 35 (sobrante de 5)
+    await page.evaluate(() => (window as any).__simulateScan('071153000115'));
+    await expect(pcard).toBeVisible();
     await expect(pcard).toContainText('Guantes de nitrilo');
     await page.locator('#pcard input.qty').fill('35');
     await page.getByRole('button', { name: 'Registrar' }).click();
@@ -68,7 +83,7 @@ test.describe('Flujo completo de inventario en teléfono', () => {
 
     // 8. Pantalla de Equipo / Consolidación
     await page.goto('/#/equipo');
-    await expect(page.locator('.card')).toBeVisible();
+    await expect(page.locator('.card').first()).toBeVisible();
     await page.screenshot({ path: path.join(outDir, '06_equipo.png') });
 
     // 9. Probar descarga de Excel (capturando el evento de descarga)

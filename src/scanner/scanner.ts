@@ -134,11 +134,16 @@ async function startZxing(video: HTMLVideoElement, onCode: (t: string, f: string
   };
 }
 
+export interface Debouncer {
+  (code: string): boolean;
+  reset(): void;
+}
+
 /** Evita registrar el mismo código varias veces mientras sigue frente a la cámara. */
-export function createDebouncer(ms = 1500) {
+export function createDebouncer(ms = 1500): Debouncer {
   let last = '';
   let lastAt = 0;
-  return (code: string): boolean => {
+  const fn = ((code: string): boolean => {
     const now = Date.now();
     if (code === last && now - lastAt < ms) {
       lastAt = now;
@@ -147,7 +152,12 @@ export function createDebouncer(ms = 1500) {
     last = code;
     lastAt = now;
     return true;
+  }) as Debouncer;
+  fn.reset = () => {
+    last = '';
+    lastAt = 0;
   };
+  return fn;
 }
 
 // ---------- retroalimentación ----------

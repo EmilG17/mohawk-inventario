@@ -27,11 +27,81 @@ let tokenSeq = 0;
 let els: {
   video: HTMLVideoElement; camMsg: HTMLElement; camBtn: HTMLButtonElement; torchBtn: HTMLButtonElement;
   card: HTMLElement; recent: HTMLElement; recentTitle: HTMLElement; input: HTMLInputElement; videoWrap: HTMLElement;
+  cooldownBadge: HTMLElement;
 };
 const debounce = createDebouncer(1500);
 let keyBuffer = '';
 let keyLast = 0;
 let wantCamera = false;
+
+const COOLDOWN_MS = 2000;
+let cooldownUntil = 0;
+let cooldownTimer: number | null = null;
+
+export function isScanLocked(): boolean {
+  // 1) Solo un producto a la vez: si hay un producto en tarjeta sin confirmar en modo normal, bloquear escáner
+  if (pending !== null && !settingsSync().quickMode) {
+    return true;
+  }
+  // 2) Pausa forzosa de 2 segundos antes de permitir volver a escanear
+  if (Date.now() < cooldownUntil) {
+    return true;
+  }
+  return false;
+}
+
+function updateCooldownUi(justFinished = false): void {
+  if (!els?.cooldownBadge || !els?.videoWrap) return;
+  const s = settingsSync();
+  const now = Date.now();
+  const remaining = cooldownUntil - now;
+
+  if (remaining > 0) {
+    els.videoWrap.classList.add('cooldown');
+    els.videoWrap.classList.remove('locked');
+    els.cooldownBadge.hidden = false;
+    els.cooldownBadge.className = 'cam-cooldown active';
+    const sec = (remaining / 1000).toFixed(1);
+    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">⏸️</span> Pausa: <b>${sec}s</b>`;
+  } else if (justFinished) {
+    els.videoWrap.classList.remove('cooldown');
+    els.cooldownBadge.hidden = false;
+    els.cooldownBadge.className = 'cam-cooldown ready';
+    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">✓</span> Listo para escanear`;
+    setTimeout(() => {
+      if (Date.now() >= cooldownUntil && (!pending || s.quickMode)) {
+        if (els?.cooldownBadge) els.cooldownBadge.hidden = true;
+      }
+    }, 450);
+  } else if (pending && !s.quickMode) {
+    els.videoWrap.classList.add('locked');
+    els.videoWrap.classList.remove('cooldown');
+    els.cooldownBadge.hidden = false;
+    els.cooldownBadge.className = 'cam-cooldown locked';
+    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">🔒</span> 1 producto a la vez · Confirma abajo`;
+  } else {
+    els.videoWrap.classList.remove('cooldown', 'locked');
+    els.cooldownBadge.hidden = true;
+  }
+}
+
+export function triggerCooldown(ms = COOLDOWN_MS): void {
+  cooldownUntil = Date.now() + ms;
+  debounce.reset();
+  updateCooldownUi();
+  if (cooldownTimer) clearInterval(cooldownTimer);
+  cooldownTimer = window.setInterval(() => {
+    const remaining = cooldownUntil - Date.now();
+    if (remaining <= 0) {
+      if (cooldownTimer) clearInterval(cooldownTimer);
+      cooldownTimer = null;
+      cooldownUntil = 0;
+      updateCooldownUi(true);
+    } else {
+      updateCooldownUi();
+    }
+  }, 100);
+}
 
 // ---------------- cámara ----------------
 async function startCamera() {
@@ -92,6 +162,7 @@ function onKeydown(e: KeyboardEvent) {
   const t = e.target as HTMLElement;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
   if (document.querySelector('dialog[open]')) return;
+  if (isScanLocked()) return;
   const now = Date.now();
   if (now - keyLast > 80) keyBuffer = '';
   keyLast = now;
@@ -109,6 +180,7 @@ function onKeydown(e: KeyboardEvent) {
 
 // ---------------- flujo de escaneo ----------------
 function onDetected(text: string) {
+  if (isScanLocked()) return;
   const code = normalizeBarcode(text);
   if (!code || !debounce(code)) return;
   void processCode(code, 'camara');
@@ -123,18 +195,20 @@ function feedback(kind: 'ok' | 'warn') {
   els.videoWrap.classList.add(kind === 'ok' ? 'flash-ok' : 'flash-warn');
 }
 
-export async function processCode(raw: string, _origin: 'camara' | 'teclado' | 'manual'): Promise<void> {
+export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'manual'): Promise<void> {
   const code = raw.startsWith('SKU:') ? raw : normalizeBarcode(raw);
   if (!code || !session) return;
   const s = settingsSync();
 
-  if (!s.quickMode && pending && pending.code === code) {
-    pending.qty = Math.round((pending.qty + 1) * 1000) / 1000;
-    feedback('ok');
-    renderCard();
-    return;
+  // Escaneo 1 a 1: ignorar nuevas lecturas de cámara/lector si está bloqueado o en pausa
+  if (origin !== 'manual') {
+    if (isScanLocked()) return;
+  } else {
+    // Si viene de entrada manual y había un producto pendiente, guardarlo antes de cambiar
+    if (pending && !s.quickMode) {
+      await commitPending(true);
+    }
   }
-  if (pending) await commitPending(true);
 
   const known = await getProduct(code);
   feedback(known && !known.uncataloged ? 'ok' : 'warn');
@@ -145,6 +219,7 @@ export async function processCode(raw: string, _origin: 'camara' | 'teclado' | '
   if (s.quickMode) {
     const entry = await addCount({ sessionId: session.id, barcode: code, qty: 1, counter: session.counter });
     lastQuick = entry;
+    triggerCooldown(COOLDOWN_MS);
   }
   renderCard();
 
@@ -171,6 +246,7 @@ async function commitPending(silent = false): Promise<void> {
   if (settingsSync().quickMode) {
     lastQuick = null;
     renderCard();
+    triggerCooldown(COOLDOWN_MS);
     return;
   }
   if (p.qty > 0) {
@@ -179,6 +255,7 @@ async function commitPending(silent = false): Promise<void> {
   }
   renderCard();
   await renderRecent();
+  triggerCooldown(COOLDOWN_MS);
 }
 
 const STATUS_TEXT: Record<Pending['status'], string> = {
@@ -202,9 +279,11 @@ function renderCard(): void {
   if (!pending) {
     clear(card);
     card.hidden = true;
+    updateCooldownUi();
     return;
   }
   card.hidden = false;
+  updateCooldownUi();
   const p = pending;
   const prod = p.product;
   const s = settingsSync();
@@ -278,9 +357,9 @@ function renderCard(): void {
           qtyInput,
           h('button', { class: 'btn round', 'aria-label': 'Más', onclick: () => { p.qty = Math.round((p.qty + 1) * 1000) / 1000; qtyInput.value = String(p.qty); } }, '+'),
         ),
-        h('p', { class: 'muted small center' }, 'Escanea el mismo código otra vez para sumar 1, o escribe la cantidad.'),
+        h('p', { class: 'muted small center' }, 'Confirma la cantidad con + / − y presiona Registrar.'),
         h('div', { class: 'row' },
-          h('button', { class: 'btn ghost', onclick: () => { pending = null; renderCard(); } }, 'Cancelar'),
+          h('button', { class: 'btn ghost', onclick: () => { pending = null; renderCard(); triggerCooldown(COOLDOWN_MS); } }, 'Cancelar'),
           h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), 'Producto'),
           h('button', { class: 'btn primary grow', onclick: () => void commitPending() }, 'Registrar'),
         ),
@@ -397,7 +476,8 @@ export const countView: View = {
     const s = settingsSync();
     const video = h('video', { playsinline: true, muted: true, autoplay: true }) as HTMLVideoElement;
     const camMsg = h('div', { class: 'cam-msg' }, 'Cámara apagada');
-    const videoWrap = h('div', { class: 'video-wrap off' }, video, h('div', { class: 'aim' }), camMsg);
+    const cooldownBadge = h('div', { class: 'cam-cooldown', hidden: true });
+    const videoWrap = h('div', { class: 'video-wrap off' }, video, h('div', { class: 'aim' }), cooldownBadge, camMsg);
     const camBtn = h('button', { class: 'btn', onclick: () => (scanner ? stopCamera() : startCamera()) }, icon('camera'), 'Activar cámara') as HTMLButtonElement;
     const torchBtn = h('button', {
       class: 'btn', hidden: true,
@@ -423,7 +503,7 @@ export const countView: View = {
     const recentTitle = h('h3', { class: 'section-title' }, 'Últimos escaneos');
     const recent = h('ul', { class: 'recent', id: 'recent' });
 
-    els = { video, camMsg, camBtn, torchBtn, card, recent, recentTitle, input, videoWrap };
+    els = { video, camMsg, camBtn, torchBtn, card, recent, recentTitle, input, videoWrap, cooldownBadge };
 
     clear(root,
       h('div', { class: 'session-bar' },
@@ -449,6 +529,11 @@ export const countView: View = {
     if (sessionStorage.getItem('camera') === '1') void startCamera();
   },
   async destroy() {
+    if (cooldownTimer) {
+      clearInterval(cooldownTimer);
+      cooldownTimer = null;
+    }
+    cooldownUntil = 0;
     document.removeEventListener('visibilitychange', onVisibility);
     document.removeEventListener('keydown', onKeydown);
     stopCamera(false);
@@ -459,3 +544,8 @@ export const countView: View = {
 
 /** Para pruebas E2E: simula la lectura de un código por cámara. */
 (window as any).__simulateScan = (text: string) => onDetected(text);
+(window as any).__getScanState = () => ({
+  isLocked: isScanLocked(),
+  hasPending: pending !== null,
+  cooldownRemaining: Math.max(0, cooldownUntil - Date.now()),
+});
