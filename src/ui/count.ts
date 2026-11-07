@@ -1,5 +1,5 @@
 import {
-  addCount, allProducts, countsForSession, deleteCount, findBySku, getActiveSession, getProduct, putCount,
+  addCount, allProducts, closeSession, countsForSession, deleteCount, findBySku, getActiveSession, getProduct, putCount,
   type CountEntry, type Product, type Session,
 } from '../db/db';
 import { displayBarcode, normalizeBarcode, parseNumber } from '../io/normalize';
@@ -472,10 +472,16 @@ export const countView: View = {
     await loadSettings();
     session = await getActiveSession();
     if (!session) {
-      clear(root, h('section', { class: 'card' },
+      clear(root, h('section', { class: 'card idle-gate' },
+        h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
         h('h2', null, 'No hay sesión activa'),
-        h('p', { class: 'muted' }, 'Crea una sesión para empezar a contar.'),
-        h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, 'Iniciar conteo'),
+        h('p', { class: 'muted' }, 'Para comenzar a escanear códigos de barras o registrar cantidades físicas, necesitas una sesión de conteo abierta.'),
+        h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
+          icon('scan'), 'Iniciar nueva sesión'),
+        h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
+          h('button', { class: 'btn', onclick: () => navigate('/equipo') }, icon('users'), 'Seleccionar o reanudar sesión'),
+          h('button', { class: 'btn ghost', onclick: () => navigate('/catalogo') }, icon('list'), 'Ver catálogo de productos'),
+        ),
       ));
       return;
     }
@@ -512,9 +518,29 @@ export const countView: View = {
     els = { video, camMsg, camBtn, torchBtn, card, recent, recentTitle, input, videoWrap, cooldownBadge };
 
     clear(root,
-      h('div', { class: 'session-bar' },
-        h('span', { class: 'muted small' }, 'Sesión: '), h('b', { class: 'small' }, session.name),
-        h('span', { class: 'muted small' }, ` · ${session.counter}`),
+      h('div', { class: 'session-bar', style: 'display: flex; justify-content: space-between; align-items: center;' },
+        h('div', { class: 'session-info' },
+          h('span', { class: 'muted small' }, 'Sesión: '), h('b', { class: 'small' }, session.name),
+          h('span', { class: 'muted small' }, ` · ${session.counter}`),
+        ),
+        h('button', {
+          class: 'btn ghost sm danger',
+          onclick: async () => {
+            const ok = await confirmDialog(
+              'Finalizar sesión de conteo',
+              `¿Deseas finalizar la sesión "${session?.name}"? Los datos quedarán guardados y no habrá sesión activa hasta que inicies una nueva o decidas reabrirla.`,
+              'Finalizar sesión',
+              true,
+            );
+            if (ok && session) {
+              stopCamera(true);
+              if (pending) await commitPending(true);
+              await closeSession(session.id);
+              toast('Sesión finalizada con éxito', 'ok');
+              navigate('/');
+            }
+          },
+        }, 'Finalizar sesión'),
       ),
       h('section', { class: 'scan-area' },
         videoWrap,
@@ -549,9 +575,12 @@ export const countView: View = {
 };
 
 /** Para pruebas E2E: simula la lectura de un código por cámara. */
-(window as any).__simulateScan = (text: string) => onDetected(text);
-(window as any).__getScanState = () => ({
-  isLocked: isScanLocked(),
-  hasPending: pending !== null,
-  cooldownRemaining: Math.max(0, cooldownUntil - Date.now()),
-});
+if (typeof window !== 'undefined') {
+  (window as any).__simulateScan = (text: string) => onDetected(text);
+  (window as any).__getScanState = () => ({
+    isLocked: isScanLocked(),
+    hasPending: pending !== null,
+    cooldownRemaining: Math.max(0, cooldownUntil - Date.now()),
+  });
+}
+

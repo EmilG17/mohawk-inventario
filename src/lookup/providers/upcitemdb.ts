@@ -11,9 +11,34 @@ export function upcItemDb(proxyUrl: () => string): LookupProvider {
     name: 'UPCitemdb',
     async lookup(code, signal) {
       const base = proxyUrl().trim();
-      if (!base) throw new LookupUnavailable('Proxy UPCitemdb no configurado');
+      if (!base) throw new LookupUnavailable('Proxy UPCitemdb no configurado', undefined, true);
+
+      const isDefaultRelative = base === 'api/upc' || base === '/api/upc';
+      const isStaticHost =
+        typeof window !== 'undefined' &&
+        typeof window.location?.hostname === 'string' &&
+        (window.location.hostname.endsWith('github.io') || window.location.hostname === 'github.io');
+
+      if (isDefaultRelative && isStaticHost) {
+        throw new LookupUnavailable('Proxy UPCitemdb no disponible en este hosting', undefined, false);
+      }
+
       const url = `${base}${base.includes('?') ? '&' : '?'}upc=${encodeURIComponent(code)}`;
-      const { status, data } = await fetchJson(url, signal);
+      let status: number;
+      let data: any;
+      try {
+        const res = await fetchJson(url, signal);
+        status = res.status;
+        data = res.data;
+      } catch (e) {
+        if (e instanceof LookupUnavailable) {
+          if (isDefaultRelative && (e.isMisconfigured || /no válida|no JSON/i.test(e.message))) {
+            throw new LookupUnavailable('Proxy UPCitemdb no disponible en este hosting', undefined, false);
+          }
+        }
+        throw e;
+      }
+
       if (status === 404 && data?.code === 'NOT_FOUND') return null;
       if (status >= 400) {
         if (data?.code === 'INVALID_UPC') return null;

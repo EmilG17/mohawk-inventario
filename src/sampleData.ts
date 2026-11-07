@@ -3,7 +3,7 @@ import { normalizeBarcode } from './io/normalize';
 
 export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { source?: Product['source'] }> = [
   {
-    barcode: '071153000108',
+    barcode: '071153000100',
     sku: 'MHK-PPE-001',
     description: 'Guantes de nitrilo libres de polvo talla M (Caja 100 pzas)',
     unit: 'CJA',
@@ -12,7 +12,7 @@ export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { 
     brand: 'Ansell',
   },
   {
-    barcode: '071153000115',
+    barcode: '071153000117',
     sku: 'MHK-PPE-002',
     description: 'Guantes de nitrilo libres de polvo talla L (Caja 100 pzas)',
     unit: 'CJA',
@@ -21,7 +21,7 @@ export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { 
     brand: 'Ansell',
   },
   {
-    barcode: '079567011003',
+    barcode: '079567011002',
     sku: 'MHK-LUB-010',
     description: 'Lubricante multiusos WD-40 en aerosol 11 oz',
     unit: 'PZA',
@@ -39,7 +39,7 @@ export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { 
     brand: '3M',
   },
   {
-    barcode: '071641300018',
+    barcode: '071641300019',
     sku: 'MHK-OFF-005',
     description: 'Marcador permanente Sharpie punta fina color negro',
     unit: 'PZA',
@@ -48,7 +48,7 @@ export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { 
     brand: 'Sharpie',
   },
   {
-    barcode: '076174100057',
+    barcode: '076174100051',
     sku: 'MHK-CUT-001',
     description: 'Navaja tipo cutter retráctil industrial Stanley 9mm',
     unit: 'PZA',
@@ -57,7 +57,7 @@ export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { 
     brand: 'Stanley',
   },
   {
-    barcode: '076174119219',
+    barcode: '076174119213',
     sku: 'MHK-CUT-002',
     description: 'Repuesto de hojas para cutter Stanley (Tubo 10 pzas)',
     unit: 'PZA',
@@ -102,7 +102,7 @@ export const SAMPLE_PRODUCTS: Array<Omit<Product, 'source' | 'uncataloged'> & { 
     brand: 'Berry',
   },
   {
-    barcode: '076308892110',
+    barcode: '076308892111',
     sku: 'MHK-BAT-004',
     description: 'Pila alcalina industrial AA Energizer caja con 24 pzas',
     unit: 'CJA',

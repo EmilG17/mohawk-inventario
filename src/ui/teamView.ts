@@ -1,6 +1,6 @@
 import {
-  allProducts, allSessions, countsForSession, deleteSession, getActiveSession, getDeviceId,
-  setActiveSession, type Session,
+  allProducts, allSessions, closeSession, countsForSession, deleteSession, getActiveSession, getDeviceId,
+  reopenSession, setActiveSession, type Session,
 } from '../db/db';
 import { buildCountFile, safeFileName, type CountFile } from '../io/exportResults';
 import { mergeCountFiles, parseAppFile } from '../io/mergeCounts';
@@ -86,6 +86,17 @@ export const teamView: View = {
           h('div', { class: 'row wrap' },
             h('button', { class: 'btn primary', onclick: importOthers }, icon('upload'), 'Importar archivos de otros'),
             h('button', { class: 'btn', onclick: shareMyCount, disabled: !curCounts.length }, icon('share'), 'Compartir mi conteo'),
+            h('button', {
+              class: 'btn danger ghost',
+              onclick: async () => {
+                const ok = await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión activa "${current.name}"?`, 'Finalizar sesión', true);
+                if (ok) {
+                  await closeSession(current.id);
+                  toast('Sesión finalizada con éxito', 'ok');
+                  navigate('/equipo');
+                }
+              },
+            }, 'Finalizar sesión'),
           ),
           h('details', { class: 'help-box' },
             h('summary', null, '¿Cómo contar en equipo sin servidor?'),
@@ -109,7 +120,12 @@ export const teamView: View = {
             ]
             : null,
         )
-        : null,
+        : h('section', { class: 'card' },
+          h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
+          h('h2', null, 'Sin sesión activa'),
+          h('p', { class: 'muted' }, 'No hay ninguna sesión activa seleccionada. Puedes seleccionar o reabrir una de las sesiones guardadas abajo, o iniciar una nueva.'),
+          h('button', { class: 'btn primary', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, icon('scan'), 'Iniciar nueva sesión'),
+        ),
 
       // Lista de sesiones
       h('section', { class: 'card' },
@@ -121,23 +137,86 @@ export const teamView: View = {
           sessions.length === 0 ? h('li', { class: 'empty' }, 'No hay sesiones registradas.') : null,
           sessions.map((s) => {
             const isCur = current?.id === s.id;
+            const statusBadge = isCur
+              ? h('span', { class: 'badge ok' }, 'Activa')
+              : s.closed
+                ? h('span', { class: 'badge info' }, 'Cerrada')
+                : h('span', { class: 'badge warn' }, 'Abierta');
+
             return h('li', { class: `s-item ${isCur ? 'active' : ''}` },
-              h('div', { class: 'grow', onclick: async () => { await setActiveSession(s.id); navigate('/equipo'); } },
-                h('div', { class: 's-name' }, s.name, isCur ? h('span', { class: 'badge ok' }, 'Activa') : null),
-                h('div', { class: 'muted small' }, `${s.counter} · ${fmtDateTime(s.createdAt)}`),
-              ),
-              h('button', {
-                class: 'btn ghost sm danger',
-                'aria-label': 'Eliminar sesión',
+              h('div', {
+                class: 'grow',
                 onclick: async () => {
-                  if (await confirmDialog('Eliminar sesión', `¿Eliminar "${s.name}" y todos sus conteos?`, 'Eliminar', true)) {
-                    await deleteSession(s.id);
-                    if (isCur) await setActiveSession(null);
-                    toast('Sesión eliminada');
-                    navigate('/equipo');
+                  if (s.closed) {
+                    await reopenSession(s.id);
+                    toast(`Sesión reabierta y activada: ${s.name}`, 'ok');
+                  } else {
+                    await setActiveSession(s.id);
+                    toast(`Sesión activa: ${s.name}`, 'ok');
                   }
+                  navigate('/equipo');
                 },
-              }, icon('trash')),
+              },
+                h('div', { class: 's-name' }, s.name, ' ', statusBadge),
+                h('div', { class: 'muted small' },
+                  `${s.counter} · ${fmtDateTime(s.createdAt)}`,
+                  s.closed && s.closedAt ? ` · Cerrada ${fmtDateTime(s.closedAt)}` : '',
+                ),
+              ),
+              h('div', { class: 'row', style: 'gap: 6px; flex-shrink: 0;' },
+                h('button', {
+                  class: 'btn sm ghost',
+                  title: 'Ver reporte',
+                  onclick: (e: Event) => {
+                    e.stopPropagation();
+                    navigate(`/reporte?session=${s.id}`);
+                  },
+                }, icon('chart')),
+                isCur
+                  ? h('button', {
+                    class: 'btn sm danger ghost',
+                    onclick: async (e: Event) => {
+                      e.stopPropagation();
+                      if (await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión "${s.name}"?`, 'Finalizar sesión', true)) {
+                        await closeSession(s.id);
+                        toast('Sesión finalizada con éxito', 'ok');
+                        navigate('/equipo');
+                      }
+                    },
+                  }, 'Finalizar')
+                  : s.closed
+                    ? h('button', {
+                      class: 'btn sm',
+                      onclick: async (e: Event) => {
+                        e.stopPropagation();
+                        await reopenSession(s.id);
+                        toast(`Sesión reabierta y activada: ${s.name}`, 'ok');
+                        navigate('/equipo');
+                      },
+                    }, 'Reabrir')
+                    : h('button', {
+                      class: 'btn sm',
+                      onclick: async (e: Event) => {
+                        e.stopPropagation();
+                        await setActiveSession(s.id);
+                        toast(`Sesión activa: ${s.name}`, 'ok');
+                        navigate('/equipo');
+                      },
+                    }, 'Activar'),
+                h('button', {
+                  class: 'btn ghost sm danger',
+                  'aria-label': 'Eliminar sesión',
+                  onclick: async (e: Event) => {
+                    e.stopPropagation();
+                    if (await confirmDialog('Eliminar sesión', `¿Eliminar "${s.name}" y todos sus conteos?`, 'Eliminar', true)) {
+                      await deleteSession(s.id);
+                      if (isCur) await setActiveSession(null);
+                      toast('Sesión eliminada');
+                      navigate('/equipo');
+                    }
+                  },
+                }, icon('trash')),
+              ),
             );
           }),
         ),

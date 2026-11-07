@@ -1,7 +1,8 @@
 import { getProduct, putProduct, type Product } from '../db/db';
-import { displayBarcode } from '../io/normalize';
+import { displayBarcode, isValidGtin } from '../io/normalize';
 import { settingsSync } from '../settings';
 import { openFacts } from './providers/openfacts';
+import { openLibrary } from './providers/openlibrary';
 import { LookupUnavailable, type LookupProvider, type ProductInfo } from './providers/types';
 import { upcItemDb } from './providers/upcitemdb';
 
@@ -12,21 +13,23 @@ export interface ResolveResult {
   status: ResolveStatus;
 }
 
-const TIMEOUT_MS = 6000;
+const TIMEOUT_MS = 3500;
 /** Proveedores marcados como no disponibles temporalmente (sin proxy, límite diario…) */
 const disabledUntil = new Map<string, { until: number; transient: boolean }>();
 
-let providers: LookupProvider[] = [openFacts, upcItemDb(() => settingsSync().proxyUrl)];
+let defaultProviders: LookupProvider[] = [openFacts, openLibrary, upcItemDb(() => settingsSync().proxyUrl)];
+let providers: LookupProvider[] = [...defaultProviders];
 
 /** Solo para pruebas */
-export function _setProviders(p: LookupProvider[]): void {
-  providers = p;
+export function _setProviders(p?: LookupProvider[]): void {
+  providers = p ?? [openFacts, openLibrary, upcItemDb(() => settingsSync().proxyUrl)];
   disabledUntil.clear();
 }
 
-/** Solo códigos GTIN (UPC/EAN) tienen sentido en bases públicas. */
+/** Solo códigos GTIN (UPC/EAN) o ISBN tienen sentido en bases públicas. */
 export function isLookupable(code: string): boolean {
-  return /^\d{8}$|^\d{12,14}$/.test(displayBarcode(code)) || /^\d{14}$/.test(code);
+  const d = displayBarcode(code);
+  return /^\d{8}$|^\d{12,14}$/.test(d) || /^\d{14}$/.test(code) || /^(978|979)\d{10}$|^\d{9}[\dX]$/i.test(d);
 }
 
 function isOnline(): boolean {
@@ -40,9 +43,23 @@ function isOnline(): boolean {
 export async function lookupOnline(code: string): Promise<{ provider: LookupProvider['name']; info: ProductInfo } | null | 'unavailable'> {
   if (!isOnline()) return 'unavailable';
   const query = displayBarcode(code);
+  const isGtin = /^\d{8}$|^\d{12,14}$/.test(code) || /^\d{8}$|^\d{12,14}$/.test(query);
+
+  // Pre-validar checksum GTIN antes de llamadas de red:
+  // Si es un código numérico tipo GTIN con dígito verificador inválido, omitir llamadas de red
+  if (isGtin && !isValidGtin(code) && !isValidGtin(query)) {
+    return null;
+  }
+
+  // Si coincide con prefijo ISBN (978/979 o 10 dígitos), priorizar OpenLibrary
+  const isIsbn = /^(978|979)\d{10}$|^\d{9}[\dX]$/i.test(query);
+  const chain = isIsbn
+    ? [...providers].sort((a, b) => (a.name === 'OpenLibrary' ? -1 : b.name === 'OpenLibrary' ? 1 : 0))
+    : providers;
+
   /** true si algún proveedor falló por causa transitoria (red, límite diario): vale la pena reintentar */
   let transient = false;
-  for (const p of providers) {
+  for (const p of chain) {
     const until = disabledUntil.get(p.name);
     if (until && until.until > Date.now()) {
       if (until.transient) transient = true;
@@ -55,10 +72,24 @@ export async function lookupOnline(code: string): Promise<{ provider: LookupProv
       if (info) return { provider: p.name, info };
     } catch (e) {
       const msg = (e as Error).message ?? '';
-      const misconfigured = e instanceof LookupUnavailable && /configurado|no válida/.test(msg);
-      if (!misconfigured) transient = true;
-      if (misconfigured || /Límite/.test(msg)) {
-        disabledUntil.set(p.name, { until: Date.now() + 15 * 60_000, transient: !misconfigured });
+      const isUnavailable = e instanceof LookupUnavailable;
+      const retryAfter = isUnavailable && e.retryAfterSeconds ? e.retryAfterSeconds : undefined;
+      const isHostingUnavailable = msg.includes('no disponible en este hosting');
+      const misconfigured = isUnavailable && (e.isMisconfigured || /configurado/.test(msg));
+
+      if (retryAfter) {
+        disabledUntil.set(p.name, { until: Date.now() + retryAfter * 1000, transient: true });
+        transient = true;
+      } else if (misconfigured) {
+        disabledUntil.set(p.name, { until: Date.now() + 15 * 60_000, transient: false });
+      } else if (/Límite/.test(msg)) {
+        disabledUntil.set(p.name, { until: Date.now() + 60_000, transient: true });
+        transient = true;
+      } else if (isHostingUnavailable) {
+        // En hosting estático (GitHub Pages), proxy relativo no está disponible.
+        // No bloquear permanentemente 15 minutos ni forzar sin_conexión si otros no fallaron.
+      } else {
+        transient = true;
       }
     } finally {
       clearTimeout(timer);
@@ -86,6 +117,17 @@ export async function resolveDescription(code: string, opts: { forceOnline?: boo
     return { product: base, status: settingsSync().onlineLookup ? 'no_encontrado' : 'desactivado' };
   }
 
+  const query = displayBarcode(code);
+  const isGtin = /^\d{8}$|^\d{12,14}$/.test(code) || /^\d{8}$|^\d{12,14}$/.test(query);
+
+  // Pre-validar checksum GTIN antes de llamadas de red:
+  // Si el checksum es inválido, marcar como notFoundOnline sin fallar la cola de pendientes
+  if (isGtin && !isValidGtin(code) && !isValidGtin(query)) {
+    const updated: Product = { ...base, lookedUpAt: Date.now(), notFoundOnline: true };
+    await putProduct(updated);
+    return { product: updated, status: 'no_encontrado' };
+  }
+
   const r = await lookupOnline(code);
   if (r && typeof r === 'object') {
     const updated: Product = {
@@ -93,7 +135,7 @@ export async function resolveDescription(code: string, opts: { forceOnline?: boo
       description: r.info.description,
       brand: r.info.brand ?? base.brand,
       imageUrl: r.info.imageUrl ?? base.imageUrl,
-      source: r.provider,
+      source: r.provider as any,
       lookedUpAt: Date.now(),
       notFoundOnline: false,
     };

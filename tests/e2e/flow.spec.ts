@@ -17,7 +17,7 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     await expect(page.locator('.hello .big')).toHaveText('Roberto Martinez');
 
     // 3. Iniciar una nueva sesión de conteo
-    await page.getByRole('button', { name: 'Iniciar conteo' }).click();
+    await page.getByRole('button', { name: /Iniciar conteo|Iniciar nueva sesión/i }).click();
     await expect(page.locator('dialog h3')).toHaveText('Nueva sesión de conteo');
     await page.getByRole('button', { name: 'Aceptar' }).click();
 
@@ -35,15 +35,15 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     // 6. Volver a Contar y escanear productos usando el hook de prueba
     await page.goto('/#/contar');
 
-    // Escanear WD-40 (079567011003): cantidad 24
-    await page.evaluate(() => (window as any).__simulateScan('079567011003'));
+    // Escanear WD-40 (079567011002): cantidad 24
+    await page.evaluate(() => (window as any).__simulateScan('079567011002'));
     const pcard = page.locator('#pcard');
     await expect(pcard).toBeVisible();
     await expect(pcard).toContainText('WD-40');
     await page.screenshot({ path: path.join(outDir, '03_conteo_tarjeta.png') });
 
     // Validar regla "solo un producto a la vez": mientras la tarjeta está abierta, se ignora todo nuevo escaneo
-    await page.evaluate(() => (window as any).__simulateScan('071153000115'));
+    await page.evaluate(() => (window as any).__simulateScan('071153000117'));
     await expect(pcard).toContainText('WD-40');
     await expect(page.locator('.cam-cooldown')).toContainText('1 producto a la vez');
 
@@ -53,15 +53,15 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     await expect(pcard).toBeHidden();
 
     // Validar regla "pausa forzosa de 2 segundos": inmediatamente tras registrar, el escáner ignora lecturas
-    await page.evaluate(() => (window as any).__simulateScan('071153000115'));
+    await page.evaluate(() => (window as any).__simulateScan('071153000117'));
     await expect(pcard).toBeHidden();
     await expect(page.locator('.cam-cooldown')).toContainText('Pausa');
 
     // Esperar a que se cumplan los 2 segundos de pausa
     await page.waitForTimeout(2100);
 
-    // Ahora que la pausa terminó, escanea Guantes L (071153000115): teórico 30, registramos 35 (sobrante de 5)
-    await page.evaluate(() => (window as any).__simulateScan('071153000115'));
+    // Ahora que la pausa terminó, escanea Guantes L (071153000117): teórico 30, registramos 35 (sobrante de 5)
+    await page.evaluate(() => (window as any).__simulateScan('071153000117'));
     await expect(pcard).toBeVisible();
     await expect(pcard).toContainText('Guantes de nitrilo');
     await page.locator('#pcard input.qty').fill('35');
@@ -97,7 +97,7 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     await context.setOffline(true);
     await page.goto('/#/contar');
     await expect(page.locator('#recent li')).toHaveCount(3);
-    await page.fill('#code-input', '071641300018'); // Sharpie
+    await page.fill('#code-input', '071641300019'); // Sharpie
     await page.keyboard.press('Enter');
     await expect(pcard).toContainText('Sharpie');
     await page.getByRole('button', { name: 'Registrar' }).click();

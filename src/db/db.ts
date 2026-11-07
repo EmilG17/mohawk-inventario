@@ -35,6 +35,7 @@ export interface Session {
   counter: string;
   createdAt: number;
   closed: boolean;
+  closedAt?: number;
 }
 
 interface InvDB extends DBSchema {
@@ -222,6 +223,30 @@ export async function getActiveSession(): Promise<Session | undefined> {
 export async function setActiveSession(id: string | null): Promise<void> {
   await setMeta('activeSession', id);
 }
+export async function closeSession(id: string): Promise<void> {
+  const db = await getDB();
+  const s = await db.get('sessions', id);
+  if (!s) return;
+  s.closed = true;
+  s.closedAt = Date.now();
+  await db.put('sessions', s);
+  const activeId = await getMeta<string>('activeSession');
+  if (activeId === id) {
+    await setMeta('activeSession', null);
+  }
+}
+
+export async function reopenSession(id: string): Promise<void> {
+  const db = await getDB();
+  const s = await db.get('sessions', id);
+  if (!s) return;
+  s.closed = false;
+  await db.put('sessions', s);
+  await setMeta('activeSession', s.id);
+}
+
+export const listSessions = allSessions;
+
 export async function deleteSession(id: string): Promise<void> {
   const db = await getDB();
   const tx = db.transaction(['sessions', 'counts'], 'readwrite');
@@ -229,7 +254,12 @@ export async function deleteSession(id: string): Promise<void> {
   const idx = tx.objectStore('counts').index('sessionId');
   for (let cur = await idx.openCursor(id); cur; cur = await cur.continue()) await cur.delete();
   await tx.done;
+  const activeId = await getMeta<string>('activeSession');
+  if (activeId === id) {
+    await setMeta('activeSession', null);
+  }
 }
+
 
 // ---------- conteos ----------
 export async function addCount(e: Omit<CountEntry, 'id' | 'timestamp' | 'deviceId'> & Partial<CountEntry>): Promise<CountEntry> {

@@ -27,11 +27,13 @@ function toInfo(p: any): ProductInfo | null {
 export const openFacts: LookupProvider = {
   name: 'OpenFacts',
   async lookup(code, signal) {
-    // Todos los dominios en paralelo; gana el primero que encuentre el producto
     let unavailable = 0;
     const attempts = HOSTS.map(async (h) => {
       try {
-        const { data } = await fetchJson(`${h}/api/v2/product/${encodeURIComponent(code)}.json?fields=${FIELDS}`, signal);
+        const { data } = await fetchJson(
+          `${h}/api/v2/product/${encodeURIComponent(code)}.json?fields=${FIELDS}&app_name=MohawkInventario&app_version=1.0`,
+          signal,
+        );
         if (data?.status === 1 && data.product) {
           const info = toInfo(data.product);
           if (info) return info;

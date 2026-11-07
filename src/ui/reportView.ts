@@ -1,5 +1,6 @@
 import {
-  allProducts, countsForSession, getActiveSession, getDeviceId, type CountEntry, type Product, type Session,
+  allProducts, allSessions, closeSession, countsForSession, getActiveSession, getDeviceId, getSession,
+  reopenSession, setActiveSession, type CountEntry, type Product, type Session,
 } from '../db/db';
 import {
   buildCountFile, buildReportCsv, buildReportWorkbook, safeFileName,
@@ -7,30 +8,52 @@ import {
 import { displayBarcode } from '../io/normalize';
 import { buildReport, STATUS_LABEL, summarize, type ReportRow, type RowStatus } from '../report';
 import {
-  clear, downloadFile, fmtMoney, fmtNum, h, icon, MIME, openDialog, shareOrDownload, toast,
+  clear, confirmDialog, downloadFile, fmtDateTime, fmtMoney, fmtNum, h, icon, MIME, openDialog, shareOrDownload, toast,
 } from './dom';
 import { editProductDialog } from './productDialog';
+import { openBarcodeSheetDialog } from './barcodeSheet';
 import { navigate, type View } from './router';
 
+let selectedSessionId: string | null = null;
 let filter: 'todos' | RowStatus = 'todos';
 let query = '';
 let includeNotCounted = true;
 
 export const reportView: View = {
   title: 'Reporte',
-  async render(root) {
-    const session = await getActiveSession();
+  async render(root, params) {
+    if (params?.get('session')) {
+      selectedSessionId = params.get('session');
+    }
+    const [allSess, activeSession, products, deviceId] = await Promise.all([
+      allSessions(), getActiveSession(), allProducts(), getDeviceId(),
+    ]);
+
+    let session: Session | undefined;
+    if (selectedSessionId) {
+      session = allSess.find((s) => s.id === selectedSessionId) ?? (await getSession(selectedSessionId));
+    }
+    if (!session && activeSession) {
+      session = activeSession;
+    }
+    if (!session && allSess.length > 0) {
+      session = allSess[0];
+    }
+
     if (!session) {
       clear(root, h('section', { class: 'card' },
-        h('h2', null, 'Sin sesión activa'),
-        h('p', { class: 'muted' }, 'Selecciona o inicia una sesión para ver resultados.'),
+        h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesiones'),
+        h('h2', null, 'No hay sesiones'),
+        h('p', { class: 'muted' }, 'Aún no se ha registrado ninguna sesión de conteo.'),
         h('button', { class: 'btn primary', onclick: () => navigate('/') }, 'Ir al inicio'),
       ));
       return;
     }
-    const [counts, products, deviceId] = await Promise.all([
-      countsForSession(session.id), allProducts(), getDeviceId(),
-    ]);
+
+    selectedSessionId = session.id;
+    const isCur = activeSession?.id === session.id;
+    const isClosed = session.closed;
+    const counts = await countsForSession(session.id);
     const allRows = buildReport(products, counts, includeNotCounted);
     const summary = summarize(allRows);
 
@@ -116,14 +139,48 @@ export const reportView: View = {
       await shareOrDownload(JSON.stringify(cf, null, 2), `${baseName}.conteo.json`, MIME.json, `Conteo ${session.name}`);
     };
 
+    const sessionSelect = h('select', {
+      id: 'session-select',
+      class: 'input sm session-picker',
+      style: 'max-width: 260px; font-weight: normal;',
+      onchange: (e: Event) => {
+        const val = (e.target as HTMLSelectElement).value;
+        selectedSessionId = val;
+        navigate(`/reporte?session=${val}`);
+      },
+    },
+      allSess.map((s) =>
+        h('option', {
+          value: s.id,
+          selected: s.id === session!.id,
+        }, `${s.name} (${s.closed ? 'Cerrada' : activeSession?.id === s.id ? 'Activa' : 'Abierta'})`),
+      ),
+    );
+
+    const statusBadge = isCur
+      ? h('span', { class: 'badge ok' }, 'Activa')
+      : isClosed
+        ? h('span', { class: 'badge info' }, 'Cerrada')
+        : h('span', { class: 'badge warn' }, 'Abierta');
+
     clear(root,
       h('section', { class: 'card' },
-        h('div', { class: 'card-head' },
-          h('div', null,
-            h('div', { class: 'muted small' }, 'Sesión'),
-            h('h2', null, session.name),
+        h('div', { class: 'card-head wrap', style: 'align-items: flex-start; gap: 10px;' },
+          h('div', { class: 'grow' },
+            h('div', { class: 'row', style: 'gap: 8px; align-items: center; margin-bottom: 4px;' },
+              h('span', { class: 'muted small' }, 'Sesión'),
+              statusBadge,
+            ),
+            h('h2', { style: 'margin: 0 0 6px 0;' }, session.name),
+            h('div', { class: 'muted small' },
+              `Responsable: ${session.counter} · Creada: ${fmtDateTime(session.createdAt)}`,
+              session.closed && session.closedAt ? ` · Finalizada: ${fmtDateTime(session.closedAt)}` : '',
+            ),
           ),
-          countEl,
+          h('div', { style: 'display: flex; flex-direction: column; align-items: flex-end; gap: 6px;' },
+            sessionSelect,
+            countEl,
+          ),
         ),
         h('div', { class: 'kpis' },
           kpi(`${summary.accuracy}%`, 'Exactitud', summary.accuracy >= 95 ? 'good' : summary.accuracy >= 80 ? 'warn' : 'bad'),
@@ -144,13 +201,49 @@ export const reportView: View = {
           h('button', { class: 'btn primary', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
           h('button', { class: 'btn', onclick: doExportCsv }, icon('download'), 'CSV'),
           h('button', { class: 'btn', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
+          h('button', {
+            class: 'btn',
+            onclick: () => {
+              const sessionProducts = products.filter((p) => counts.some((c) => c.barcode === p.barcode));
+              openBarcodeSheetDialog(sessionProducts.length ? sessionProducts : products, `Etiquetas de sesión: ${session.name}`);
+            },
+          }, icon('scan'), 'Imprimir etiquetas de sesión'),
+          isClosed
+            ? h('button', {
+              class: 'btn',
+              onclick: async () => {
+                await reopenSession(session.id);
+                toast('Sesión reabierta y activada', 'ok');
+                navigate(`/reporte?session=${session.id}`);
+              },
+            }, 'Reabrir sesión')
+            : isCur
+              ? h('button', {
+                class: 'btn danger ghost',
+                onclick: async () => {
+                  const ok = await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión "${session.name}"?`, 'Finalizar', true);
+                  if (ok) {
+                    await closeSession(session.id);
+                    toast('Sesión finalizada con éxito', 'ok');
+                    navigate(`/reporte?session=${session.id}`);
+                  }
+                },
+              }, 'Finalizar sesión')
+              : h('button', {
+                class: 'btn',
+                onclick: async () => {
+                  await setActiveSession(session.id);
+                  toast(`Sesión activa: ${session.name}`, 'ok');
+                  navigate(`/reporte?session=${session.id}`);
+                },
+              }, 'Activar sesión'),
         ),
         h('label', { class: 'check-inline small muted' },
           h('input', {
             type: 'checkbox', checked: includeNotCounted,
             onchange: (e: Event) => {
               includeNotCounted = (e.target as HTMLInputElement).checked;
-              navigate('/reporte');
+              navigate(`/reporte?session=${session.id}`);
             },
           }),
           h('span', null, 'Incluir productos del catálogo no contados'),
@@ -200,7 +293,7 @@ function rowDetailDialog(r: ReportRow, rowCounts: CountEntry[]) {
       label: 'Editar producto',
       onClick: async () => {
         const saved = await editProductDialog(r.barcode);
-        if (saved) navigate('/reporte');
+        if (saved) navigate(selectedSessionId ? `/reporte?session=${selectedSessionId}` : '/reporte');
       },
     },
   ]);

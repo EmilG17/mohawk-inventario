@@ -1,9 +1,9 @@
 import {
-  allProducts, countsForSession, createSession, getActiveSession,
+  allProducts, allSessions, closeSession, countsForSession, createSession, getActiveSession, reopenSession,
 } from '../db/db';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
-import { clear, fmtDateTime, h, icon, promptDialog, toast } from './dom';
+import { clear, confirmDialog, fmtDateTime, h, icon, promptDialog, toast } from './dom';
 import { installState, promptInstall } from './install';
 import type { View } from './router';
 import { navigate } from './router';
@@ -39,14 +39,15 @@ export async function newSessionFlow(): Promise<boolean> {
 export const homeView: View = {
   title: 'Inicio',
   async render(root) {
-    const [s, session, products, pending] = await Promise.all([
-      loadSettings(), getActiveSession(), allProducts(), pendingCount(),
+    const [s, session, products, pending, sessions] = await Promise.all([
+      loadSettings(), getActiveSession(), allProducts(), pendingCount(), allSessions(),
     ]);
     const counts = session ? await countsForSession(session.id) : [];
     const catalogCount = products.filter((p) => !p.uncataloged).length;
     const withExpected = products.filter((p) => p.expectedQty !== undefined).length;
     const distinct = new Set(counts.map((c) => c.barcode)).size;
     const units = counts.reduce((a, c) => a + c.qty, 0);
+    const pastSessions = sessions.slice(0, 3);
 
     const install = installState();
 
@@ -70,16 +71,84 @@ export const homeView: View = {
             stat(counts.length, 'escaneos'),
           ),
           h('button', { class: 'btn primary xl', onclick: () => navigate('/contar') }, icon('scan'), 'Continuar conteo'),
-          h('div', { class: 'row' },
+          h('div', { class: 'row wrap' },
             h('button', { class: 'btn', onclick: () => navigate('/reporte') }, icon('chart'), 'Ver reporte'),
             h('button', { class: 'btn', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, 'Nueva sesión'),
+            h('button', {
+              class: 'btn danger ghost',
+              onclick: async () => {
+                const ok = await confirmDialog(
+                  'Finalizar sesión de conteo',
+                  `¿Deseas finalizar la sesión "${session.name}"? Los datos quedarán guardados y listos para consulta o reporte.`,
+                  'Finalizar sesión',
+                  true,
+                );
+                if (ok) {
+                  await closeSession(session.id);
+                  toast('Sesión finalizada con éxito', 'ok');
+                  navigate('/');
+                }
+              },
+            }, 'Finalizar sesión'),
           ),
         )
         : h('section', { class: 'card' },
-          h('h2', null, 'Sin sesión de conteo'),
-          h('p', { class: 'muted' }, 'Inicia una sesión para comenzar a escanear.'),
+          h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
+          h('h2', null, 'Sin sesión activa'),
+          h('p', { class: 'muted' }, 'No hay ninguna sesión de conteo en curso. Puedes iniciar una nueva sesión para escanear consumibles o revisar las sesiones anteriores.'),
           h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
-            icon('scan'), 'Iniciar conteo'),
+            icon('scan'), 'Iniciar nueva sesión'),
+          h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
+            h('button', { class: 'btn', onclick: () => navigate('/catalogo') }, icon('list'), 'Ver catálogo de productos'),
+            h('button', { class: 'btn ghost', onclick: () => navigate('/equipo') }, icon('users'), 'Ver todas las sesiones'),
+          ),
+          pastSessions.length > 0
+            ? [
+              h('h3', { class: 'section-title', style: 'margin-top: 20px;' }, 'Sesiones recientes'),
+              h('ul', { class: 'session-list' },
+                pastSessions.map((ps) =>
+                  h('li', { class: 's-item', style: 'cursor: default;' },
+                    h('div', { class: 'grow' },
+                      h('div', { class: 's-name' },
+                        ps.name,
+                        ' ',
+                        ps.closed
+                          ? h('span', { class: 'badge info' }, 'Cerrada')
+                          : h('span', { class: 'badge warn' }, 'Abierta'),
+                      ),
+                      h('div', { class: 'muted small' },
+                        `${ps.counter} · ${fmtDateTime(ps.createdAt)}`,
+                        ps.closed && ps.closedAt ? ` · Cerrada ${fmtDateTime(ps.closedAt)}` : '',
+                      ),
+                    ),
+                    h('div', { class: 'row', style: 'gap: 6px;' },
+                      h('button', {
+                        class: 'btn sm',
+                        onclick: () => navigate(`/reporte?session=${ps.id}`),
+                      }, icon('chart'), 'Ver reporte'),
+                      ps.closed
+                        ? h('button', {
+                          class: 'btn sm ghost',
+                          onclick: async () => {
+                            await reopenSession(ps.id);
+                            toast('Sesión reabierta y activada', 'ok');
+                            navigate('/contar');
+                          },
+                        }, 'Reabrir')
+                        : h('button', {
+                          class: 'btn sm primary',
+                          onclick: async () => {
+                            await reopenSession(ps.id);
+                            toast(`Sesión activa: ${ps.name}`, 'ok');
+                            navigate('/contar');
+                          },
+                        }, 'Continuar'),
+                    ),
+                  ),
+                ),
+              ),
+            ]
+            : null,
         ),
 
       h('section', { class: 'card' },

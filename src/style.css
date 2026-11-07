@@ -546,3 +546,232 @@ textarea.input { min-height: 60px; resize: vertical; }
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
+
+/* ---------- Códigos de barras y Etiquetas ---------- */
+.barcode-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px;
+  margin: 8px 0;
+  min-height: 80px;
+}
+.barcode-preview svg.barcode,
+.barcode-preview svg.barcode-svg {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+.barcode-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 6px 0 10px;
+}
+
+/* Modal de hojas de etiquetas */
+.barcode-sheet-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.sheet-preview-wrap {
+  max-height: 50vh;
+  overflow-y: auto;
+  overflow-x: auto;
+  background: var(--bg-alt, #e5e7eb);
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  align-items: center;
+}
+
+/* Hoja Avery 5160: 3 cols x 10 rows (30 etiquetas, 2.625in x 1in en Carta 8.5in x 11in) */
+.avery-5160-page {
+  width: 8.5in;
+  min-height: 11in;
+  box-sizing: border-box;
+  padding: 0.5in 0.1875in;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  display: grid;
+  grid-template-columns: repeat(3, 2.625in);
+  grid-template-rows: repeat(10, 1.0in);
+  column-gap: 0.125in;
+  row-gap: 0in;
+}
+
+/* Hoja Avery 5163: 2 cols x 5 rows (10 etiquetas, 4.0in x 2.0in) */
+.avery-5163-page {
+  width: 8.5in;
+  min-height: 11in;
+  box-sizing: border-box;
+  padding: 0.5in 0.156in;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  display: grid;
+  grid-template-columns: repeat(2, 4.0in);
+  grid-template-rows: repeat(5, 2.0in);
+  column-gap: 0.1875in;
+  row-gap: 0in;
+}
+
+/* Rollo continuo térmico (etiqueta única para impresoras tipo Zebra/Brother 50mm) */
+.continuous-page,
+.thermal-page {
+  width: 50mm;
+  min-height: 30mm;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  padding: 2mm;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* Ranura / Etiqueta individual dentro de la hoja */
+.sheet-label {
+  box-sizing: border-box;
+  background: #ffffff;
+  color: #000000;
+  padding: 2px 4px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+  font-family: system-ui, -apple-system, sans-serif;
+  font-size: 7.5pt;
+  line-height: 1.15;
+}
+.sheet-label.with-border {
+  border: 1px dashed #cbd5e1;
+}
+.sheet-label.blank,
+.sheet-slot-empty {
+  background: #f8fafc;
+  border: 1px dashed #e2e8f0;
+}
+.sheet-label .label-desc {
+  font-weight: 700;
+  font-size: 7.5pt;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-bottom: 1px;
+}
+.sheet-label .label-barcode-wrap {
+  width: 100%;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  flex-grow: 1;
+}
+.sheet-label .label-barcode-wrap svg,
+.label-barcode-svg {
+  max-width: 100%;
+  max-height: 100%;
+  height: auto;
+  display: block;
+}
+.sheet-label .label-footer {
+  font-size: 6.5pt;
+  color: #334155;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+/* Contenedores de impresión oculta en pantalla */
+.print-sheet-root,
+.single-print-root {
+  display: none;
+}
+
+/* ---------- Reglas de Impresión (@media print) ---------- */
+@page {
+  size: letter portrait;
+  margin: 0;
+}
+
+@media print {
+  /* Forzar fondo blanco y texto negro puro */
+  html, body {
+    background: white !important;
+    color: black !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* Ocultar elementos de navegación, interfaz y botones */
+  header,
+  nav,
+  .tabs,
+  .tab-bar,
+  .session-bar,
+  .btn,
+  button,
+  .chips,
+  .select-toolbar,
+  .mass-bar,
+  #app,
+  dialog {
+    display: none !important;
+  }
+
+  /* Mostrar únicamente las raíces de impresión */
+  .print-sheet-root,
+  .single-print-root {
+    display: block !important;
+    width: 100% !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  .print-page {
+    box-shadow: none !important;
+    page-break-after: always;
+    break-after: page;
+    margin: 0 !important;
+  }
+  .print-page:last-child {
+    page-break-after: auto;
+    break-after: auto;
+  }
+
+  .sheet-label.with-border,
+  .sheet-label.blank,
+  .sheet-slot-empty {
+    border: none !important;
+    background: transparent !important;
+  }
+
+  .single-label-print {
+    padding: 10mm;
+    text-align: center;
+    page-break-inside: avoid;
+  }
+  .single-label-print .label-desc {
+    font-size: 14pt;
+    font-weight: 700;
+    margin-bottom: 4mm;
+  }
+  .single-label-print svg {
+    max-width: 90%;
+    height: auto;
+  }
+}

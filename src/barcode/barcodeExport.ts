@@ -1,0 +1,123 @@
+import { downloadFile } from '../ui/dom';
+import { sanitizeFilename } from './code128';
+
+/**
+ * Descarga una cadena SVG como archivo .svg.
+ */
+export function downloadSvg(svgString: string, filename: string): void {
+  const base = filename.replace(/\.svg$/i, '');
+  const safeName = `${sanitizeFilename(base)}.svg`;
+  downloadFile(svgString, safeName, 'image/svg+xml;charset=utf-8');
+}
+
+/**
+ * Rasteriza un SVG en un canvas offscreen en alta resolución (por defecto factor 3x / ~300 DPI)
+ * y lo descarga como archivo .png.
+ */
+export async function downloadPng(
+  svgString: string,
+  filename: string,
+  scale = 3,
+): Promise<void> {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return;
+
+  const base = filename.replace(/\.png$/i, '');
+  const safeName = `${sanitizeFilename(base)}.png`;
+
+  // Extraer dimensiones del SVG
+  const vbMatch = svgString.match(
+    /viewBox=["']\s*0\s+0\s+(\d+(?:\.\d+)?)\s+(\d+(?:\.\d+)?)\s*["']/i,
+  );
+  const wMatch = svgString.match(/width=["'](\d+(?:\.\d+)?)["']/i);
+  const hMatch = svgString.match(/height=["'](\d+(?:\.\d+)?)["']/i);
+
+  const baseWidth = vbMatch
+    ? parseFloat(vbMatch[1])
+    : wMatch
+      ? parseFloat(wMatch[1])
+      : 300;
+  const baseHeight = vbMatch
+    ? parseFloat(vbMatch[2])
+    : hMatch
+      ? parseFloat(hMatch[2])
+      : 120;
+
+  const canvasWidth = Math.max(1, Math.round(baseWidth * scale));
+  const canvasHeight = Math.max(1, Math.round(baseHeight * scale));
+
+  const canvas = document.createElement('canvas');
+  canvas.width = canvasWidth;
+  canvas.height = canvasHeight;
+
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+
+  // Fondo blanco opaco para garantizar legibilidad al imprimir o visualizar
+  ctx.fillStyle = '#ffffff';
+  ctx.fillRect(0, 0, canvasWidth, canvasHeight);
+
+  const blob = new Blob([svgString], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const img = new Image();
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error('Error al cargar SVG en Canvas'));
+      img.src = url;
+    });
+
+    ctx.drawImage(img, 0, 0, canvasWidth, canvasHeight);
+
+    await new Promise<void>((resolve) => {
+      canvas.toBlob((pngBlob) => {
+        if (pngBlob) {
+          downloadFile(pngBlob, safeName, 'image/png');
+        }
+        resolve();
+      }, 'image/png');
+    });
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/**
+ * Envía una etiqueta individual inmediatamente a la ventana de impresión del navegador.
+ */
+export function printLabel(svgString: string, title?: string): void {
+  if (typeof document === 'undefined') return;
+
+  let printRoot = document.getElementById('single-print-root');
+  if (!printRoot) {
+    printRoot = document.createElement('div');
+    printRoot.id = 'single-print-root';
+    printRoot.className = 'single-print-root';
+    document.body.appendChild(printRoot);
+  }
+
+  printRoot.innerHTML = `
+    <div class="single-label-print">
+      ${title ? `<div class="label-desc">${escapeHtml(title)}</div>` : ''}
+      <div class="single-barcode-wrap">${svgString}</div>
+    </div>
+  `;
+
+  // Disparar ventana nativa de impresión
+  window.print();
+}
+
+// Exponer en window para E2E testing
+if (typeof window !== 'undefined') {
+  (window as any).__downloadSvg = downloadSvg;
+  (window as any).__downloadPng = downloadPng;
+  (window as any).__printLabel = printLabel;
+}

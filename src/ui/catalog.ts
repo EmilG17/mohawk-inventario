@@ -13,6 +13,7 @@ import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
 import { editProductDialog, sourceBadge } from './productDialog';
+import { openBarcodeSheetDialog } from './barcodeSheet';
 import type { View } from './router';
 import { navigate } from './router';
 
@@ -441,6 +442,39 @@ export function openMassActionsDialog(
     ),
 
     h('div', { class: 'mass-action-section' },
+      h('h4', null, '🏷️ Etiquetas y códigos de barras'),
+      h('p', { class: 'muted small' }, 'Genera e imprime etiquetas con códigos de barras uniformes en hojas Avery o rollo continuo.'),
+      h('div', { class: 'row wrap' },
+        selectedBarcodes.length > 0
+          ? h('button', {
+            class: 'btn primary sm',
+            onclick: () => {
+              dlg.close();
+              const sel = all.filter((p) => selectedBarcodes.includes(p.barcode));
+              openBarcodeSheetDialog(sel);
+            },
+          }, icon('scan'), `Etiquetas de los ${selectedBarcodes.length} seleccionados`)
+          : null,
+        visibleItems.length > 0
+          ? h('button', {
+            class: 'btn sm',
+            onclick: () => {
+              dlg.close();
+              openBarcodeSheetDialog(visibleItems);
+            },
+          }, icon('scan'), `Etiquetas de los ${visibleItems.length} visibles`)
+          : null,
+        h('button', {
+          class: 'btn sm',
+          onclick: () => {
+            dlg.close();
+            openBarcodeSheetDialog(all);
+          },
+        }, icon('scan'), `Etiquetas de todo el catálogo (${all.length})`),
+      ),
+    ),
+
+    h('div', { class: 'mass-action-section' },
       h('h4', null, '📊 Edición masiva con Excel / CSV'),
       h('p', { class: 'muted small' }, 'Descarga el catálogo a Excel, edita existencias o descripciones en tu computadora y vuelve a subirlo:'),
       h('div', { class: 'row wrap' },
@@ -514,6 +548,13 @@ export const catalogView: View = {
         clear(massBar,
           h('div', { class: 'mass-info' }, icon('check'), `${selCount} seleccionado(s)`),
           h('div', { class: 'row' },
+            h('button', {
+              class: 'btn sm',
+              onclick: () => {
+                const sel = products.filter((p) => selected.has(p.barcode));
+                openBarcodeSheetDialog(sel);
+              },
+            }, icon('scan'), 'Etiquetas'),
             h('button', {
               class: 'btn primary sm',
               onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
@@ -605,9 +646,32 @@ export const catalogView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
-        h('p', { class: 'muted small' }, 'Gestiona el catálogo de consumibles: importa desde Excel, modifica en lote o elimina masivamente.'),
+        h('p', { class: 'muted small' }, 'Gestiona el catálogo de consumibles: crea códigos de barras, importa desde Excel o modifica en lote.'),
         h('div', { class: 'row wrap' },
-          h('button', { class: 'btn primary', onclick: importCatalogFlow }, icon('upload'), 'Importar Excel/CSV'),
+          h('button', {
+            class: 'btn primary',
+            onclick: async () => {
+              const res = await editProductDialog('');
+              if (res && res !== 'deleted') {
+                await refreshData();
+              }
+            },
+          }, icon('scan'), 'Nuevo producto'),
+          h('button', { class: 'btn', onclick: importCatalogFlow }, icon('upload'), 'Importar Excel/CSV'),
+          h('button', {
+            class: 'btn', disabled: !products.length,
+            onclick: () => {
+              const words = norm(query).split(/\s+/).filter(Boolean);
+              const visible = products
+                .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
+                .filter((p) => {
+                  if (!words.length) return true;
+                  const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
+                  return words.every((w) => hay.includes(w));
+                });
+              openBarcodeSheetDialog(visible.length ? visible : products);
+            },
+          }, icon('scan'), 'Rótulos y hojas'),
           h('button', {
             class: 'btn', disabled: !products.length,
             onclick: () => downloadFile(buildCatalogWorkbook(products), 'catalogo_consumibles.xlsx', MIME.xlsx),
