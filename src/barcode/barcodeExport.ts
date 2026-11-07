@@ -1,5 +1,5 @@
 import { downloadFile } from '../ui/dom';
-import { renderPrecut3in1Html, sanitizeFilename } from './code128';
+import { renderPrecut3in1Html, sanitizeFilename, stripSkuNumberText } from './code128';
 
 /**
  * Descarga una cadena SVG como archivo .svg.
@@ -151,10 +151,12 @@ export function printLabel(
   if (options?.precut3in1) {
     const pageSize = options?.pageSize || '3.25in 2in portrait';
     applyPrintPageStyle(pageSize);
+    const cleanBarcode = stripSkuNumberText(options.barcode || '') || 'MHK-000000';
+    const cleanSku = stripSkuNumberText(options.sku || '') || cleanBarcode;
     const precutHtml = renderPrecut3in1Html({
-      barcode: options.barcode || 'MHK-000000',
-      sku: options.sku || options.barcode || 'MHK-000000',
-      description: title || '',
+      barcode: cleanBarcode,
+      sku: cleanSku,
+      description: stripSkuNumberText(title || ''),
       brand: options.brand || 'MOHAWK',
       unit: options.unit || '',
     });
@@ -173,7 +175,8 @@ export function printLabel(
 
   const footerParts: string[] = [];
   if (!options?.hideFooter) {
-    if (options?.sku) footerParts.push(options.sku);
+    const cleanSku = stripSkuNumberText(options?.sku || '');
+    if (cleanSku) footerParts.push(cleanSku);
     if (options?.unit) footerParts.push(options.unit);
     if (options?.brand) footerParts.push(options.brand);
   }

@@ -1,6 +1,6 @@
 import { allProducts, type Product } from '../db/db';
 import { displayBarcode } from '../io/normalize';
-import { renderCode128Svg, renderPrecut3in1Html } from '../barcode/code128';
+import { renderCode128Svg, renderPrecut3in1Html, stripSkuNumberText } from '../barcode/code128';
 import { applyPrintPageStyle, downloadPng, downloadSvg } from '../barcode/barcodeExport';
 import {
   type PrintQueueItem,
@@ -261,10 +261,12 @@ export function renderLabelSlot(
   } = options;
 
   const rawCode = product.barcode;
-  const codeText = rawCode.startsWith('SKU:')
+  const rawDisplay = rawCode.startsWith('SKU:')
     ? product.sku || rawCode.slice(4)
     : displayBarcode(rawCode);
-  const descText = product.description?.trim() || 'Sin descripción';
+  const codeText = stripSkuNumberText(rawDisplay) || rawDisplay;
+  const cleanSku = stripSkuNumberText(product.sku || '');
+  const descText = stripSkuNumberText(product.description?.trim() || '') || 'Sin descripción';
 
   const tmplConfig = TEMPLATES[template] || TEMPLATES.avery5160;
 
@@ -274,7 +276,7 @@ export function renderLabelSlot(
     });
     compSlot.innerHTML = renderPrecut3in1Html({
       barcode: codeText,
-      sku: product.sku || codeText,
+      sku: cleanSku || codeText,
       description: descText,
       brand: product.brand || 'MOHAWK',
       unit: product.unit || '',
@@ -309,8 +311,8 @@ export function renderLabelSlot(
     (template === 'intermec325x2' || template === 'intermec397x6');
 
   if (!shouldHideFooter) {
-    if (showSku && product.sku && product.sku !== codeText) {
-      footerParts.push(product.sku);
+    if (showSku && cleanSku && cleanSku !== codeText) {
+      footerParts.push(cleanSku);
     }
     if (showUnit && product.unit) {
       footerParts.push(product.unit);
@@ -410,7 +412,7 @@ export function openBarcodeSheetDialog(
 
   const PREF_KEY = 'mohawk_preferred_label_template';
   const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem(PREF_KEY) : null) as LabelTemplate | null;
-  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'avery5160';
+  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'intermec_composite';
   let startingOffset = 0;
   let showSku = true;
   let showUnit = true;

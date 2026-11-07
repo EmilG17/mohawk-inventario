@@ -325,13 +325,20 @@ export interface Precut3in1Data {
  * (1. Etiqueta Principal Superior, 2. Mini Etiqueta Inferior Izquierda, 3. Etiqueta QR Inferior Derecha)
  * calibrada milimétricamente a las zonas de troquelado de USER (3.25 in x 2.00 in · 660x406 dots @ 203 DPI).
  */
+export function stripSkuNumberText(value: string): string {
+  return (value || '')
+    .replace(/\bSKU\s*NUMBER\b\s*:?\s*/gi, '')
+    .replace(/^SKU\s*:\s*/i, '')
+    .trim();
+}
+
 export function renderPrecut3in1Html(data: Precut3in1Data): string {
-  const rawBarcode = data.barcode?.trim() || 'MHK-000000';
+  const rawBarcode = stripSkuNumberText(data.barcode || '') || 'MHK-000000';
   const code = escapeXml(rawBarcode);
-  const rawSku = (data.sku?.trim() || rawBarcode).replace(/^SKU(\s+NUMBER)?\s*:?\s*/i, '').trim() || rawBarcode;
+  const rawSku = stripSkuNumberText(data.sku || '') || rawBarcode;
   const skuLabel = escapeXml(rawSku.toUpperCase());
 
-  const fullDesc = (data.description?.trim() || 'SIN DESCRIPCIÓN').toUpperCase();
+  const fullDesc = (stripSkuNumberText(data.description || '') || 'SIN DESCRIPCIÓN').toUpperCase();
   const descLine1 = escapeXml(fullDesc.slice(0, 36));
   const descLine2 = escapeXml(
     fullDesc.length > 36
