@@ -369,7 +369,13 @@ function renderCard(): void {
 
 async function editAndRefresh(code: string) {
   const saved = await editProductDialog(code);
-  if (saved && pending?.code === code) {
+  if (saved === 'deleted') {
+    if (pending?.code === code) {
+      pending = null;
+      renderCard();
+      triggerCooldown(COOLDOWN_MS);
+    }
+  } else if (saved && pending?.code === code) {
     pending.product = saved;
     pending.status = saved.description ? (saved.source === 'catalogo' ? 'catalogo' : 'manual') : 'no_encontrado';
     renderCard();

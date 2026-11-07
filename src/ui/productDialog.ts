@@ -1,7 +1,7 @@
-import { getProduct, putProduct, type Product } from '../db/db';
+import { deleteProduct, getProduct, putProduct, type Product } from '../db/db';
 import { resolveDescription } from '../lookup/lookup';
 import { displayBarcode, parseNumber } from '../io/normalize';
-import { h, openDialog, toast } from './dom';
+import { confirmDialog, h, openDialog, toast } from './dom';
 
 export const SOURCE_LABEL: Record<Product['source'], string> = {
   catalogo: 'Catálogo',
@@ -16,13 +16,15 @@ export function sourceBadge(p: Product) {
   return h('span', { class: cls }, SOURCE_LABEL[p.source]);
 }
 
-/** Abre el editor del producto. Resuelve con el producto guardado o null si se canceló. */
-export function editProductDialog(code: string, initial?: Product): Promise<Product | null> {
+export type EditProductResult = Product | 'deleted' | null;
+
+/** Abre el editor del producto. Resuelve con el producto guardado, 'deleted' si se eliminó, o null si se canceló. */
+export function editProductDialog(code: string, initial?: Product): Promise<EditProductResult> {
   return new Promise(async (resolve) => {
     let p: Product = initial ?? (await getProduct(code)) ?? {
       barcode: code, sku: '', description: '', unit: '', uncataloged: true, source: 'pendiente',
     };
-    let saved: Product | null = null;
+    let result: EditProductResult = null;
     const f = {
       description: h('textarea', { class: 'input', rows: 2, maxlength: 200, placeholder: 'Ej. Guantes de nitrilo talla M, caja 100 pzas' }),
       sku: h('input', { class: 'input', maxlength: 40 }),
@@ -74,6 +76,18 @@ export function editProductDialog(code: string, initial?: Product): Promise<Prod
       ),
     );
     const dlg = openDialog('Producto', body, [
+      {
+        label: 'Eliminar', kind: 'danger',
+        onClick: async () => {
+          if (await confirmDialog('Eliminar del catálogo', `¿Eliminar "${p.description || code}" del catálogo?`, 'Eliminar', true)) {
+            await deleteProduct(code);
+            result = 'deleted';
+            toast('Producto eliminado');
+          } else {
+            return true;
+          }
+        },
+      },
       { label: 'Cancelar' },
       {
         label: 'Guardar', kind: 'primary',
@@ -90,11 +104,11 @@ export function editProductDialog(code: string, initial?: Product): Promise<Prod
           if (desc !== p.description) next.source = desc ? 'manual' : 'pendiente';
           else if (!desc) next.source = 'pendiente';
           await putProduct(next);
-          saved = next;
+          result = next;
           toast('Producto guardado', 'ok');
         },
       },
     ]);
-    dlg.addEventListener('close', () => resolve(saved));
+    dlg.addEventListener('close', () => resolve(result));
   });
 }

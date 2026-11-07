@@ -1,13 +1,16 @@
-import { allProducts, bulkPutProducts, clearProducts, type Product } from '../db/db';
+import {
+  allProducts, bulkModifyProducts, bulkPutProducts, clearProducts, deleteProducts, deleteProduct,
+  type MassProductPatch, type Product,
+} from '../db/db';
 import { buildCatalogFile, buildCatalogWorkbook } from '../io/exportResults';
 import {
   detectHeaderRow, FIELD_LABELS, guessMapping, readWorkbook, rowsToProducts, type Field, type Mapping, type Workbook,
 } from '../io/importCatalog';
 import { importCatalogFile, parseAppFile } from '../io/mergeCounts';
-import { displayBarcode } from '../io/normalize';
+import { displayBarcode, parseNumber } from '../io/normalize';
 import { processPending } from '../lookup/pendingQueue';
 import {
-  clear, confirmDialog, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast, downloadFile,
+  clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
 import { editProductDialog, sourceBadge } from './productDialog';
 import type { View } from './router';
@@ -149,13 +152,331 @@ function mappingDialog(wb: Workbook, fileName: string) {
   ]);
 }
 
+export function openMassModifyDialog(barcodes: string[], onDone: () => void): void {
+  if (!barcodes.length) {
+    toast('No hay productos para modificar', 'warn');
+    return;
+  }
+  const chkUnit = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const inputUnit = h('input', { class: 'input sm', type: 'text', placeholder: 'PZA, CJA, ROLLO, LT, M...', disabled: true }) as HTMLInputElement;
+  chkUnit.onchange = () => (inputUnit.disabled = !chkUnit.checked);
+
+  const chkBrand = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const inputBrand = h('input', { class: 'input sm', type: 'text', placeholder: 'Ej. 3M, Mohawk, Ansell, Truper...', disabled: true }) as HTMLInputElement;
+  chkBrand.onchange = () => (inputBrand.disabled = !chkBrand.checked);
+
+  const chkExpected = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const expValRadio = h('input', { type: 'radio', name: 'expMode', checked: true, disabled: true }) as HTMLInputElement;
+  const expZeroRadio = h('input', { type: 'radio', name: 'expMode', disabled: true }) as HTMLInputElement;
+  const expClearRadio = h('input', { type: 'radio', name: 'expMode', disabled: true }) as HTMLInputElement;
+  const inputExpected = h('input', { class: 'input sm qty', type: 'text', inputmode: 'decimal', placeholder: '0', disabled: true }) as HTMLInputElement;
+
+  chkExpected.onchange = () => {
+    const dis = !chkExpected.checked;
+    expValRadio.disabled = dis;
+    expZeroRadio.disabled = dis;
+    expClearRadio.disabled = dis;
+    inputExpected.disabled = dis || !expValRadio.checked;
+  };
+  expValRadio.onchange = () => (inputExpected.disabled = !chkExpected.checked || !expValRadio.checked);
+  expZeroRadio.onchange = () => (inputExpected.disabled = true);
+  expClearRadio.onchange = () => (inputExpected.disabled = true);
+
+  const chkCost = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const costValRadio = h('input', { type: 'radio', name: 'costMode', checked: true, disabled: true }) as HTMLInputElement;
+  const costClearRadio = h('input', { type: 'radio', name: 'costMode', disabled: true }) as HTMLInputElement;
+  const inputCost = h('input', { class: 'input sm', type: 'text', inputmode: 'decimal', placeholder: '0.00', disabled: true }) as HTMLInputElement;
+
+  chkCost.onchange = () => {
+    const dis = !chkCost.checked;
+    costValRadio.disabled = dis;
+    costClearRadio.disabled = dis;
+    inputCost.disabled = dis || !costValRadio.checked;
+  };
+  costValRadio.onchange = () => (inputCost.disabled = !chkCost.checked || !costValRadio.checked);
+  costClearRadio.onchange = () => (inputCost.disabled = true);
+
+  const chkUncat = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const selUncat = h('select', { class: 'input sm', disabled: true },
+    h('option', { value: 'cataloged' }, 'Marcar como "Catalogado" (oficial)'),
+    h('option', { value: 'uncataloged' }, 'Marcar como "No catalogado"'),
+  ) as HTMLSelectElement;
+  chkUncat.onchange = () => (selUncat.disabled = !chkUncat.checked);
+
+  const chkAffix = h('input', { type: 'checkbox' }) as HTMLInputElement;
+  const inputPrefix = h('input', { class: 'input sm', type: 'text', placeholder: 'Prefijo (ej. [MHK])', disabled: true }) as HTMLInputElement;
+  const inputSuffix = h('input', { class: 'input sm', type: 'text', placeholder: 'Sufijo (ej. - Planta 2)', disabled: true }) as HTMLInputElement;
+  chkAffix.onchange = () => {
+    inputPrefix.disabled = !chkAffix.checked;
+    inputSuffix.disabled = !chkAffix.checked;
+  };
+
+  const body = h('div', { class: 'form mass-form' },
+    h('p', { class: 'muted small' }, `Se actualizarán ${barcodes.length} producto(s). Activa las casillas de los campos que deseas cambiar:`),
+    h('div', { class: 'mass-field-block' },
+      h('label', { class: 'check-inline bold' }, chkUnit, h('span', null, 'Unidad de medida')),
+      inputUnit,
+    ),
+    h('div', { class: 'mass-field-block' },
+      h('label', { class: 'check-inline bold' }, chkBrand, h('span', null, 'Marca / Fabricante')),
+      inputBrand,
+    ),
+    h('div', { class: 'mass-field-block' },
+      h('label', { class: 'check-inline bold' }, chkExpected, h('span', null, 'Existencia teórica')),
+      h('div', { class: 'row' }, h('label', { class: 'radio-inline' }, expValRadio, 'Asignar cantidad:'), inputExpected),
+      h('label', { class: 'radio-inline' }, expZeroRadio, 'Poner en 0 (cero)'),
+      h('label', { class: 'radio-inline' }, expClearRadio, 'Quitar existencia teórica (conteo libre)'),
+    ),
+    h('div', { class: 'mass-field-block' },
+      h('label', { class: 'check-inline bold' }, chkCost, h('span', null, 'Costo unitario')),
+      h('div', { class: 'row' }, h('label', { class: 'radio-inline' }, costValRadio, 'Asignar costo:'), inputCost),
+      h('label', { class: 'radio-inline' }, costClearRadio, 'Quitar costo unitario'),
+    ),
+    h('div', { class: 'mass-field-block' },
+      h('label', { class: 'check-inline bold' }, chkUncat, h('span', null, 'Estado de catalogación')),
+      selUncat,
+    ),
+    h('div', { class: 'mass-field-block' },
+      h('label', { class: 'check-inline bold' }, chkAffix, h('span', null, 'Agregar texto a descripciones')),
+      h('div', { class: 'grid2' }, inputPrefix, inputSuffix),
+    ),
+  );
+
+  openDialog(`Modificación masiva (${barcodes.length})`, body, [
+    { label: 'Cancelar' },
+    {
+      label: 'Aplicar cambios', kind: 'primary',
+      onClick: async () => {
+        if (!chkUnit.checked && !chkBrand.checked && !chkExpected.checked && !chkCost.checked && !chkUncat.checked && !chkAffix.checked) {
+          toast('Selecciona al menos un campo para modificar', 'warn');
+          return true;
+        }
+        const patch: MassProductPatch = {};
+        if (chkUnit.checked) patch.unit = inputUnit.value.trim();
+        if (chkBrand.checked) patch.brand = inputBrand.value.trim();
+        if (chkExpected.checked) {
+          if (expZeroRadio.checked) patch.expectedQty = 0;
+          else if (expClearRadio.checked) patch.expectedQty = null;
+          else {
+            const n = parseNumber(inputExpected.value);
+            if (n === undefined || n < 0) { toast('Existencia teórica inválida', 'error'); return true; }
+            patch.expectedQty = n;
+          }
+        }
+        if (chkCost.checked) {
+          if (costClearRadio.checked) patch.unitCost = null;
+          else {
+            const c = parseNumber(inputCost.value);
+            if (c === undefined || c < 0) { toast('Costo unitario inválido', 'error'); return true; }
+            patch.unitCost = c;
+          }
+        }
+        if (chkUncat.checked) {
+          patch.uncataloged = selUncat.value === 'uncataloged';
+        }
+        if (chkAffix.checked) {
+          if (inputPrefix.value.trim()) patch.descriptionPrefix = inputPrefix.value.trim();
+          if (inputSuffix.value.trim()) patch.descriptionSuffix = inputSuffix.value.trim();
+        }
+
+        const count = await bulkModifyProducts(barcodes, patch);
+        toast(`✓ ${count} producto(s) actualizados con éxito`, 'ok');
+        onDone();
+      },
+    },
+  ]);
+}
+
+export function openMassDeleteDialog(
+  visibleItems: Product[],
+  selectedBarcodes: string[],
+  all: Product[],
+  onDone: () => void,
+): void {
+  const uncataloged = all.filter((p) => p.uncataloged);
+  const noDesc = all.filter((p) => !p.description);
+
+  let dlg: { close(): void };
+
+  const actions = h('div', { class: 'mass-delete-actions' },
+    selectedBarcodes.length > 0
+      ? h('div', { class: 'mass-del-card' },
+        h('div', null,
+          h('b', null, `Eliminar los ${selectedBarcodes.length} seleccionados`),
+          h('div', { class: 'muted small' }, 'Borra únicamente los productos marcados con casilla.'),
+        ),
+        h('button', {
+          class: 'btn danger sm',
+          onclick: async () => {
+            dlg.close();
+            if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selectedBarcodes.length} productos seleccionados del catálogo?`, 'Eliminar', true)) {
+              const n = await deleteProducts(selectedBarcodes);
+              toast(`${n} productos eliminados del catálogo`, 'ok');
+              onDone();
+            }
+          },
+        }, icon('trash'), `Eliminar (${selectedBarcodes.length})`),
+      )
+      : null,
+
+    visibleItems.length > 0 && visibleItems.length < all.length
+      ? h('div', { class: 'mass-del-card' },
+        h('div', null,
+          h('b', null, `Eliminar los ${visibleItems.length} filtrados`),
+          h('div', { class: 'muted small' }, 'Borra todos los productos del filtro o búsqueda actual.'),
+        ),
+        h('button', {
+          class: 'btn danger sm',
+          onclick: async () => {
+            dlg.close();
+            if (await confirmDialog('Eliminar filtrados', `¿Eliminar los ${visibleItems.length} productos filtrados?`, 'Eliminar', true)) {
+              const n = await deleteProducts(visibleItems.map((p) => p.barcode));
+              toast(`${n} productos eliminados del catálogo`, 'ok');
+              onDone();
+            }
+          },
+        }, icon('trash'), `Eliminar (${visibleItems.length})`),
+      )
+      : null,
+
+    uncataloged.length > 0
+      ? h('div', { class: 'mass-del-card' },
+        h('div', null,
+          h('b', null, `Eliminar No Catalogados (${uncataloged.length})`),
+          h('div', { class: 'muted small' }, 'Limpia códigos escaneados que no estaban en el catálogo oficial.'),
+        ),
+        h('button', {
+          class: 'btn danger ghost sm',
+          onclick: async () => {
+            dlg.close();
+            if (await confirmDialog('Eliminar no catalogados', `¿Eliminar los ${uncataloged.length} productos no catalogados?`, 'Eliminar', true)) {
+              const n = await deleteProducts(uncataloged.map((p) => p.barcode));
+              toast(`${n} productos no catalogados eliminados`, 'ok');
+              onDone();
+            }
+          },
+        }, icon('trash'), 'Eliminar'),
+      )
+      : null,
+
+    noDesc.length > 0
+      ? h('div', { class: 'mass-del-card' },
+        h('div', null,
+          h('b', null, `Eliminar sin descripción (${noDesc.length})`),
+          h('div', { class: 'muted small' }, 'Borra artículos incompletos sin nombre ni descripción.'),
+        ),
+        h('button', {
+          class: 'btn danger ghost sm',
+          onclick: async () => {
+            dlg.close();
+            if (await confirmDialog('Eliminar sin descripción', `¿Eliminar los ${noDesc.length} productos sin descripción?`, 'Eliminar', true)) {
+              const n = await deleteProducts(noDesc.map((p) => p.barcode));
+              toast(`${n} productos sin descripción eliminados`, 'ok');
+              onDone();
+            }
+          },
+        }, icon('trash'), 'Eliminar'),
+      )
+      : null,
+
+    all.length > 0
+      ? h('div', { class: 'mass-del-card danger-zone' },
+        h('div', null,
+          h('b', { class: 'danger-text' }, `Vaciar todo el catálogo (${all.length} productos)`),
+          h('div', { class: 'muted small' }, 'Elimina permanentemente todos los productos. Los conteos y sesiones realizadas NO se pierden.'),
+        ),
+        h('button', {
+          class: 'btn danger sm',
+          onclick: async () => {
+            dlg.close();
+            if (await confirmDialog('Vaciar catálogo completo', `⚠️ ¿Estás seguro de eliminar TODOS los ${all.length} productos del catálogo?`, 'Vaciar catálogo', true)) {
+              await clearProducts();
+              toast('Catálogo vaciado completamente', 'ok');
+              onDone();
+            }
+          },
+        }, icon('trash'), 'Vaciar todo'),
+      )
+      : null,
+  );
+
+  dlg = openDialog('Eliminación masiva del catálogo', actions, [{ label: 'Cerrar' }]);
+}
+
+export function openMassActionsDialog(
+  visibleItems: Product[],
+  selectedBarcodes: string[],
+  all: Product[],
+  onDone: () => void,
+): void {
+  let dlg: { close(): void };
+
+  const content = h('div', { class: 'mass-actions-modal' },
+    h('div', { class: 'mass-action-section' },
+      h('h4', null, '✏️ Modificación masiva'),
+      h('p', { class: 'muted small' }, 'Actualiza unidades, marcas, existencias teóricas o costos en lote.'),
+      h('div', { class: 'row wrap' },
+        selectedBarcodes.length > 0
+          ? h('button', {
+            class: 'btn primary sm',
+            onclick: () => { dlg.close(); openMassModifyDialog(selectedBarcodes, onDone); },
+          }, icon('edit'), `Modificar los ${selectedBarcodes.length} seleccionados`)
+          : null,
+        visibleItems.length > 0
+          ? h('button', {
+            class: 'btn sm',
+            onclick: () => { dlg.close(); openMassModifyDialog(visibleItems.map((p) => p.barcode), onDone); },
+          }, icon('edit'), `Modificar los ${visibleItems.length} visibles`)
+          : null,
+      ),
+    ),
+
+    h('div', { class: 'mass-action-section' },
+      h('h4', null, '🗑️ Eliminación masiva'),
+      h('p', { class: 'muted small' }, 'Elimina productos seleccionados, por filtro o vacía el catálogo completo.'),
+      h('button', {
+        class: 'btn danger ghost sm',
+        onclick: () => { dlg.close(); openMassDeleteDialog(visibleItems, selectedBarcodes, all, onDone); },
+      }, icon('trash'), 'Opciones de eliminación masiva'),
+    ),
+
+    h('div', { class: 'mass-action-section' },
+      h('h4', null, '📊 Edición masiva con Excel / CSV'),
+      h('p', { class: 'muted small' }, 'Descarga el catálogo a Excel, edita existencias o descripciones en tu computadora y vuelve a subirlo:'),
+      h('div', { class: 'row wrap' },
+        h('button', {
+          class: 'btn sm',
+          onclick: () => downloadFile(buildCatalogWorkbook(all), 'catalogo_consumibles.xlsx', MIME.xlsx),
+        }, icon('download'), '1. Descargar catálogo Excel'),
+        h('button', {
+          class: 'btn primary sm',
+          onclick: () => { dlg.close(); void importCatalogFlow(); },
+        }, icon('upload'), '2. Subir Excel modificado'),
+      ),
+      h('p', { class: 'muted small' }, 'Tip: Al subirlo, elige "Combinar / actualizar" para preservar los productos existentes.'),
+    ),
+  );
+
+  dlg = openDialog('Acciones masivas del catálogo', content, [{ label: 'Cerrar' }]);
+}
+
 export const catalogView: View = {
   title: 'Catálogo',
   async render(root) {
-    const products = await allProducts();
+    let products = await allProducts();
+    const selected = new Set<string>();
     const list = h('ul', { class: 'plist' });
     const countEl = h('span', { class: 'muted small' });
+    const massBar = h('div', { class: 'mass-bar', hidden: true });
+    const selectAllCheck = h('input', { type: 'checkbox', class: 'item-check' }) as HTMLInputElement;
+    const selectAllLabel = h('span', null, 'Seleccionar visibles');
     const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const refreshData = async (clearSelection = true) => {
+      if (clearSelection) selected.clear();
+      products = await allProducts();
+      draw();
+    };
 
     const draw = () => {
       const words = norm(query).split(/\s+/).filter(Boolean);
@@ -167,25 +488,95 @@ export const catalogView: View = {
           return words.every((w) => hay.includes(w));
         })
         .sort((a, b) => (a.description || '~').localeCompare(b.description || '~'));
-      countEl.textContent = `${items.length} de ${products.length}`;
+
+      const selCount = selected.size;
+      countEl.textContent = selCount > 0
+        ? `${items.length} de ${products.length} · ${selCount} seleccionado(s)`
+        : `${items.length} de ${products.length}`;
+
+      const allSelected = items.length > 0 && items.every((p) => selected.has(p.barcode));
+      selectAllCheck.checked = allSelected;
+      selectAllCheck.indeterminate = !allSelected && items.some((p) => selected.has(p.barcode));
+      selectAllCheck.disabled = items.length === 0;
+      selectAllLabel.textContent = `Seleccionar visibles (${items.length})`;
+
+      selectAllCheck.onchange = () => {
+        if (selectAllCheck.checked) {
+          for (const it of items) selected.add(it.barcode);
+        } else {
+          for (const it of items) selected.delete(it.barcode);
+        }
+        draw();
+      };
+
+      if (selCount > 0) {
+        massBar.hidden = false;
+        clear(massBar,
+          h('div', { class: 'mass-info' }, icon('check'), `${selCount} seleccionado(s)`),
+          h('div', { class: 'row' },
+            h('button', {
+              class: 'btn primary sm',
+              onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
+            }, icon('edit'), 'Modificar'),
+            h('button', {
+              class: 'btn danger sm',
+              onclick: async () => {
+                if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selCount} productos seleccionados del catálogo?`, 'Eliminar', true)) {
+                  const n = await deleteProducts(Array.from(selected));
+                  toast(`${n} productos eliminados`, 'ok');
+                  selected.clear();
+                  await refreshData();
+                }
+              },
+            }, icon('trash'), 'Eliminar'),
+            h('button', { class: 'btn ghost sm', onclick: () => { selected.clear(); draw(); } }, '✕'),
+          ),
+        );
+      } else {
+        massBar.hidden = true;
+      }
+
       clear(list,
         items.length === 0 ? h('li', { class: 'empty' }, products.length ? 'Sin coincidencias' : 'Catálogo vacío') : null,
-        items.slice(0, 200).map((p) => h('li', {
-          onclick: async () => {
-            const saved = await editProductDialog(p.barcode, p);
-            if (saved) { Object.assign(p, saved); draw(); }
+        items.slice(0, 250).map((p) => {
+          const isSel = selected.has(p.barcode);
+          const chk = h('input', {
+            type: 'checkbox',
+            class: 'item-check',
+            checked: isSel,
+            onclick: (e: Event) => {
+              e.stopPropagation();
+              if (selected.has(p.barcode)) selected.delete(p.barcode);
+              else selected.add(p.barcode);
+              draw();
+            },
+          }) as HTMLInputElement;
+
+          return h('li', {
+            class: isSel ? 'selected' : '',
+            onclick: async () => {
+              const res = await editProductDialog(p.barcode, p);
+              if (res === 'deleted') {
+                selected.delete(p.barcode);
+                await refreshData();
+              } else if (res) {
+                Object.assign(p, res);
+                draw();
+              }
+            },
           },
-        },
-        h('div', { class: 'grow' },
-          h('div', { class: 'rec-desc' }, p.description || h('i', { class: 'muted' }, 'Sin descripción')),
-          h('div', { class: 'rec-meta' },
-            p.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(p.barcode)),
-            p.sku ? ` · ${p.sku}` : '', p.unit ? ` · ${p.unit}` : ''),
-          h('div', { class: 'pc-badges' }, sourceBadge(p), p.uncataloged ? h('span', { class: 'badge warn' }, 'No catalogado') : null),
-        ),
-        p.expectedQty !== undefined ? h('div', { class: 'rec-qty small' }, fmtNum(p.expectedQty)) : null,
-        )),
-        items.length > 200 ? h('li', { class: 'empty' }, `Mostrando 200 de ${items.length}. Usa la búsqueda.`) : null,
+          chk,
+          h('div', { class: 'grow' },
+            h('div', { class: 'rec-desc' }, p.description || h('i', { class: 'muted' }, 'Sin descripción')),
+            h('div', { class: 'rec-meta' },
+              p.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(p.barcode)),
+              p.sku ? ` · ${p.sku}` : '', p.unit ? ` · ${p.unit}` : '', p.brand ? ` · ${p.brand}` : ''),
+            h('div', { class: 'pc-badges' }, sourceBadge(p), p.uncataloged ? h('span', { class: 'badge warn' }, 'No catalogado') : null),
+          ),
+          p.expectedQty !== undefined ? h('div', { class: 'rec-qty small' }, fmtNum(p.expectedQty)) : null,
+          );
+        }),
+        items.length > 250 ? h('li', { class: 'empty' }, `Mostrando 250 de ${items.length}. Usa la búsqueda para filtrar.`) : null,
       );
     };
 
@@ -193,10 +584,28 @@ export const catalogView: View = {
       h('button', { class: `chip ${filter === id ? 'active' : ''}`, onclick: () => { filter = id; navigate('/catalogo'); } }, label);
     const noDesc = products.filter((p) => !p.description).length;
 
+    const selectToolbar = h('div', { class: 'select-toolbar' },
+      h('label', { class: 'check-inline' }, selectAllCheck, selectAllLabel),
+      h('button', {
+        class: 'btn sm',
+        onclick: () => {
+          const words = norm(query).split(/\s+/).filter(Boolean);
+          const visible = products
+            .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
+            .filter((p) => {
+              if (!words.length) return true;
+              const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
+              return words.every((w) => hay.includes(w));
+            });
+          openMassActionsDialog(visible, Array.from(selected), products, refreshData);
+        },
+      }, icon('edit'), '⚡ Acciones masivas'),
+    );
+
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
-        h('p', { class: 'muted small' }, 'Importa el Excel o CSV de consumibles. Columnas sugeridas: Código de barras, No. de parte, Descripción, Unidad, Existencia teórica, Costo unitario.'),
+        h('p', { class: 'muted small' }, 'Gestiona el catálogo de consumibles: importa desde Excel, modifica en lote o elimina masivamente.'),
         h('div', { class: 'row wrap' },
           h('button', { class: 'btn primary', onclick: importCatalogFlow }, icon('upload'), 'Importar Excel/CSV'),
           h('button', {
@@ -207,6 +616,20 @@ export const catalogView: View = {
             class: 'btn', disabled: !products.length,
             onclick: () => shareOrDownload(JSON.stringify(buildCatalogFile(products)), 'catalogo_inventario.json', MIME.json, 'Catálogo de inventario'),
           }, icon('share'), 'Compartir'),
+          h('button', {
+            class: 'btn',
+            onclick: () => {
+              const words = norm(query).split(/\s+/).filter(Boolean);
+              const visible = products
+                .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
+                .filter((p) => {
+                  if (!words.length) return true;
+                  const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
+                  return words.every((w) => hay.includes(w));
+                });
+              openMassActionsDialog(visible, Array.from(selected), products, refreshData);
+            },
+          }, icon('edit'), 'Acciones masivas'),
         ),
         noDesc
           ? h('button', {
@@ -214,7 +637,7 @@ export const catalogView: View = {
               toast('Buscando descripciones…');
               const n = await processPending();
               toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
-              navigate('/catalogo');
+              await refreshData();
             },
           }, icon('globe'), `Buscar en internet ${noDesc} sin descripción`)
           : null,
@@ -224,18 +647,9 @@ export const catalogView: View = {
         oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; draw(); },
       }),
       h('div', { class: 'chips' }, chip('todos', 'Todos'), chip('sin_desc', `Sin descripción (${noDesc})`), chip('no_cat', 'No catalogados')),
+      selectToolbar,
+      massBar,
       list,
-      products.length
-        ? h('button', {
-          class: 'btn danger ghost sm', onclick: async () => {
-            if (await confirmDialog('Borrar catálogo', 'Se eliminarán todos los productos (los conteos no se borran). ¿Continuar?', 'Borrar', true)) {
-              await clearProducts();
-              toast('Catálogo borrado');
-              navigate('/catalogo');
-            }
-          },
-        }, icon('trash'), 'Borrar catálogo')
-        : null,
     );
     draw();
   },

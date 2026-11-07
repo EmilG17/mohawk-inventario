@@ -103,4 +103,58 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     await page.getByRole('button', { name: 'Registrar' }).click();
     await expect(page.locator('#recent li')).toHaveCount(4);
   });
+
+  test('gestión masiva del catálogo: selección, modificación masiva y vaciado', async ({ page }) => {
+    // 1. Cargar catálogo de ejemplo
+    await page.goto('/#/ajustes');
+    await page.getByRole('button', { name: 'Cargar catálogo de ejemplo' }).click();
+    await expect(page).toHaveURL(/#\/catalogo/);
+    await expect(page.locator('.plist li').first()).toBeVisible();
+
+    // 2. Verificar barra de herramientas de selección
+    const selectAll = page.locator('.select-toolbar input[type="checkbox"]');
+    await expect(selectAll).toBeVisible();
+
+    // 3. Seleccionar todos los visibles
+    await selectAll.check();
+    const massBar = page.locator('.mass-bar');
+    await expect(massBar).toBeVisible();
+    await expect(massBar.locator('.mass-info')).toContainText('seleccionado');
+
+    // 4. Modificación masiva: cambiar unidad a PAQ
+    await massBar.getByRole('button', { name: 'Modificar' }).click();
+    await expect(page.locator('dialog[open] h3')).toContainText('Modificación masiva');
+
+    // Activar casilla de unidad y escribir PAQ
+    await page.locator('.mass-form .mass-field-block').first().locator('input[type="checkbox"]').check();
+    await page.locator('.mass-form .mass-field-block').first().locator('input[type="text"]').fill('PAQ');
+    await page.getByRole('button', { name: 'Aplicar cambios' }).click();
+    await expect(page.locator('dialog[open]')).toBeHidden();
+
+    // Verificar que los ítems ahora muestran PAQ
+    await expect(page.locator('.plist li').first()).toContainText('PAQ');
+
+    // 5. Eliminación masiva: seleccionar un ítem con su checkbox y eliminarlo
+    const firstItemCheck = page.locator('.plist li .item-check').first();
+    await firstItemCheck.check();
+    await expect(massBar).toBeVisible();
+    await expect(massBar.locator('.mass-info')).toContainText('1 seleccionado');
+
+    await massBar.getByRole('button', { name: 'Eliminar' }).click();
+    await expect(page.locator('dialog[open] h3')).toHaveText('Eliminar seleccionados');
+    await page.locator('dialog[open]').getByRole('button', { name: 'Eliminar' }).click();
+    await expect(page.locator('dialog[open]')).toBeHidden();
+
+    // 6. Eliminación total del catálogo vía Acciones Masivas
+    await page.locator('.select-toolbar button').click();
+    await expect(page.locator('dialog[open] h3')).toHaveText('Acciones masivas del catálogo');
+    await page.getByRole('button', { name: 'Opciones de eliminación masiva' }).click();
+    await expect(page.locator('dialog[open] h3')).toHaveText('Eliminación masiva del catálogo');
+    await page.getByRole('button', { name: 'Vaciar todo' }).click();
+    await expect(page.locator('dialog[open] h3')).toHaveText('Vaciar catálogo completo');
+    await page.locator('dialog[open]').getByRole('button', { name: 'Vaciar catálogo' }).click();
+
+    // 7. Catálogo debe estar completamente vacío
+    await expect(page.locator('.plist .empty')).toHaveText('Catálogo vacío');
+  });
 });

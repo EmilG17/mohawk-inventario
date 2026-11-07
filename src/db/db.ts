@@ -136,6 +136,69 @@ export async function clearProducts(): Promise<void> {
   await (await getDB()).clear('products');
 }
 
+export async function deleteProduct(barcode: string): Promise<void> {
+  await (await getDB()).delete('products', barcode);
+}
+
+export async function deleteProducts(barcodes: string[]): Promise<number> {
+  const db = await getDB();
+  const tx = db.transaction('products', 'readwrite');
+  let count = 0;
+  for (const b of barcodes) {
+    const existing = await tx.store.get(b);
+    if (existing) {
+      await tx.store.delete(b);
+      count++;
+    }
+  }
+  await tx.done;
+  return count;
+}
+
+export interface MassProductPatch {
+  brand?: string;
+  unit?: string;
+  description?: string;
+  expectedQty?: number | null; // null = eliminar valor
+  unitCost?: number | null;     // null = eliminar valor
+  uncataloged?: boolean;
+  source?: DescriptionSource;
+  descriptionPrefix?: string;
+  descriptionSuffix?: string;
+}
+
+export async function bulkModifyProducts(barcodes: string[], patch: MassProductPatch): Promise<number> {
+  const db = await getDB();
+  const tx = db.transaction('products', 'readwrite');
+  let count = 0;
+  for (const b of barcodes) {
+    const p = await tx.store.get(b);
+    if (!p) continue;
+    if (patch.brand !== undefined) p.brand = patch.brand.trim();
+    if (patch.unit !== undefined) p.unit = patch.unit.trim().toUpperCase();
+    if (patch.description !== undefined && patch.description.trim()) {
+      p.description = patch.description.trim();
+      p.source = 'manual';
+    }
+    if (patch.expectedQty !== undefined) {
+      if (patch.expectedQty === null) delete p.expectedQty;
+      else p.expectedQty = patch.expectedQty;
+    }
+    if (patch.unitCost !== undefined) {
+      if (patch.unitCost === null) delete p.unitCost;
+      else p.unitCost = patch.unitCost;
+    }
+    if (patch.uncataloged !== undefined) p.uncataloged = patch.uncataloged;
+    if (patch.source !== undefined) p.source = patch.source;
+    if (patch.descriptionPrefix && p.description) p.description = `${patch.descriptionPrefix.trim()} ${p.description}`;
+    if (patch.descriptionSuffix && p.description) p.description = `${p.description} ${patch.descriptionSuffix.trim()}`;
+    await tx.store.put(p);
+    count++;
+  }
+  await tx.done;
+  return count;
+}
+
 // ---------- sesiones ----------
 export async function createSession(name: string, counter: string): Promise<Session> {
   const s: Session = { id: uid(), name, counter, createdAt: Date.now(), closed: false };
