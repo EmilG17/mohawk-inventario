@@ -19,6 +19,10 @@ export const settingsView: View = {
     const quickCheck = h('input', { type: 'checkbox', checked: s.quickMode }) as HTMLInputElement;
     const showExpCheck = h('input', { type: 'checkbox', checked: s.showExpected }) as HTMLInputElement;
     const currInput = h('input', { class: 'input', value: s.currency, maxlength: 5, placeholder: 'MXN' }) as HTMLInputElement;
+    const syncEnabledCheck = h('input', { type: 'checkbox', checked: s.syncEnabled }) as HTMLInputElement;
+    const syncAutoCheck = h('input', { type: 'checkbox', checked: s.syncAuto }) as HTMLInputElement;
+    const syncRoomInput = h('input', { class: 'input', value: s.syncRoomCode, placeholder: 'Ej. MHK-PLANTA-1' }) as HTMLInputElement;
+    const syncEndpointInput = h('input', { class: 'input', value: s.syncEndpointUrl, placeholder: 'Opcional: https://tu-proyecto.firebaseio.com o URL REST' }) as HTMLInputElement;
 
     const save = async () => {
       await saveSettings({
@@ -30,6 +34,10 @@ export const settingsView: View = {
         quickMode: quickCheck.checked,
         showExpected: showExpCheck.checked,
         currency: (currInput.value.trim() || 'MXN').toUpperCase(),
+        syncEnabled: syncEnabledCheck.checked,
+        syncAuto: syncAutoCheck.checked,
+        syncRoomCode: syncRoomInput.value.trim().toUpperCase(),
+        syncEndpointUrl: syncEndpointInput.value.trim(),
       });
       toast('Ajustes guardados', 'ok');
     };
@@ -41,6 +49,36 @@ export const settingsView: View = {
           h('span', null, 'Nombre del contador'),
           nameInput,
           h('span', { class: 'muted small' }, 'Se guarda con cada escaneo para auditoría.'),
+        ),
+      ),
+
+      h('section', { class: 'card' },
+        h('h3', null, '☁️ Sincronización en línea (Equipo en tiempo real)'),
+        h('label', { class: 'switch-row' },
+          h('div', null,
+            h('b', null, 'Activar sincronización en línea'),
+            h('div', { class: 'muted small' }, 'Comparte conteos en tiempo real entre técnicos y supervisor usando un mismo Código de Sala.'),
+          ),
+          syncEnabledCheck,
+        ),
+        h('label', { class: 'switch-row' },
+          h('div', null,
+            h('b', null, 'Sincronización automática al escanear'),
+            h('div', { class: 'muted small' }, 'Envía cada lectura en segundo plano (y reintenta al recuperar Wi-Fi/datos).'),
+          ),
+          syncAutoCheck,
+        ),
+        h('div', { class: 'grid2' },
+          h('label', { class: 'field' },
+            h('span', null, 'Código de Sala compartida'),
+            syncRoomInput,
+            h('span', { class: 'muted small' }, 'Todos los técnicos de la sesión deben usar el mismo código.'),
+          ),
+          h('label', { class: 'field' },
+            h('span', null, 'URL de servidor nube (Opcional)'),
+            syncEndpointInput,
+            h('span', { class: 'muted small' }, 'Compatible con Firebase Realtime DB, Supabase o endpoint REST JSON.'),
+          ),
         ),
       ),
 

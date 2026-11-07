@@ -16,7 +16,7 @@ import { openUnifyReportsDialog } from './unifyReportsDialog';
 import { navigate, type View } from './router';
 
 let selectedSessionId: string | null = null;
-let filter: 'todos' | RowStatus = 'todos';
+let filter: 'todos' | 'por_pedir' | RowStatus = 'todos';
 let query = '';
 let includeNotCounted = true;
 
@@ -65,7 +65,13 @@ export const reportView: View = {
     const drawList = () => {
       const words = norm(query).split(/\s+/).filter(Boolean);
       const rows = allRows
-        .filter((r) => filter === 'todos' || r.status === filter)
+        .filter((r) =>
+          filter === 'todos'
+            ? true
+            : filter === 'por_pedir'
+              ? Boolean(r.needsReorder)
+              : r.status === filter,
+        )
         .filter((r) => {
           if (!words.length) return true;
           const hay = norm(`${r.description} ${r.sku} ${displayBarcode(r.barcode)} ${r.counters.join(' ')}`);
@@ -90,11 +96,23 @@ export const reportView: View = {
                 r.unit ? ` · ${r.unit}` : '',
               ),
             ),
-            h('span', { class: badgeClass }, STATUS_LABEL[r.status]),
+            h(
+              'div',
+              { class: 'row', style: 'gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end;' },
+              r.needsReorder
+                ? h(
+                    'span',
+                    { class: 'badge warn', title: `Bajo stock mínimo (${fmtNum(r.minQty)})` },
+                    `🛒 Pedir +${fmtNum(r.suggestedOrderQty)}`,
+                  )
+                : null,
+              h('span', { class: badgeClass }, STATUS_LABEL[r.status]),
+            ),
           ),
           h('div', { class: 'r-nums' },
             h('span', null, 'Teórico: ', h('b', null, fmtNum(r.expected))),
             h('span', null, 'Contado: ', h('b', null, fmtNum(r.counted))),
+            r.minQty !== undefined ? h('span', null, 'Mín: ', h('b', null, fmtNum(r.minQty))) : null,
             r.diff !== undefined ? h('span', { class: `diff ${r.diff < 0 ? 'neg' : r.diff > 0 ? 'pos' : ''}` }, 'Dif: ', h('b', null, diffText)) : null,
             r.diffValue !== undefined && r.diffValue !== 0 ? h('span', { class: 'muted small' }, fmtMoney(r.diffValue)) : null,
           ),
@@ -114,6 +132,7 @@ export const reportView: View = {
     const updateChips = () => {
       clear(chipsWrap,
         chip('todos', 'Todos', allRows.length),
+        chip('por_pedir', '🛒 Por pedir', summary.reorderCount),
         chip('faltante', 'Faltantes', summary.short),
         chip('sobrante', 'Sobrantes', summary.over),
         chip('no_contado', 'No contados', summary.notCounted),
@@ -189,13 +208,14 @@ export const reportView: View = {
           kpi(fmtNum(summary.short), 'Faltantes', summary.short ? 'bad' : ''),
           kpi(fmtNum(summary.over), 'Sobrantes', summary.over ? 'warn' : ''),
           kpi(fmtNum(summary.notCounted), 'No contados'),
-          kpi(fmtNum(summary.uncataloged), 'No catalogados', summary.uncataloged ? 'warn' : ''),
+          kpi(fmtNum(summary.reorderCount), 'Por pedir', summary.reorderCount ? 'warn' : ''),
         ),
-        summary.shortValue || summary.overValue
-          ? h('div', { class: 'row values-row' },
+        summary.shortValue || summary.overValue || summary.reorderValue
+          ? h('div', { class: 'row values-row wrap' },
             h('span', { class: 'small' }, 'Faltante: ', h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
             h('span', { class: 'small' }, 'Sobrante: ', h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
             h('span', { class: 'small' }, 'Neto: ', h('b', null, fmtMoney(summary.netValue))),
+            summary.reorderValue ? h('span', { class: 'small' }, 'Est. Compra: ', h('b', null, fmtMoney(summary.reorderValue))) : null,
           )
           : null,
         h('div', { class: 'row wrap' },

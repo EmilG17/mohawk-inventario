@@ -1,9 +1,18 @@
 import {
-  allProducts, allSessions, closeSession, countsForSession, deleteSession, getActiveSession, getDeviceId,
-  reopenSession, setActiveSession, type Session,
+  allProducts, allSessions, closeSession, countsForSession, deleteSession, getActiveSession, getDeviceId, getMeta,
+  reopenSession, setActiveSession, type CountEntry, type Session,
 } from '../db/db';
+import { renderQrCodeSvg } from '../barcode/code128';
 import { buildCountFile, safeFileName, type CountFile } from '../io/exportResults';
 import { mergeCountFiles, parseTechnicianReportFile } from '../io/mergeCounts';
+import { loadSettings, saveSettings } from '../settings';
+import {
+  decodeCompactCountQr,
+  encodeCompactCountQrChunks,
+  generateRoomCode,
+  normalizeRoomCode,
+  syncNow,
+} from '../sync/cloudSync';
 import {
   clear, confirmDialog, fmtDateTime, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
@@ -11,15 +20,129 @@ import { askCounterName, newSessionFlow } from './home';
 import { navigate, type View } from './router';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
 
+function openShowMyQrDialog(session: Session, counts: CountEntry[]): void {
+  const chunks = encodeCompactCountQrChunks(session, counts, 25);
+  let idx = 0;
+
+  const qrBox = h('div', {
+    style: 'display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; background: #fff; border-radius: 12px; border: 1px solid #e2e8f0;',
+  });
+  const pageLabel = h('div', { class: 'badge info' });
+
+  const renderSlide = () => {
+    const svg = renderQrCodeSvg(chunks[idx], 240, 2);
+    qrBox.innerHTML = svg;
+    pageLabel.textContent =
+      chunks.length > 1
+        ? `Código QR ${idx + 1} de ${chunks.length} (${counts.length} lecturas totales)`
+        : `Código QR listo (${counts.length} lectura${counts.length === 1 ? '' : 's'})`;
+  };
+  renderSlide();
+
+  const body = h(
+    'div',
+    { class: 'form', style: 'text-align: center;' },
+    h(
+      'p',
+      { class: 'muted small', style: 'margin: 0;' },
+      `Pide al supervisor que escanee este código QR desde la pestaña Contar o desde Equipo → "Recibir por QR" para consolidar los conteos de ${session.counter}.`,
+    ),
+    pageLabel,
+    qrBox,
+    chunks.length > 1
+      ? h(
+          'div',
+          { class: 'row', style: 'justify-content: center; gap: 8px;' },
+          h(
+            'button',
+            {
+              class: 'btn sm',
+              type: 'button',
+              onclick: () => {
+                idx = (idx - 1 + chunks.length) % chunks.length;
+                renderSlide();
+              },
+            },
+            '◀ Anterior',
+          ),
+          h(
+            'button',
+            {
+              class: 'btn sm',
+              type: 'button',
+              onclick: () => {
+                idx = (idx + 1) % chunks.length;
+                renderSlide();
+              },
+            },
+            'Siguiente ▶',
+          ),
+        )
+      : null,
+  );
+
+  openDialog(`QR de conteo · ${session.counter}`, body, [{ label: 'Cerrar' }]);
+}
+
+function openReceiveQrDialog(activeSession: Session): void {
+  const input = h('textarea', {
+    class: 'input',
+    rows: 3,
+    placeholder: 'Escanea el QR con lector o pega aquí el código MHKSYNC1|...',
+  }) as HTMLTextAreaElement;
+
+  const body = h(
+    'div',
+    { class: 'form' },
+    h(
+      'p',
+      { class: 'muted small', style: 'margin: 0;' },
+      'Puedes escanear directamente el QR del técnico desde la cámara en la pestaña "Contar", con pistola lectora2D aquí, o pegar el texto del QR:',
+    ),
+    input,
+  );
+
+  openDialog('Recibir conteo por QR', body, [
+    { label: 'Cancelar' },
+    {
+      label: 'Consolidar QR',
+      kind: 'primary',
+      onClick: async () => {
+        const val = input.value.trim();
+        if (!val) {
+          toast('Escanea o pega primero el contenido del QR', 'warn');
+          return true;
+        }
+        try {
+          const cf = decodeCompactCountQr(val);
+          const res = await mergeCountFiles(activeSession.id, [cf]);
+          toast(
+            `QR de ${cf.session.counter} integrado: +${res.added} lectura(s) (${res.duplicates} duplicadas omitidas)`,
+            'ok',
+            4500,
+          );
+          navigate('/equipo');
+        } catch (err) {
+          toast((err as Error).message || 'QR inválido', 'error');
+          return true;
+        }
+      },
+    },
+  ]);
+}
+
 export const teamView: View = {
   title: 'Equipo',
   async render(root) {
-    const [sessions, current, deviceId] = await Promise.all([
-      allSessions(), getActiveSession(), getDeviceId(),
+    const [sessions, current, deviceId, s] = await Promise.all([
+      allSessions(), getActiveSession(), getDeviceId(), loadSettings(),
     ]);
 
     const curCounts = current ? await countsForSession(current.id) : [];
     const products = await allProducts();
+    const lastSyncTs = s.syncRoomCode
+      ? await getMeta<number>(`lastSync_${normalizeRoomCode(s.syncRoomCode)}`)
+      : undefined;
 
     // Contadores que participaron en la sesión activa
     const contributors = new Map<string, { qty: number; scans: number }>();
@@ -75,7 +198,137 @@ export const teamView: View = {
       navigate('/equipo');
     };
 
+    // Controles de Sala de Sincronización en Línea
+    const roomInput = h('input', {
+      class: 'input',
+      value: s.syncRoomCode,
+      placeholder: 'Ej. MHK-2026',
+      style: 'text-transform: uppercase; font-weight: 600;',
+    }) as HTMLInputElement;
+
+    const endpointInput = h('input', {
+      class: 'input',
+      value: s.syncEndpointUrl,
+      placeholder: 'Opcional: https://tu-db.firebaseio.com o URL REST',
+    }) as HTMLInputElement;
+
+    const autoCheck = h('input', {
+      type: 'checkbox',
+      checked: s.syncAuto,
+      onchange: async (e: Event) => {
+        await saveSettings({ syncAuto: (e.target as HTMLInputElement).checked, syncEnabled: true });
+      },
+    }) as HTMLInputElement;
+
+    const syncStatusEl = h(
+      'div',
+      { class: 'muted small' },
+      lastSyncTs
+        ? `Última sincronización en sala ${s.syncRoomCode}: ${fmtDateTime(lastSyncTs)}`
+        : 'Ingresa un mismo Código de Sala en los dispositivos de los técnicos y del supervisor para sincronizar en línea.',
+    );
+
+    const doSyncRoom = async () => {
+      const code = normalizeRoomCode(roomInput.value);
+      if (!code) {
+        toast('Ingresa o genera un Código de Sala primero', 'warn');
+        return;
+      }
+      roomInput.value = code;
+      await saveSettings({
+        syncEnabled: true,
+        syncRoomCode: code,
+        syncEndpointUrl: endpointInput.value.trim(),
+        syncAuto: autoCheck.checked,
+      });
+      try {
+        const res = await syncNow({
+          sessionId: current?.id,
+          roomCode: code,
+          endpointUrl: endpointInput.value.trim(),
+        });
+        toast(
+          `Sala ${res.roomCode} sincronizada: +${res.addedCounts} lectura(s) nuevas · ${res.totalRoomCounts} totales (${res.participants.length} participante(s))`,
+          'ok',
+          4500,
+        );
+        navigate('/equipo');
+      } catch (err) {
+        toast((err as Error).message || 'Error al sincronizar sala', 'error');
+      }
+    };
+
+    const syncCard = h(
+      'section',
+      { class: 'card' },
+      h(
+        'div',
+        { class: 'card-head wrap', style: 'gap: 8px;' },
+        h('div', null,
+          h('div', { class: 'muted small' }, 'Sincronización multipuesto'),
+          h('h3', { style: 'margin: 0;' }, '☁️ Sincronización en Línea en Tiempo Real'),
+        ),
+        s.syncEnabled && s.syncRoomCode
+          ? h('span', { class: 'badge ok' }, `Sala activa: ${s.syncRoomCode}`)
+          : h('span', { class: 'badge info' }, 'Listo para conectar'),
+      ),
+      syncStatusEl,
+      h(
+        'div',
+        { class: 'grid2', style: 'margin-top: 8px;' },
+        h(
+          'label',
+          { class: 'field' },
+          h('span', null, 'Código de Sala compartida'),
+          h(
+            'div',
+            { class: 'row', style: 'gap: 6px;' },
+            roomInput,
+            h(
+              'button',
+              {
+                class: 'btn sm',
+                type: 'button',
+                title: 'Generar nuevo código de sala',
+                onclick: () => {
+                  roomInput.value = generateRoomCode('MHK');
+                },
+              },
+              'Generar',
+            ),
+          ),
+        ),
+        h(
+          'label',
+          { class: 'field' },
+          h('span', null, 'Servidor Nube REST / Firebase (Opcional)'),
+          endpointInput,
+        ),
+      ),
+      h(
+        'div',
+        { class: 'row wrap', style: 'justify-content: space-between; align-items: center; margin-top: 8px; gap: 10px;' },
+        h(
+          'label',
+          { class: 'check-inline small' },
+          autoCheck,
+          h('span', null, 'Sincronizar automáticamente cada escaneo en vivo'),
+        ),
+        h(
+          'div',
+          { class: 'row wrap', style: 'gap: 8px;' },
+          h(
+            'button',
+            { class: 'btn primary', type: 'button', onclick: doSyncRoom },
+            icon('globe'),
+            'Sincronizar ahora',
+          ),
+        ),
+      ),
+    );
+
     clear(root,
+      syncCard,
       // Panel sesión actual y multiusuario
       current
         ? h('section', { class: 'card' },
@@ -89,6 +342,15 @@ export const teamView: View = {
             }, icon('users'), 'Unificar reportes de técnicos'),
             h('button', { class: 'btn', onclick: importOthers }, icon('upload'), 'Importar archivos de otros'),
             h('button', { class: 'btn', onclick: shareMyCount, disabled: !curCounts.length }, icon('share'), 'Compartir mi conteo'),
+            h('button', {
+              class: 'btn',
+              disabled: !curCounts.length,
+              onclick: () => openShowMyQrDialog(current, curCounts),
+            }, icon('scan'), '📱 Mostrar QR de mi conteo'),
+            h('button', {
+              class: 'btn',
+              onclick: () => openReceiveQrDialog(current),
+            }, icon('scan'), '📷 Recibir por QR'),
             h('button', {
               class: 'btn danger ghost',
               onclick: async () => {
@@ -105,10 +367,10 @@ export const teamView: View = {
             h('summary', null, '¿Cómo contar en equipo y unificar reportes de técnicos?'),
             h('ol', { class: 'small' },
               h('li', null, 'Cada técnico abre la app en su teléfono y pone su nombre.'),
-              h('li', null, 'Todos importan el mismo Excel de catálogo (o el supervisor se los comparte en JSON desde Catálogo → Compartir).'),
-              h('li', null, 'Cada quien cuenta en su zona sin necesidad de internet.'),
-              h('li', null, 'Al terminar, cada técnico envía su reporte (puede ser el archivo ', h('b', null, 'Excel (.xlsx)'), ', ', h('b', null, 'CSV (.csv)'), ' o ', h('b', null, 'Compartir mi conteo (.json)'), ').'),
-              h('li', null, 'El supervisor toca ', h('b', null, 'Unificar reportes de técnicos'), ', selecciona todos los archivos recibidos y genera al instante el ', h('b', null, 'Reporte Maestro Unificado'), ' con desglose por técnico.'),
+              h('li', null, 'Todos importan el mismo Excel de catálogo (o se unen al mismo ', h('b', null, 'Código de Sala en Línea'), ' arriba).'),
+              h('li', null, 'Cada quien cuenta en su zona (en línea se sincroniza solo; sin señal se guarda localmente y puedes mostrar un ', h('b', null, 'Código QR'), ' en pantalla).'),
+              h('li', null, 'Al terminar, cada técnico sincroniza en línea, muestra su QR o envía su reporte (', h('b', null, 'Excel .xlsx'), ', ', h('b', null, 'CSV .csv'), ' o ', h('b', null, 'JSON'), ').'),
+              h('li', null, 'El supervisor toca ', h('b', null, 'Sincronizar ahora'), ' o ', h('b', null, 'Unificar reportes de técnicos'), ' y obtiene al instante el ', h('b', null, 'Reporte Maestro Unificado'), ' con alertas de stock mínimo.'),
             ),
           ),
           contributors.size > 0
@@ -126,7 +388,7 @@ export const teamView: View = {
         : h('section', { class: 'card' },
           h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
           h('h2', null, 'Sin sesión activa'),
-          h('p', { class: 'muted' }, 'No hay ninguna sesión activa seleccionada. Puedes unificar los reportes enviados por los técnicos, seleccionar una sesión guardada abajo o iniciar una nueva.'),
+          h('p', { class: 'muted' }, 'No hay ninguna sesión activa seleccionada. Puedes sincronizar una sala en línea arriba, unificar los reportes enviados por los técnicos, seleccionar una sesión guardada abajo o iniciar una nueva.'),
           h('div', { class: 'row wrap' },
             h('button', {
               class: 'btn primary',

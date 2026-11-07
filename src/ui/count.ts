@@ -2,10 +2,12 @@ import {
   addCount, allProducts, closeSession, countsForSession, deleteCount, findBySku, getActiveSession, getProduct, putCount,
   type CountEntry, type Product, type Session,
 } from '../db/db';
+import { mergeCountFiles } from '../io/mergeCounts';
 import { displayBarcode, normalizeBarcode, parseNumber } from '../io/normalize';
 import { resolveDescription, setManualDescription, type ResolveStatus } from '../lookup/lookup';
 import { beep, cameraAvailable, createDebouncer, startScanner, unlockAudio, vibrate, type ScannerHandle } from '../scanner/scanner';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
+import { decodeCompactCountQr, isCompactCountQr, triggerBackgroundSync } from '../sync/cloudSync';
 import { clear, confirmDialog, fmtNum, fmtTime, h, icon, openDialog, toast } from './dom';
 import { newSessionFlow } from './home';
 import { editProductDialog, sourceBadge } from './productDialog';
@@ -181,6 +183,11 @@ function onKeydown(e: KeyboardEvent) {
 // ---------------- flujo de escaneo ----------------
 function onDetected(text: string) {
   if (isScanLocked()) return;
+  if (isCompactCountQr(text)) {
+    if (!debounce(text)) return;
+    void processCode(text, 'camara');
+    return;
+  }
   const code = normalizeBarcode(text);
   if (!code || !debounce(code)) return;
   void processCode(code, 'camara');
@@ -196,8 +203,27 @@ function feedback(kind: 'ok' | 'warn') {
 }
 
 export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'manual'): Promise<void> {
+  if (!session) return;
+  if (isCompactCountQr(raw)) {
+    try {
+      const cf = decodeCompactCountQr(raw);
+      const res = await mergeCountFiles(session.id, [cf]);
+      feedback('ok');
+      toast(
+        `QR de ${cf.session.counter} consolidado: +${res.added} lectura(s) (${res.duplicates} duplicadas omitidas)`,
+        'ok',
+        4500,
+      );
+      await renderRecent();
+      triggerBackgroundSync(session.id);
+    } catch (err) {
+      toast((err as Error).message || 'Error al leer QR de técnico', 'error');
+    }
+    return;
+  }
+
   const code = raw.startsWith('SKU:') ? raw : normalizeBarcode(raw);
-  if (!code || !session) return;
+  if (!code) return;
   const s = settingsSync();
 
   // Escaneo 1 a 1: ignorar nuevas lecturas de cámara/lector si está bloqueado o en pausa
@@ -220,6 +246,7 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
     const entry = await addCount({ sessionId: session.id, barcode: code, qty: 1, counter: session.counter });
     lastQuick = entry;
     triggerCooldown(COOLDOWN_MS);
+    triggerBackgroundSync(session.id);
   }
   renderCard();
 
@@ -252,6 +279,7 @@ async function commitPending(silent = false): Promise<void> {
   if (p.qty > 0) {
     await addCount({ sessionId: session.id, barcode: p.code, qty: p.qty, counter: session.counter });
     if (!silent) toast(`Registrado: ${fmtNum(p.qty)} × ${p.product?.description || displayBarcode(p.code)}`, 'ok');
+    triggerBackgroundSync(session.id);
   }
   renderCard();
   await renderRecent();

@@ -2,8 +2,10 @@ import * as XLSX from 'xlsx';
 import type { Product } from '../db/db';
 import { looksScientific, normalizeBarcode, parseNumber } from './normalize';
 
-export type Field = 'barcode' | 'sku' | 'description' | 'unit' | 'expectedQty' | 'unitCost';
-export type Mapping = Record<Field, number>; // índice de columna, -1 = no asignada
+export type CoreField = 'barcode' | 'sku' | 'description' | 'unit' | 'expectedQty' | 'unitCost';
+export type OptionalField = 'minQty' | 'maxQty';
+export type Field = CoreField | OptionalField;
+export type Mapping = Record<CoreField, number> & Partial<Record<OptionalField, number>>; // índice de columna, -1 = no asignada
 
 export const FIELD_LABELS: Record<Field, string> = {
   barcode: 'Código de barras',
@@ -11,6 +13,8 @@ export const FIELD_LABELS: Record<Field, string> = {
   description: 'Descripción',
   unit: 'Unidad',
   expectedQty: 'Existencia teórica',
+  minQty: 'Stock mínimo (Reorden)',
+  maxQty: 'Stock máximo (Objetivo)',
   unitCost: 'Costo unitario',
 };
 
@@ -22,6 +26,8 @@ const SYNONYMS: Record<Field, string[]> = {
   unit: ['unidad', 'um', 'uom', 'unit', 'unidad de medida', 'u m'],
   expectedQty: ['existencia', 'existencia teorica', 'stock', 'cantidad', 'qty', 'on hand', 'saldo', 'inventario',
     'cantidad sistema', 'libre utilizacion', 'teorico'],
+  minQty: ['stock minimo', 'minimo', 'min', 'punto de reorden', 'reorden', 'reorder point', 'min stock', 'rop'],
+  maxQty: ['stock maximo', 'maximo', 'max', 'stock objetivo', 'max stock', 'nivel objetivo'],
   unitCost: ['costo', 'costo unitario', 'precio', 'unit cost', 'cost', 'price', 'precio unitario'],
 };
 
@@ -58,7 +64,7 @@ export function detectHeaderRow(rows: unknown[][]): number {
   let bestScore = -1;
   for (let i = 0; i < Math.min(rows.length, 20); i++) {
     const m = guessMapping(rows[i]);
-    const score = Object.values(m).filter((v) => v >= 0).length;
+    const score = Object.values(m).filter((v) => (v ?? -1) >= 0).length;
     if (score > bestScore) {
       bestScore = score;
       best = i;
@@ -69,13 +75,13 @@ export function detectHeaderRow(rows: unknown[][]): number {
 
 export function guessMapping(headers: unknown[]): Mapping {
   const h = headers.map(norm);
-  const m: Mapping = { barcode: -1, sku: -1, description: -1, unit: -1, expectedQty: -1, unitCost: -1 };
+  const m: Mapping = { barcode: -1, sku: -1, description: -1, unit: -1, expectedQty: -1, minQty: -1, maxQty: -1, unitCost: -1 };
   const used = new Set<number>();
   // Primero coincidencias exactas, luego parciales; en orden de prioridad de campos
-  const order: Field[] = ['barcode', 'description', 'sku', 'unit', 'expectedQty', 'unitCost'];
+  const order: Field[] = ['barcode', 'description', 'sku', 'unit', 'expectedQty', 'minQty', 'maxQty', 'unitCost'];
   for (const pass of ['exact', 'partial'] as const) {
     for (const f of order) {
-      if (m[f] >= 0) continue;
+      if ((m[f] ?? -1) >= 0) continue;
       const idx = h.findIndex(
         (col, i) =>
           !used.has(i) &&
@@ -105,7 +111,10 @@ export function rowsToProducts(rows: unknown[][], headerRow: number, mapping: Ma
   if (mapping.barcode < 0 && mapping.sku < 0) {
     throw new Error('Debe asignar al menos la columna de código de barras o la de SKU.');
   }
-  const cell = (r: unknown[], f: Field) => (mapping[f] >= 0 ? r[mapping[f]] : undefined);
+  const cell = (r: unknown[], f: Field) => {
+    const idx = mapping[f] ?? -1;
+    return idx >= 0 ? r[idx] : undefined;
+  };
 
   for (let i = headerRow + 1; i < rows.length; i++) {
     const r = rows[i];
@@ -122,12 +131,16 @@ export function rowsToProducts(rows: unknown[][], headerRow: number, mapping: Ma
       continue;
     }
     const description = String(cell(r, 'description') ?? '').trim();
+    const minQty = parseNumber(cell(r, 'minQty'));
+    const maxQty = parseNumber(cell(r, 'maxQty'));
     const p: Product = {
       barcode,
       sku,
       description,
       unit: String(cell(r, 'unit') ?? '').trim(),
       expectedQty: parseNumber(cell(r, 'expectedQty')),
+      ...(minQty !== undefined ? { minQty } : {}),
+      ...(maxQty !== undefined ? { maxQty } : {}),
       unitCost: parseNumber(cell(r, 'unitCost')),
       source: description ? 'catalogo' : 'pendiente',
       uncataloged: false,

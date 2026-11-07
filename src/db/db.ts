@@ -8,6 +8,8 @@ export interface Product {
   description: string;
   unit: string;
   expectedQty?: number;
+  minQty?: number;
+  maxQty?: number;
   unitCost?: number;
   brand?: string;
   imageUrl?: string;
@@ -161,6 +163,8 @@ export interface MassProductPatch {
   unit?: string;
   description?: string;
   expectedQty?: number | null; // null = eliminar valor
+  minQty?: number | null;      // null = eliminar valor
+  maxQty?: number | null;      // null = eliminar valor
   unitCost?: number | null;     // null = eliminar valor
   uncataloged?: boolean;
   source?: DescriptionSource;
@@ -184,6 +188,14 @@ export async function bulkModifyProducts(barcodes: string[], patch: MassProductP
     if (patch.expectedQty !== undefined) {
       if (patch.expectedQty === null) delete p.expectedQty;
       else p.expectedQty = patch.expectedQty;
+    }
+    if (patch.minQty !== undefined) {
+      if (patch.minQty === null) delete p.minQty;
+      else p.minQty = patch.minQty;
+    }
+    if (patch.maxQty !== undefined) {
+      if (patch.maxQty === null) delete p.maxQty;
+      else p.maxQty = patch.maxQty;
     }
     if (patch.unitCost !== undefined) {
       if (patch.unitCost === null) delete p.unitCost;

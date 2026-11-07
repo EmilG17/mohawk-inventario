@@ -75,4 +75,52 @@ describe('buildReport y summarize', () => {
     expect(rows).toHaveLength(1);
     expect(rows[0].status).toBe('ok');
   });
+
+  it('calcula alertas de stock mínimo (needsReorder), cantidad sugerida a pedir y costo estimado', () => {
+    const prodsWithMinMax: Product[] = [
+      {
+        barcode: '00071153000108',
+        sku: 'MHK-001',
+        description: 'Guantes M',
+        unit: 'CJA',
+        expectedQty: 45,
+        minQty: 15,
+        maxQty: 60,
+        unitCost: 100,
+        source: 'catalogo',
+      },
+      {
+        barcode: '00071153000115',
+        sku: 'MHK-002',
+        description: 'Guantes L',
+        unit: 'CJA',
+        expectedQty: 30,
+        minQty: 10,
+        maxQty: 40,
+        unitCost: 200,
+        source: 'catalogo',
+      },
+    ];
+    const counts: CountEntry[] = [
+      // MHK-001 tiene 10 <= minQty(15) -> debe pedir (60 - 10) = 50 cajas ($5,000)
+      { id: 'c1', sessionId: 's1', barcode: '00071153000108', qty: 10, counter: 'Juan', deviceId: 'd1', timestamp: 1 },
+      // MHK-002 tiene 25 > minQty(10) -> no requiere pedido
+      { id: 'c2', sessionId: 's1', barcode: '00071153000115', qty: 25, counter: 'Pedro', deviceId: 'd2', timestamp: 2 },
+    ];
+
+    const rows = buildReport(prodsWithMinMax, counts, true);
+    const r1 = rows.find((r) => r.sku === 'MHK-001')!;
+    const r2 = rows.find((r) => r.sku === 'MHK-002')!;
+
+    expect(r1.needsReorder).toBe(true);
+    expect(r1.suggestedOrderQty).toBe(50);
+    expect(r1.estimatedOrderCost).toBe(5000);
+
+    expect(r2.needsReorder).toBe(false);
+    expect(r2.suggestedOrderQty).toBe(0);
+
+    const summary = summarize(rows);
+    expect(summary.reorderCount).toBe(1);
+    expect(summary.reorderValue).toBe(5000);
+  });
 });

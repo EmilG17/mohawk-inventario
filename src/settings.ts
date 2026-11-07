@@ -13,6 +13,14 @@ export interface Settings {
   /** Mostrar la existencia teórica en la pantalla de conteo (por defecto no: conteo "ciego") */
   showExpected: boolean;
   currency: string;
+  /** Sincronización en línea en tiempo real habilitada */
+  syncEnabled: boolean;
+  /** Código de sala compartida entre técnicos y supervisor (ej. MHK-2026) */
+  syncRoomCode: string;
+  /** URL del servidor de sincronización opcional (Firebase Realtime DB, REST, Webhook) */
+  syncEndpointUrl: string;
+  /** Sincronizar automáticamente cada escaneo en segundo plano */
+  syncAuto: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -24,6 +32,10 @@ export const DEFAULT_SETTINGS: Settings = {
   quickMode: false,
   showExpected: false,
   currency: 'MXN',
+  syncEnabled: false,
+  syncRoomCode: '',
+  syncEndpointUrl: '',
+  syncAuto: true,
 };
 
 let cache: Settings | null = null;

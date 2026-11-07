@@ -111,6 +111,12 @@ export function buildReportWorkbook(opts: {
     ['Valor sobrante', summary.overValue],
     ['Valor neto diferencia', summary.netValue],
     ['Exactitud (%)', summary.accuracy],
+    ...(summary.reorderCount > 0
+      ? [
+          ['Productos por pedir (Bajo stock)', summary.reorderCount],
+          ['Costo estimado de compra', summary.reorderValue],
+        ]
+      : []),
   ];
   const wsR = XLSX.utils.aoa_to_sheet(resumen);
   wsR['!cols'] = [{ wch: 26 }, { wch: 40 }];
@@ -121,6 +127,41 @@ export function buildReportWorkbook(opts: {
   addSheet(wb, 'Conteo completo', reportSheetRows(rows), headers);
   addSheet(wb, 'Diferencias', reportSheetRows(rows.filter((r) => r.status === 'faltante' || r.status === 'sobrante')), headers);
   addSheet(wb, 'No catalogados', reportSheetRows(rows.filter((r) => r.status === 'no_catalogado')), headers);
+
+  const reorderRows = rows.filter((r) => r.needsReorder);
+  if (reorderRows.length > 0) {
+    const orderSheetRows = reorderRows.map((r) => ({
+      'Código de barras': displayBarcode(r.barcode),
+      'No. de parte': r.sku,
+      'Descripción': r.description,
+      'Unidad': r.unit,
+      'Contado físico': r.counted,
+      'Stock mínimo': r.minQty ?? '',
+      'Stock máximo': r.maxQty ?? r.expected ?? '',
+      'Cantidad a pedir': r.suggestedOrderQty ?? 0,
+      'Costo unitario': r.unitCost ?? '',
+      'Costo estimado compra': r.estimatedOrderCost ?? '',
+      'Marca': pMap.get(r.barcode)?.brand ?? '',
+    }));
+    addSheet(
+      wb,
+      'Por pedir',
+      orderSheetRows,
+      [
+        'Código de barras',
+        'No. de parte',
+        'Descripción',
+        'Unidad',
+        'Contado físico',
+        'Stock mínimo',
+        'Stock máximo',
+        'Cantidad a pedir',
+        'Costo unitario',
+        'Costo estimado compra',
+        'Marca',
+      ],
+    );
+  }
 
   if (techMap.size > 1) {
     const techRows = [...techMap.entries()].map(([name, info]) => ({
@@ -179,6 +220,7 @@ export function buildCatalogFile(products: Product[]): CatalogFile {
 
 /** Catálogo como Excel (para editar/compartir). */
 export function buildCatalogWorkbook(products: Product[]): Uint8Array {
+  const hasMinMax = products.some((p) => p.minQty !== undefined || p.maxQty !== undefined);
   const rows = products
     .filter((p) => !p.barcode.startsWith('SKU:') || p.sku)
     .map((p) => ({
@@ -187,13 +229,29 @@ export function buildCatalogWorkbook(products: Product[]): Uint8Array {
       'Descripción': p.description,
       'Unidad': p.unit,
       'Existencia teórica': p.expectedQty ?? '',
+      ...(hasMinMax
+        ? {
+            'Stock mínimo': p.minQty ?? '',
+            'Stock máximo': p.maxQty ?? '',
+          }
+        : {}),
       'Costo unitario': p.unitCost ?? '',
       'Marca': p.brand ?? '',
       'Origen descripción': p.source,
     }));
   const wb = XLSX.utils.book_new();
-  addSheet(wb, 'Catalogo', rows,
-    ['Código de barras', 'No. de parte', 'Descripción', 'Unidad', 'Existencia teórica', 'Costo unitario', 'Marca', 'Origen descripción']);
+  const catHeaders = [
+    'Código de barras',
+    'No. de parte',
+    'Descripción',
+    'Unidad',
+    'Existencia teórica',
+    ...(hasMinMax ? ['Stock mínimo', 'Stock máximo'] : []),
+    'Costo unitario',
+    'Marca',
+    'Origen descripción',
+  ];
+  addSheet(wb, 'Catalogo', rows, catHeaders);
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   return out instanceof Uint8Array ? out : new Uint8Array(out as ArrayBuffer);
 }

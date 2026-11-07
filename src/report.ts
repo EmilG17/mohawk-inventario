@@ -8,10 +8,15 @@ export interface ReportRow {
   description: string;
   unit: string;
   expected: number | undefined;
+  minQty?: number;
+  maxQty?: number;
   counted: number;
   diff: number | undefined;
   unitCost: number | undefined;
   diffValue: number | undefined;
+  needsReorder?: boolean;
+  suggestedOrderQty?: number;
+  estimatedOrderCost?: number;
   status: RowStatus;
   counters: string[];
   scans: number;
@@ -31,6 +36,8 @@ export interface ReportSummary {
   overValue: number;
   netValue: number;
   accuracy: number; // % de productos contados sin diferencia
+  reorderCount: number;
+  reorderValue: number;
 }
 
 /**
@@ -56,8 +63,24 @@ export function buildReport(products: Product[], counts: CountEntry[], includeNo
     const a = byCode.get(code);
     const counted = round(a?.qty ?? 0);
     const expected = p?.expectedQty;
+    const minQty = p?.minQty;
+    const maxQty = p?.maxQty;
     const diff = expected !== undefined ? round(counted - expected) : undefined;
     const unitCost = p?.unitCost;
+    const needsReorder = minQty !== undefined && counted <= minQty;
+    let suggestedOrderQty = 0;
+    if (needsReorder && minQty !== undefined) {
+      const target =
+        maxQty !== undefined && maxQty > minQty
+          ? maxQty
+          : expected !== undefined && expected > minQty
+            ? expected
+            : Math.max(minQty * 2, minQty + 1);
+      suggestedOrderQty = Math.max(1, round(target - counted));
+    }
+    const estimatedOrderCost =
+      needsReorder && unitCost !== undefined ? round(suggestedOrderQty * unitCost) : undefined;
+
     let status: RowStatus;
     if (!p || p.uncataloged) status = 'no_catalogado';
     else if (!a) status = 'no_contado';
@@ -69,10 +92,15 @@ export function buildReport(products: Product[], counts: CountEntry[], includeNo
       description: p?.description ?? '',
       unit: p?.unit ?? '',
       expected,
+      ...(minQty !== undefined ? { minQty } : {}),
+      ...(maxQty !== undefined ? { maxQty } : {}),
       counted,
       diff,
       unitCost,
       diffValue: diff !== undefined && unitCost !== undefined ? round(diff * unitCost) : undefined,
+      needsReorder,
+      suggestedOrderQty,
+      ...(estimatedOrderCost !== undefined ? { estimatedOrderCost } : {}),
       status,
       counters: a ? [...a.counters].sort() : [],
       scans: a?.scans ?? 0,
@@ -90,6 +118,7 @@ export function summarize(rows: ReportRow[]): ReportSummary {
   const s: ReportSummary = {
     totalProducts: rows.length, counted: 0, notCounted: 0, ok: 0, short: 0, over: 0, uncataloged: 0,
     totalUnitsCounted: 0, shortValue: 0, overValue: 0, netValue: 0, accuracy: 0,
+    reorderCount: 0, reorderValue: 0,
   };
   for (const r of rows) {
     if (r.scans > 0) s.counted++;
@@ -99,10 +128,15 @@ export function summarize(rows: ReportRow[]): ReportSummary {
     if (r.status === 'faltante') { s.short++; s.shortValue += r.diffValue ?? 0; }
     if (r.status === 'sobrante') { s.over++; s.overValue += r.diffValue ?? 0; }
     if (r.status === 'no_catalogado') s.uncataloged++;
+    if (r.needsReorder) {
+      s.reorderCount++;
+      s.reorderValue += r.estimatedOrderCost ?? 0;
+    }
   }
   s.netValue = round(s.shortValue + s.overValue);
   s.shortValue = round(s.shortValue);
   s.overValue = round(s.overValue);
+  s.reorderValue = round(s.reorderValue);
   s.totalUnitsCounted = round(s.totalUnitsCounted);
   const evaluated = s.ok + s.short + s.over;
   s.accuracy = evaluated ? Math.round((s.ok / evaluated) * 1000) / 10 : 0;

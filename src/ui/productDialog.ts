@@ -78,6 +78,8 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       sku: h('input', { class: 'input', maxlength: 40 }),
       unit: h('input', { class: 'input', maxlength: 15, placeholder: 'PZA, CJA, LT…' }),
       expected: h('input', { class: 'input', inputmode: 'decimal', type: 'text' }),
+      minQty: h('input', { class: 'input', inputmode: 'decimal', type: 'text', placeholder: 'Ej. 10 (alerta)' }),
+      maxQty: h('input', { class: 'input', inputmode: 'decimal', type: 'text', placeholder: 'Ej. 50 (objetivo)' }),
       cost: h('input', { class: 'input', inputmode: 'decimal', type: 'text' }),
     };
     const fill = () => {
@@ -85,6 +87,8 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       f.sku.value = p.sku;
       f.unit.value = p.unit;
       f.expected.value = p.expectedQty?.toString() ?? '';
+      f.minQty.value = p.minQty?.toString() ?? '';
+      f.maxQty.value = p.maxQty?.toString() ?? '';
       f.cost.value = p.unitCost?.toString() ?? '';
     };
     fill();
@@ -314,6 +318,8 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         h('label', { class: 'field' }, h('span', null, 'Unidad'), f.unit),
         h('label', { class: 'field' }, h('span', null, 'Existencia teórica'), f.expected),
         h('label', { class: 'field' }, h('span', null, 'Costo unitario'), f.cost),
+        h('label', { class: 'field' }, h('span', null, 'Stock mínimo (Punto de reorden)'), f.minQty),
+        h('label', { class: 'field' }, h('span', null, 'Stock máximo (Nivel objetivo)'), f.maxQty),
       ),
     );
 
@@ -342,6 +348,8 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
             return true;
           }
           const desc = f.description.value.trim();
+          const parsedMin = parseNumber(f.minQty.value);
+          const parsedMax = parseNumber(f.maxQty.value);
           const next: Product = {
             ...p,
             barcode: newBarcode,
@@ -349,8 +357,12 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
             sku: f.sku.value.trim(),
             unit: f.unit.value.trim(),
             expectedQty: parseNumber(f.expected.value),
+            minQty: parsedMin,
+            maxQty: parsedMax,
             unitCost: parseNumber(f.cost.value),
           };
+          if (parsedMin === undefined) delete next.minQty;
+          if (parsedMax === undefined) delete next.maxQty;
           if (desc !== p.description) next.source = desc ? 'manual' : 'pendiente';
           else if (!desc) next.source = 'pendiente';
 

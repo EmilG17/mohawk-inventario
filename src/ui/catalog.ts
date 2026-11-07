@@ -63,8 +63,8 @@ function mappingDialog(wb: Workbook, fileName: string) {
           class: 'input',
           onchange: (e: Event) => { mapping[f] = Number((e.target as HTMLSelectElement).value); render(); },
         },
-        h('option', { value: '-1', selected: mapping[f] < 0 }, '— No usar —'),
-        headers.map((t, i) => h('option', { value: String(i), selected: mapping[f] === i }, t))));
+        h('option', { value: '-1', selected: (mapping[f] ?? -1) < 0 }, '— No usar —'),
+        headers.map((t, i) => h('option', { value: String(i), selected: (mapping[f] ?? -1) === i }, t))));
     let preview: Product[] = [];
     let warnings: string[] = [];
     let skipped = 0;
@@ -641,7 +641,17 @@ export const catalogView: View = {
             h('div', { class: 'rec-meta' },
               p.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(p.barcode)),
               p.sku ? ` · ${p.sku}` : '', p.unit ? ` · ${p.unit}` : '', p.brand ? ` · ${p.brand}` : ''),
-            h('div', { class: 'pc-badges' }, sourceBadge(p), p.uncataloged ? h('span', { class: 'badge warn' }, 'No catalogado') : null),
+            h('div', { class: 'pc-badges' },
+              sourceBadge(p),
+              p.uncataloged ? h('span', { class: 'badge warn' }, 'No catalogado') : null,
+              p.minQty !== undefined
+                ? h(
+                    'span',
+                    { class: 'badge info', title: 'Punto de reorden / Stock mínimo y máximo' },
+                    `Min: ${fmtNum(p.minQty)}${p.maxQty !== undefined ? ` · Máx: ${fmtNum(p.maxQty)}` : ''}`,
+                  )
+                : null,
+            ),
           ),
           p.expectedQty !== undefined ? h('div', { class: 'rec-qty small' }, fmtNum(p.expectedQty)) : null,
           );
