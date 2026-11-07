@@ -82,9 +82,17 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
       expect(tmpl.columns).toBe(1);
       expect(tmpl.rows).toBe(1);
     }
+
+    // Las opciones de 6" deben ser las últimas de TEMPLATES
+    const templateKeys = Object.keys(TEMPLATES);
+    expect(templateKeys.slice(-3)).toEqual([
+      'intermec397x6',
+      'intermec397x6_full',
+      'intermec6x397',
+    ]);
   });
 
-  it('generates scannable SVG QR code and 3-zone pre-cut BarTender HTML', () => {
+  it('generates scannable SVG QR code and 3-zone pre-cut BarTender HTML without SKU NUMBER prefix', () => {
     const qrSvg = renderQrCodeSvg('1234567', 84, 0);
     expect(qrSvg).toContain('<svg');
     expect(qrSvg).toContain('class="qr-code-svg"');
@@ -100,7 +108,8 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
     expect(html).toContain('precut-zone-top');
     expect(html).toContain('precut-zone-bl');
     expect(html).toContain('precut-zone-br');
-    expect(html).toContain('SKU NUMBER XXXXX');
+    expect(html).toContain('>XXXXX<');
+    expect(html).not.toContain('SKU NUMBER');
     expect(html).toContain('DALTILE');
     expect(html).toContain('1234567');
     expect(html).toContain('qr-code-svg');

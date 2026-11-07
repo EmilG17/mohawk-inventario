@@ -25,14 +25,14 @@ export type LabelTemplate =
   | 'intermec_composite'
   | 'intermec325x2'
   | 'intermec325x2_full'
-  | 'intermec397x6'
-  | 'intermec397x6_full'
-  | 'intermec6x397'
   | 'thermal4x2'
   | 'avery5160'
   | 'avery5163'
   | 'thermal2x1'
-  | 'continuous';
+  | 'continuous'
+  | 'intermec397x6'
+  | 'intermec397x6_full'
+  | 'intermec6x397';
 
 export interface TemplateConfig {
   id: LabelTemplate;
@@ -89,44 +89,6 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     moduleWidth: 2.0,
     hideFooterByDefault: false,
   },
-  intermec397x6: {
-    id: 'intermec397x6',
-    name: 'Intermec PM43 · Formato BarTender (3.97" × 6" · 1 etiqueta por página · Solo Descripción + Código)',
-    perSheet: 1,
-    columns: 1,
-    rows: 1,
-    pageClass: 'intermec-397x6-page bartender-layout',
-    pageSize: '3.97in 6in portrait',
-    barHeight: 32,
-    fontSize: 10,
-    moduleWidth: 2.2,
-    hideFooterByDefault: true,
-  },
-  intermec397x6_full: {
-    id: 'intermec397x6_full',
-    name: 'Intermec PM43 · Formato Completo (3.97" × 6" · 1 etiqueta por página · Con SKU, Unidad y Marca)',
-    perSheet: 1,
-    columns: 1,
-    rows: 1,
-    pageClass: 'intermec-397x6-page bartender-layout with-footer',
-    pageSize: '3.97in 6in portrait',
-    barHeight: 34,
-    fontSize: 10,
-    moduleWidth: 2.2,
-    hideFooterByDefault: false,
-  },
-  intermec6x397: {
-    id: 'intermec6x397',
-    name: 'Intermec PM43 (6" × 3.97" · Apaisado · 1 etiqueta por página)',
-    perSheet: 1,
-    columns: 1,
-    rows: 1,
-    pageClass: 'intermec-6x397-page',
-    pageSize: '6in 3.97in landscape',
-    barHeight: 40,
-    fontSize: 11,
-    moduleWidth: 2.2,
-  },
   thermal4x2: {
     id: 'thermal4x2',
     name: 'Rollo térmico estándar 4" × 2" (100mm × 50mm · Zebra, Rollo)',
@@ -182,6 +144,44 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     pageSize: '50mm 30mm landscape',
     barHeight: 26,
     fontSize: 8,
+  },
+  intermec397x6: {
+    id: 'intermec397x6',
+    name: 'Intermec PM43 · Formato BarTender (3.97" × 6" · 1 etiqueta por página · Solo Descripción + Código)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-397x6-page bartender-layout',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 32,
+    fontSize: 10,
+    moduleWidth: 2.2,
+    hideFooterByDefault: true,
+  },
+  intermec397x6_full: {
+    id: 'intermec397x6_full',
+    name: 'Intermec PM43 · Formato Completo (3.97" × 6" · 1 etiqueta por página · Con SKU, Unidad y Marca)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-397x6-page bartender-layout with-footer',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 34,
+    fontSize: 10,
+    moduleWidth: 2.2,
+    hideFooterByDefault: false,
+  },
+  intermec6x397: {
+    id: 'intermec6x397',
+    name: 'Intermec PM43 (6" × 3.97" · Apaisado · 1 etiqueta por página)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-6x397-page',
+    pageSize: '6in 3.97in landscape',
+    barHeight: 40,
+    fontSize: 11,
+    moduleWidth: 2.2,
   },
 };
 

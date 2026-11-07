@@ -864,7 +864,7 @@ textarea.input { min-height: 60px; resize: vertical; }
   color: #ffffff !important;
   font-family: Arial, Helvetica, sans-serif;
   font-weight: 800;
-  font-size: 9pt;
+  font-size: 9.5pt;
   line-height: 1.15;
   padding: 1px 4px;
   text-align: left;
@@ -885,9 +885,10 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-top-desc {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 6.5pt;
-  font-weight: 600;
-  line-height: 1.15;
+  font-size: 8.2pt;
+  font-weight: 800;
+  line-height: 1.12;
+  letter-spacing: 0.15px;
   text-align: left;
   color: #000000;
   white-space: nowrap;
@@ -896,7 +897,7 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-top-barcode {
   width: 100%;
-  height: 34%;
+  height: 32%;
   display: flex;
   align-items: stretch;
   justify-content: center;
@@ -911,7 +912,7 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-top-footer-bar {
   width: 100%;
-  height: 24%;
+  height: 23%;
   background: #000000 !important;
   color: #ffffff !important;
   display: flex;
@@ -958,7 +959,7 @@ textarea.input { min-height: 60px; resize: vertical; }
   color: #ffffff !important;
   font-family: Arial, Helvetica, sans-serif;
   font-weight: 800;
-  font-size: 5.5pt;
+  font-size: 6.4pt;
   line-height: 1.15;
   padding: 1px 3px;
   text-align: left;
@@ -972,9 +973,10 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-bl-desc {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 4.8pt;
-  font-weight: 600;
+  font-size: 6.2pt;
+  font-weight: 800;
   line-height: 1.1;
+  letter-spacing: 0.1px;
   text-align: left;
   color: #000000;
   white-space: nowrap;
@@ -983,7 +985,7 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-bl-barcode {
   width: 100%;
-  height: 39%;
+  height: 36%;
   display: flex;
   align-items: stretch;
   justify-content: center;
@@ -997,7 +999,7 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-bl-footer {
   width: 100%;
-  height: 24%;
+  height: 23%;
   display: flex;
   justify-content: space-between;
   align-items: center;
@@ -1040,8 +1042,8 @@ textarea.input { min-height: 60px; resize: vertical; }
 }
 .precut-br-sku {
   font-family: Arial, Helvetica, sans-serif;
-  font-size: 4.3pt;
-  font-weight: 700;
+  font-size: 5.8pt;
+  font-weight: 800;
   color: #000000;
   text-align: left;
   width: 100%;

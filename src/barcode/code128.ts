@@ -328,21 +328,19 @@ export interface Precut3in1Data {
 export function renderPrecut3in1Html(data: Precut3in1Data): string {
   const rawBarcode = data.barcode?.trim() || 'MHK-000000';
   const code = escapeXml(rawBarcode);
-  const rawSku = data.sku?.trim() || rawBarcode;
-  const skuLabel = rawSku.toUpperCase().startsWith('SKU')
-    ? escapeXml(rawSku.toUpperCase())
-    : `SKU NUMBER ${escapeXml(rawSku.toUpperCase())}`;
+  const rawSku = (data.sku?.trim() || rawBarcode).replace(/^SKU(\s+NUMBER)?\s*:?\s*/i, '').trim() || rawBarcode;
+  const skuLabel = escapeXml(rawSku.toUpperCase());
 
   const fullDesc = (data.description?.trim() || 'SIN DESCRIPCIÓN').toUpperCase();
-  const descLine1 = escapeXml(fullDesc.slice(0, 46));
+  const descLine1 = escapeXml(fullDesc.slice(0, 36));
   const descLine2 = escapeXml(
-    fullDesc.length > 46
-      ? fullDesc.slice(46, 92)
+    fullDesc.length > 36
+      ? fullDesc.slice(36, 72)
       : data.unit
         ? `${data.unit.toUpperCase()}`
         : '',
   );
-  const miniDesc = escapeXml(fullDesc.slice(0, 28));
+  const miniDesc = escapeXml(fullDesc.slice(0, 24));
   const brandTitle = escapeXml((data.brand?.trim() || 'MOHAWK').toUpperCase());
 
   const mainBarcodeSvg = renderCode128Svg(rawBarcode, '', {
