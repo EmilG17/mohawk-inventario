@@ -120,19 +120,25 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
           ? '6in 3.97in landscape'
           : savedTemplate === 'thermal4x2'
             ? '4in 2in landscape'
-            : '3.97in 6in';
+            : savedTemplate === 'intermec397x6' || savedTemplate === 'intermec397x6_full'
+              ? '3.97in 6in portrait'
+              : `${btProfile.labelWidthIn}in ${btProfile.labelHeightIn}in portrait`;
 
-        const isIntermec = pageSize.includes('3.97');
+        const isIntermec = pageSize.includes('3.25') || pageSize.includes('3.97');
         const txt = barcodeInput.value.trim() || p.barcode || 'MHK-000000';
         const svgMarkup = renderCode128Svg(txt, txt, {
           height: isIntermec ? btProfile.barHeightPx : 34,
-          fontSize: isIntermec ? 10 : 10,
+          fontSize: 10,
           width: isIntermec ? btProfile.moduleWidthPx : 2,
           includeText: isIntermec ? btProfile.includeHumanReadable : true,
           margin: 2,
         });
 
-        const withFooter = includeFooterCheck.checked || savedTemplate === 'intermec397x6_full';
+        const withFooter =
+          includeFooterCheck.checked ||
+          savedTemplate === 'intermec325x2_full' ||
+          savedTemplate === 'intermec397x6_full';
+        const sizeClass = pageSize.includes('3.25') ? 'intermec-325x2' : 'intermec-397x6';
         printLabel(svgMarkup, f.description.value.trim() || p.description || barcodeInput.value, {
           sku: f.sku.value.trim() || p.sku,
           unit: f.unit.value.trim() || p.unit,
@@ -140,7 +146,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
           pageSize,
           hideFooter: isIntermec && !withFooter,
           customClass: isIntermec
-            ? `intermec-397x6 bartender-layout ${withFooter ? 'with-footer' : 'compact-only'}`
+            ? `${sizeClass} intermec-397x6 bartender-layout ${withFooter ? 'with-footer' : 'compact-only'}`
             : 'thermal-4x2',
         });
       },

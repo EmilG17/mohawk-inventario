@@ -28,21 +28,21 @@ export interface BartenderFormatProfile {
 const STORAGE_KEY = 'mohawk_bartender_profile';
 
 export const DEFAULT_BARTENDER_PROFILE: BartenderFormatProfile = {
-  fileName: 'BarTender Estándar Mohawk (3.97" × 6" · 203 DPI)',
-  labelWidthIn: 3.97,
-  labelHeightIn: 6.0,
+  fileName: 'receiving test.btw · USER (3.25 in x 2.00 in)',
+  labelWidthIn: 3.25,
+  labelHeightIn: 2.0,
   dpi: 203,
   barHeightPx: 32,
-  moduleWidthPx: 2.2,
-  fontSizePt: 11.5,
-  topMarginIn: 0.42,
-  leftMarginIn: 0.25,
-  rightMarginIn: 0.25,
+  moduleWidthPx: 2.0,
+  fontSizePt: 11,
+  topMarginIn: 0.22,
+  leftMarginIn: 0.18,
+  rightMarginIn: 0.18,
   includeHumanReadable: true,
   includeFooter: false,
   detectedFonts: ['Arial', 'Monospace'],
   detectedTexts: [],
-  summary: 'Formato BarTender compacto superior (3.97" × 6", 203 DPI)',
+  summary: 'Intermec PM43 (203 dpi) - DP · Stock USER (3.25 in × 2.00 in) Portrait',
 };
 
 /**
@@ -146,8 +146,15 @@ export function parseBartenderBuffer(
     }
   }
 
-  // Detectar si hay menciones a 3.97 o 4x6
-  if (/3\.97/.test(joined)) {
+  // Detectar patrón de Stock de Seagull Driver: ej. "USER (3.25 in x 2.00 in)"
+  const userStockMatch = joined.match(/(\d+\.\d+)\s*in\s*x\s*(\d+\.\d+)\s*in/i);
+  if (userStockMatch) {
+    profile.labelWidthIn = parseFloat(userStockMatch[1]);
+    profile.labelHeightIn = parseFloat(userStockMatch[2]);
+  } else if (/3\.25/.test(joined)) {
+    profile.labelWidthIn = 3.25;
+    profile.labelHeightIn = 2.0;
+  } else if (/3\.97/.test(joined)) {
     profile.labelWidthIn = 3.97;
     profile.labelHeightIn = 6.0;
   }

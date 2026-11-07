@@ -36,9 +36,9 @@ test.describe('Impresión de código de barras y etiquetas térmicas 4x2', () =>
     const wasPrinted = await page.evaluate(() => (window as any).__printed);
     expect(wasPrinted).toBe(true);
 
-    // Verificar que el estilo de página dinámica fue inyectado con tamaño 3.97in 6in o 4in 2in y margen 0
+    // Verificar que el estilo de página dinámica fue inyectado con tamaño 3.25in 2in portrait, 3.97in 6in o 4in 2in y margen 0
     const printPageStyle = await page.locator('#print-page-style').textContent();
-    expect(printPageStyle).toMatch(/size:\s*(3\.97in 6in|4in 2in landscape)/);
+    expect(printPageStyle).toMatch(/size:\s*(3\.25in 2in portrait|3\.97in 6in|4in 2in landscape)/);
     expect(printPageStyle).toContain('margin: 0 !important');
 
     // Verificar el contenedor de impresión individual

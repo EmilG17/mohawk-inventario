@@ -22,6 +22,9 @@ import {
 import { clear, h, icon, openDialog, toast } from './dom';
 
 export type LabelTemplate =
+  | 'intermec325x2'
+  | 'intermec325x2_full'
+  | 'intermec_composite'
   | 'intermec397x6'
   | 'intermec397x6_full'
   | 'intermec6x397'
@@ -45,9 +48,49 @@ export interface TemplateConfig {
   fontSize?: number;
   moduleWidth?: number;
   hideFooterByDefault?: boolean;
+  isComposite3in1?: boolean;
 }
 
 export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
+  intermec325x2: {
+    id: 'intermec325x2',
+    name: 'Intermec PM43 · receiving test.btw · USER (3.25 in × 2.00 in) Portrait (Solo Descripción + Código)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-325x2-page bartender-layout',
+    pageSize: '3.25in 2in portrait',
+    barHeight: 32,
+    fontSize: 10,
+    moduleWidth: 2.0,
+    hideFooterByDefault: true,
+  },
+  intermec325x2_full: {
+    id: 'intermec325x2_full',
+    name: 'Intermec PM43 · USER (3.25 in × 2.00 in) Portrait · Con SKU, Unidad y Marca',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-325x2-page bartender-layout with-footer',
+    pageSize: '3.25in 2in portrait',
+    barHeight: 32,
+    fontSize: 10,
+    moduleWidth: 2.0,
+    hideFooterByDefault: false,
+  },
+  intermec_composite: {
+    id: 'intermec_composite',
+    name: 'Intermec PM43 · Etiqueta Compuesta 3-en-1 BarTender (Principal + Mini + 2D)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-composite-page',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 36,
+    fontSize: 10,
+    moduleWidth: 2.0,
+    isComposite3in1: true,
+  },
   intermec397x6: {
     id: 'intermec397x6',
     name: 'Intermec PM43 · Formato BarTender (3.97" × 6" · Solo Descripción + Código)',
@@ -250,7 +293,81 @@ export function renderLabelSlot(
   const descText = product.description?.trim() || 'Sin descripción';
 
   const tmplConfig = TEMPLATES[template] || TEMPLATES.avery5160;
-  const isIntermec = template === 'intermec397x6' || template === 'intermec397x6_full';
+
+  if (tmplConfig.isComposite3in1) {
+    const skuBannerText = product.sku || codeText;
+    const brandText = product.brand || 'MOHAWK';
+    const unitText = product.unit || '';
+    const mainSvg = renderCode128Svg(codeText, '', {
+      height: 36,
+      width: 2.0,
+      margin: 2,
+      includeText: false,
+    });
+    const miniSvg = renderCode128Svg(codeText, '', {
+      height: 22,
+      width: 1.4,
+      margin: 1,
+      includeText: false,
+    });
+    const compSlot = h(
+      'div',
+      { class: `sheet-label composite-3in1-label ${border ? 'with-border' : ''}` },
+      h(
+        'div',
+        { class: 'comp-top-section' },
+        h('div', { class: 'comp-sku-banner' }, `SKU ${skuBannerText}`),
+        h('div', { class: 'comp-desc' }, descText),
+        h('div', { class: 'comp-main-barcode' }),
+        h(
+          'div',
+          { class: 'comp-mid-row' },
+          h('span', { class: 'comp-brand-left' }, brandText),
+          h('span', { class: 'comp-code-inv' }, codeText),
+          h('span', { class: 'comp-unit-right' }, unitText),
+        ),
+      ),
+      h(
+        'div',
+        { class: 'comp-bottom-row' },
+        h(
+          'div',
+          { class: 'comp-mini-left' },
+          h('div', { class: 'comp-mini-banner' }, `SKU ${skuBannerText}`),
+          h('div', { class: 'comp-mini-desc' }, descText),
+          h('div', { class: 'comp-mini-barcode' }),
+          h(
+            'div',
+            { class: 'comp-mini-foot' },
+            h('span', { class: 'comp-mini-inv' }, codeText),
+            h('span', { class: 'comp-mini-brand' }, brandText),
+          ),
+        ),
+        h(
+          'div',
+          { class: 'comp-mini-right' },
+          h('div', { class: 'comp-qr-title' }, `SKU ${skuBannerText}`),
+          h(
+            'div',
+            { class: 'comp-qr-body' },
+            h('span', { class: 'comp-qr-vert-code' }, codeText),
+            h('div', { class: 'comp-qr-box' }, '▦'),
+          ),
+        ),
+      ),
+    );
+    const mainWrap = compSlot.querySelector('.comp-main-barcode');
+    if (mainWrap) mainWrap.innerHTML = mainSvg;
+    const miniWrap = compSlot.querySelector('.comp-mini-barcode');
+    if (miniWrap) miniWrap.innerHTML = miniSvg;
+    return compSlot;
+  }
+
+  const isIntermec =
+    template === 'intermec325x2' ||
+    template === 'intermec325x2_full' ||
+    template === 'intermec397x6' ||
+    template === 'intermec397x6_full';
   const btProfile = isIntermec ? (bartenderProfile || getSavedBartenderProfile()) : null;
 
   const barHeight = btProfile ? btProfile.barHeightPx : (tmplConfig.barHeight ?? 24);
@@ -267,7 +384,10 @@ export function renderLabelSlot(
   });
 
   const footerParts: string[] = [];
-  const shouldHideFooter = tmplConfig.hideFooterByDefault && !options.bartenderProfile?.includeFooter && template === 'intermec397x6';
+  const shouldHideFooter =
+    tmplConfig.hideFooterByDefault &&
+    !options.bartenderProfile?.includeFooter &&
+    (template === 'intermec325x2' || template === 'intermec397x6');
 
   if (!shouldHideFooter) {
     if (showSku && product.sku && product.sku !== codeText) {

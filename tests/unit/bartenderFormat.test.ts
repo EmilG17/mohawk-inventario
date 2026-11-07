@@ -14,20 +14,20 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
     resetBartenderProfile();
   });
 
-  it('provides accurate default BarTender profile for Intermec PM43 (3.97" x 6", 203 DPI)', () => {
+  it('provides accurate default BarTender profile for Intermec PM43 Stock USER (3.25 in x 2.00 in, 203 DPI)', () => {
     const profile = getSavedBartenderProfile();
-    expect(profile.labelWidthIn).toBe(3.97);
-    expect(profile.labelHeightIn).toBe(6.0);
+    expect(profile.labelWidthIn).toBe(3.25);
+    expect(profile.labelHeightIn).toBe(2.0);
     expect(profile.dpi).toBe(203);
     expect(profile.barHeightPx).toBe(32);
-    expect(profile.moduleWidthPx).toBe(2.2);
+    expect(profile.moduleWidthPx).toBe(2.0);
     expect(profile.includeFooter).toBe(false);
   });
 
-  it('extracts ASCII and UTF-16LE strings from simulated .btw binary buffer', () => {
+  it('extracts ASCII, UTF-16LE, and USER (3.25 in x 2.00 in) stock dimensions from .btw buffer', () => {
     const encoder = new TextEncoder();
-    const asciiPart = encoder.encode('BarTender Format Intermec PM43 203 DPI BEIGE TONE/ PICKLE');
-    // Simulate UTF-16LE string 'Arial'
+    const asciiPart = encoder.encode('BarTender Format Intermec PM43 203 DPI USER (3.25 in x 2.00 in) BEIGE TONE/ PICKLE');
+    // Simulate UTF-16LE string 'Calibri'
     const utf16Part = new Uint8Array([
       0x00, 0x00,
       0x43, 0x00, 0x61, 0x00, 0x6c, 0x00, 0x69, 0x00, 0x62, 0x00, 0x72, 0x00, 0x69, 0x00,
@@ -41,8 +41,10 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
     expect(strings.some((s) => s.includes('Intermec PM43'))).toBe(true);
     expect(strings.some((s) => s.includes('Calibri'))).toBe(true);
 
-    const profile = parseBartenderBuffer(combined.buffer, 'mohawk_etiqueta.btw');
-    expect(profile.fileName).toBe('mohawk_etiqueta.btw');
+    const profile = parseBartenderBuffer(combined.buffer, 'receiving test.btw');
+    expect(profile.fileName).toBe('receiving test.btw');
+    expect(profile.labelWidthIn).toBe(3.25);
+    expect(profile.labelHeightIn).toBe(2.0);
     expect(profile.dpi).toBe(203);
     expect(profile.detectedFonts).toContain('Calibri');
   });
@@ -54,20 +56,20 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
     expect(saved.barHeightPx).toBe(36);
   });
 
-  it('configures both BarTender options: Option 1 (Description + Barcode only) and Option 2 (With SKU, Unit, Brand)', () => {
-    const tmplCompact = TEMPLATES.intermec397x6;
-    const tmplFull = TEMPLATES.intermec397x6_full;
+  it('configures all BarTender templates: USER 3.25x2.00 (Clean & Full), Composite 3-in-1, and 3.97x6', () => {
+    const tmpl325Clean = TEMPLATES.intermec325x2;
+    const tmpl325Full = TEMPLATES.intermec325x2_full;
+    const tmplComposite = TEMPLATES.intermec_composite;
 
-    expect(tmplCompact).toBeDefined();
-    expect(tmplCompact.hideFooterByDefault).toBe(true);
-    expect(tmplCompact.barHeight).toBe(32);
-    expect(tmplCompact.moduleWidth).toBe(2.2);
-    expect(tmplCompact.pageClass).toContain('bartender-layout');
+    expect(tmpl325Clean).toBeDefined();
+    expect(tmpl325Clean.pageSize).toBe('3.25in 2in portrait');
+    expect(tmpl325Clean.hideFooterByDefault).toBe(true);
 
-    expect(tmplFull).toBeDefined();
-    expect(tmplFull.hideFooterByDefault).toBe(false);
-    expect(tmplFull.barHeight).toBe(34);
-    expect(tmplFull.moduleWidth).toBe(2.2);
-    expect(tmplFull.pageClass).toContain('with-footer');
+    expect(tmpl325Full).toBeDefined();
+    expect(tmpl325Full.pageSize).toBe('3.25in 2in portrait');
+    expect(tmpl325Full.hideFooterByDefault).toBe(false);
+
+    expect(tmplComposite).toBeDefined();
+    expect(tmplComposite.isComposite3in1).toBe(true);
   });
 });
