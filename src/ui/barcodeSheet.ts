@@ -15,8 +15,12 @@ import {
 import { clear, h, icon, openDialog, toast } from './dom';
 
 export type LabelTemplate =
-  | 'avery5160'
+  | 'intermec397x6'
+  | 'intermec6x397'
+  | 'intermec397x6_dual'
+  | 'intermec397x6_tri'
   | 'thermal4x2'
+  | 'avery5160'
   | 'avery5163'
   | 'thermal2x1'
   | 'continuous';
@@ -34,6 +38,61 @@ export interface TemplateConfig {
 }
 
 export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
+  intermec397x6: {
+    id: 'intermec397x6',
+    name: 'Intermec PM43 (3.97" × 6" · Vertical · 203 DPI)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-397x6-page',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 65,
+    fontSize: 16,
+  },
+  intermec6x397: {
+    id: 'intermec6x397',
+    name: 'Intermec PM43 (6" × 3.97" · Apaisado · 203 DPI)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-6x397-page',
+    pageSize: '6in 3.97in landscape',
+    barHeight: 60,
+    fontSize: 14,
+  },
+  intermec397x6_dual: {
+    id: 'intermec397x6_dual',
+    name: 'Intermec PM43 (3.97" × 6" · 2 etiquetas de 3.97" × 3")',
+    perSheet: 2,
+    columns: 1,
+    rows: 2,
+    pageClass: 'intermec-397x6-dual-page',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 45,
+    fontSize: 12,
+  },
+  intermec397x6_tri: {
+    id: 'intermec397x6_tri',
+    name: 'Intermec PM43 (3.97" × 6" · 3 etiquetas de 3.97" × 2")',
+    perSheet: 3,
+    columns: 1,
+    rows: 3,
+    pageClass: 'intermec-397x6-tri-page',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 36,
+    fontSize: 10,
+  },
+  thermal4x2: {
+    id: 'thermal4x2',
+    name: 'Rollo térmico estándar 4" × 2" (100mm × 50mm · Zebra, Rollo)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'thermal-4x2-page',
+    pageSize: '4in 2in landscape',
+    barHeight: 38,
+    fontSize: 10,
+  },
   avery5160: {
     id: 'avery5160',
     name: 'Avery 5160 (30 etiquetas en hoja Carta · 2.625" × 1")',
@@ -44,17 +103,6 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     pageSize: 'letter portrait',
     barHeight: 22,
     fontSize: 8,
-  },
-  thermal4x2: {
-    id: 'thermal4x2',
-    name: 'Rollo térmico 4" × 2" (100mm × 50mm · Zebra, Brother, Rollo)',
-    perSheet: 1,
-    columns: 1,
-    rows: 1,
-    pageClass: 'thermal-4x2-page',
-    pageSize: '4in 2in landscape',
-    barHeight: 38,
-    fontSize: 10,
   },
   avery5163: {
     id: 'avery5163',

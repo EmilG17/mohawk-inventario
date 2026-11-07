@@ -157,8 +157,11 @@ export function printLabel(
     ? `<div class="label-footer">${escapeHtml(footerParts.join(' · '))}</div>`
     : '';
 
+  const isIntermec = pageSize.includes('3.97');
+  const printClass = isIntermec ? 'intermec-397x6' : 'thermal-4x2';
+
   printRoot.innerHTML = `
-    <div class="single-label-print thermal-4x2">
+    <div class="single-label-print ${printClass}">
       ${title ? `<div class="label-desc" title="${escapeHtml(title)}">${escapeHtml(title)}</div>` : ''}
       <div class="single-barcode-wrap">${svgString}</div>
       ${footerHtml}

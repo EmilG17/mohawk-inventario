@@ -99,11 +99,30 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       class: 'btn sm primary',
       type: 'button',
       onclick: () => {
-        printLabel(getCurrentSvg(), f.description.value.trim() || p.description || barcodeInput.value, {
+        const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem('mohawk_preferred_label_template') : null);
+        const pageSize = savedTemplate === 'intermec6x397'
+          ? '6in 3.97in landscape'
+          : savedTemplate === 'thermal4x2'
+            ? '4in 2in landscape'
+            : savedTemplate?.startsWith('intermec')
+              ? '3.97in 6in'
+              : '3.97in 6in';
+
+        const isIntermec = pageSize.includes('3.97');
+        const txt = barcodeInput.value.trim() || p.barcode || 'MHK-000000';
+        const svgMarkup = renderCode128Svg(txt, txt, {
+          height: isIntermec ? 60 : 42,
+          fontSize: isIntermec ? 13 : 11,
+          width: isIntermec ? 2.5 : 2,
+          includeText: true,
+          margin: 2,
+        });
+
+        printLabel(svgMarkup, f.description.value.trim() || p.description || barcodeInput.value, {
           sku: f.sku.value.trim() || p.sku,
           unit: f.unit.value.trim() || p.unit,
           brand: p.brand,
-          pageSize: '4in 2in landscape',
+          pageSize,
         });
       },
     }, icon('scan'), 'Imprimir etiqueta');
