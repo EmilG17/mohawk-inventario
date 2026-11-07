@@ -1,7 +1,17 @@
-import { type Product } from '../db/db';
+import { allProducts, type Product } from '../db/db';
 import { displayBarcode } from '../io/normalize';
 import { renderCode128Svg } from '../barcode/code128';
 import { downloadPng, downloadSvg } from '../barcode/barcodeExport';
+import {
+  type PrintQueueItem,
+  getPrintQueue,
+  savePrintQueue,
+  addToPrintQueue,
+  removeFromPrintQueue,
+  clearPrintQueue,
+  setPrintQueueItemQty,
+  expandQueueToProducts,
+} from '../barcode/printQueue';
 import { clear, h, icon, openDialog, toast } from './dom';
 
 export type LabelTemplate = 'avery5160' | 'avery5163' | 'continuous';
@@ -176,20 +186,62 @@ export function renderBlankSlot(template: LabelTemplate = 'avery5160'): HTMLElem
   });
 }
 
+export interface BarcodeSheetDialogOptions {
+  products?: Product[];
+  initialQuantities?: Record<string, number>;
+  defaultTitle?: string;
+}
+
 /**
- * Abre el diálogo modal de configuración, previsualización e impresión masiva de etiquetas.
+ * Abre el diálogo modal de configuración, previsualización e impresión de etiquetas,
+ * permitiendo combinar distintos productos en la misma cola o página de impresión
+ * con cantidades personalizadas para cada producto.
  */
 export function openBarcodeSheetDialog(
-  products: Product[],
+  productsOrOptions?: Product[] | BarcodeSheetDialogOptions,
   defaultTitle = 'Generar etiquetas de códigos de barras',
 ): void {
-  if (!products || products.length === 0) {
-    toast('No hay productos seleccionados para generar etiquetas', 'warn');
-    return;
+  let initialProducts: Product[] = [];
+  let initialQuantities: Record<string, number> = {};
+  let dialogTitle = defaultTitle;
+
+  if (Array.isArray(productsOrOptions)) {
+    initialProducts = productsOrOptions;
+  } else if (productsOrOptions && typeof productsOrOptions === 'object') {
+    initialProducts = productsOrOptions.products ?? [];
+    initialQuantities = productsOrOptions.initialQuantities ?? {};
+    if (productsOrOptions.defaultTitle) dialogTitle = productsOrOptions.defaultTitle;
+  }
+
+  // Cargar cola actual persistente
+  const existingQueue = getPrintQueue();
+  let queue: PrintQueueItem[] = [];
+
+  if (initialProducts.length > 0) {
+    const queueMap = new Map<string, PrintQueueItem>();
+    for (const item of existingQueue) {
+      queueMap.set(item.product.barcode, { ...item });
+    }
+
+    for (const p of initialProducts) {
+      const explicitQty = initialQuantities[p.barcode];
+      const qty = explicitQty !== undefined ? Math.max(1, explicitQty) : 1;
+      if (queueMap.has(p.barcode)) {
+        if (explicitQty !== undefined) {
+          queueMap.get(p.barcode)!.quantity = qty;
+        }
+      } else {
+        queueMap.set(p.barcode, { product: { ...p }, quantity: qty });
+      }
+    }
+
+    queue = Array.from(queueMap.values());
+    savePrintQueue(queue);
+  } else {
+    queue = existingQueue;
   }
 
   let selectedTemplate: LabelTemplate = 'avery5160';
-  let copiesMode: '1' | 'expected' | '2' | '5' = '1';
   let startingOffset = 0;
   let showSku = true;
   let showUnit = true;
@@ -197,6 +249,14 @@ export function openBarcodeSheetDialog(
 
   const previewWrap = h('div', { class: 'sheet-preview-wrap' });
   const countSummary = h('span', { class: 'muted small' });
+  const queueSummaryEl = h('span', { class: 'badge info' });
+  const queueListContainer = h('div', { class: 'queue-items-list' });
+
+  // Cache del catálogo completo para el buscador interactivo
+  let catalogCache: Product[] = [];
+  allProducts().then((prods) => {
+    catalogCache = prods;
+  }).catch(() => {});
 
   const templateSelect = h(
     'select',
@@ -211,21 +271,6 @@ export function openBarcodeSheetDialog(
     Object.values(TEMPLATES).map((tmpl) =>
       h('option', { value: tmpl.id, selected: tmpl.id === selectedTemplate }, tmpl.name),
     ),
-  ) as HTMLSelectElement;
-
-  const copiesSelect = h(
-    'select',
-    {
-      class: 'input',
-      onchange: (e: Event) => {
-        copiesMode = (e.target as HTMLSelectElement).value as any;
-        updatePreview();
-      },
-    },
-    h('option', { value: '1' }, '1 copia por producto'),
-    h('option', { value: 'expected' }, 'Según existencia teórica'),
-    h('option', { value: '2' }, '2 copias de cada uno'),
-    h('option', { value: '5' }, '5 copias de cada uno'),
   ) as HTMLSelectElement;
 
   const offsetInput = h('input', {
@@ -252,12 +297,237 @@ export function openBarcodeSheetDialog(
     },
   }) as HTMLInputElement;
 
+  // Buscador interactivo para añadir productos a la cola
+  const searchInput = h('input', {
+    type: 'search',
+    class: 'input',
+    placeholder: '🔍 Buscar y añadir otro producto a esta hoja (nombre, SKU o código)...',
+  }) as HTMLInputElement;
+
+  const searchDropdown = h('div', { class: 'queue-search-dropdown', style: 'display: none;' });
+
+  const renderSearchDropdown = (query: string) => {
+    const q = query.trim().toLowerCase();
+    if (!q) {
+      searchDropdown.style.display = 'none';
+      clear(searchDropdown);
+      return;
+    }
+
+    const matches = catalogCache.filter((p) => {
+      const text = `${p.description} ${p.sku} ${p.barcode} ${p.brand || ''}`.toLowerCase();
+      return text.includes(q);
+    }).slice(0, 10);
+
+    if (matches.length === 0) {
+      clear(
+        searchDropdown,
+        h('div', { class: 'muted small', style: 'padding: 10px;' }, 'No se encontraron productos coincidentes.'),
+      );
+      searchDropdown.style.display = 'block';
+      return;
+    }
+
+    clear(
+      searchDropdown,
+      matches.map((p) => {
+        const itemEl = h(
+          'div',
+          {
+            class: 'queue-search-item',
+            onclick: () => {
+              addOrIncrementProduct(p, 1);
+              searchInput.value = '';
+              searchDropdown.style.display = 'none';
+              clear(searchDropdown);
+              toast(`"${p.description || p.barcode}" añadido a la hoja`, 'ok');
+            },
+          },
+          h(
+            'div',
+            { style: 'min-width: 0;' },
+            h('div', { style: 'font-weight: 600; font-size: 13px;' }, p.description || 'Sin descripción'),
+            h('div', { class: 'muted small' }, `${displayBarcode(p.barcode)}${p.sku ? ` · ${p.sku}` : ''}`),
+          ),
+          h('button', { class: 'btn sm primary', type: 'button' }, icon('plus'), 'Añadir'),
+        );
+        return itemEl;
+      }),
+    );
+    searchDropdown.style.display = 'block';
+  };
+
+  searchInput.oninput = () => {
+    renderSearchDropdown(searchInput.value);
+  };
+
+  searchInput.onfocus = () => {
+    if (searchInput.value.trim()) {
+      renderSearchDropdown(searchInput.value);
+    }
+  };
+
+  // Función para agregar o incrementar producto en la cola
+  const addOrIncrementProduct = (product: Product, qty = 1) => {
+    const existing = queue.find((item) => item.product.barcode === product.barcode);
+    if (existing) {
+      existing.quantity += qty;
+    } else {
+      queue.push({ product: { ...product }, quantity: Math.max(1, qty) });
+    }
+    // Guardar en persistencia global
+    addToPrintQueue(product, qty);
+    refreshQueueList();
+    updatePreview();
+  };
+
+  // Función para actualizar lista visual de la cola
+  const refreshQueueList = () => {
+    const distinctCount = queue.length;
+    const totalLabels = queue.reduce((sum, item) => sum + item.quantity, 0);
+
+    queueSummaryEl.textContent = `${distinctCount} producto(s) · ${totalLabels} etiqueta(s) totales`;
+
+    if (queue.length === 0) {
+      clear(
+        queueListContainer,
+        h(
+          'div',
+          { class: 'empty', style: 'padding: 12px; text-align: center;' },
+          'No hay productos en la cola. Usa el buscador arriba para añadir productos a esta hoja.',
+        ),
+      );
+      return;
+    }
+
+    clear(
+      queueListContainer,
+      queue.map((item, index) => {
+        const prod = item.product;
+        const qtyInput = h('input', {
+          type: 'number',
+          class: 'input sm queue-qty-input',
+          value: String(item.quantity),
+          min: '1',
+          onchange: (e: Event) => {
+            const val = parseInt((e.target as HTMLInputElement).value, 10);
+            const safe = Number.isNaN(val) || val < 1 ? 1 : val;
+            item.quantity = safe;
+            setPrintQueueItemQty(prod.barcode, safe);
+            refreshQueueList();
+            updatePreview();
+          },
+        }) as HTMLInputElement;
+
+        const minusBtn = h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn sm ghost',
+            style: 'padding: 2px 6px;',
+            onclick: () => {
+              if (item.quantity > 1) {
+                item.quantity -= 1;
+                setPrintQueueItemQty(prod.barcode, item.quantity);
+                qtyInput.value = String(item.quantity);
+                refreshQueueList();
+                updatePreview();
+              } else {
+                removeProductFromQueue(prod.barcode);
+              }
+            },
+          },
+          '−',
+        );
+
+        const plusBtn = h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn sm ghost',
+            style: 'padding: 2px 6px;',
+            onclick: () => {
+              item.quantity += 1;
+              setPrintQueueItemQty(prod.barcode, item.quantity);
+              qtyInput.value = String(item.quantity);
+              refreshQueueList();
+              updatePreview();
+            },
+          },
+          '+',
+        );
+
+        const removeBtn = h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn sm danger ghost',
+            title: 'Quitar de la hoja',
+            onclick: () => {
+              removeProductFromQueue(prod.barcode);
+            },
+          },
+          icon('trash'),
+        );
+
+        return h(
+          'div',
+          { class: 'queue-item-row' },
+          h(
+            'div',
+            { class: 'queue-item-meta' },
+            h('div', { class: 'queue-item-title', title: prod.description }, prod.description || 'Sin descripción'),
+            h(
+              'div',
+              { class: 'queue-item-sub' },
+              displayBarcode(prod.barcode),
+              prod.sku ? ` · ${prod.sku}` : '',
+              prod.unit ? ` · ${prod.unit}` : '',
+            ),
+          ),
+          h(
+            'div',
+            { class: 'queue-item-stepper' },
+            minusBtn,
+            qtyInput,
+            plusBtn,
+            removeBtn,
+          ),
+        );
+      }),
+    );
+  };
+
+  const removeProductFromQueue = (barcode: string) => {
+    queue = queue.filter((item) => item.product.barcode !== barcode);
+    removeFromPrintQueue(barcode);
+    refreshQueueList();
+    updatePreview();
+  };
+
+  const clearEntireQueue = () => {
+    queue = [];
+    clearPrintQueue();
+    refreshQueueList();
+    updatePreview();
+    toast('Cola de impresión vaciada');
+  };
+
+  const setAllQuantities = (qty: number | 'expected') => {
+    for (const item of queue) {
+      if (qty === 'expected') {
+        item.quantity = Math.max(1, Math.round(item.product.expectedQty ?? 1));
+      } else {
+        item.quantity = Math.max(1, qty);
+      }
+      setPrintQueueItemQty(item.product.barcode, item.quantity);
+    }
+    refreshQueueList();
+    updatePreview();
+  };
+
   const buildItemsList = (): Product[] => {
-    const mult =
-      copiesMode === 'expected'
-        ? 'expected'
-        : parseInt(copiesMode, 10) || 1;
-    return applyQuantityMultiplier(products, mult);
+    return expandQueueToProducts(queue);
   };
 
   const renderPagesDom = (isForPrint: boolean): HTMLElement[] => {
@@ -335,13 +605,20 @@ export function openBarcodeSheetDialog(
   };
 
   const doPrint = () => {
+    if (queue.length === 0) {
+      toast('No hay productos en la cola para imprimir', 'warn');
+      return;
+    }
     preparePrintContainer();
     window.print();
   };
 
   const doDownloadSvg = () => {
-    const first = products[0];
-    if (!first) return;
+    const first = queue[0]?.product;
+    if (!first) {
+      toast('No hay productos en la cola', 'warn');
+      return;
+    }
     const rawCode = first.barcode;
     const codeText = rawCode.startsWith('SKU:') ? first.sku || rawCode.slice(4) : displayBarcode(rawCode);
     const svgMarkup = renderCode128Svg(codeText, codeText, { height: 40, includeText: true });
@@ -350,8 +627,11 @@ export function openBarcodeSheetDialog(
   };
 
   const doDownloadPng = async () => {
-    const first = products[0];
-    if (!first) return;
+    const first = queue[0]?.product;
+    if (!first) {
+      toast('No hay productos en la cola', 'warn');
+      return;
+    }
     const rawCode = first.barcode;
     const codeText = rawCode.startsWith('SKU:') ? first.sku || rawCode.slice(4) : displayBarcode(rawCode);
     const svgMarkup = renderCode128Svg(codeText, codeText, { height: 40, includeText: true });
@@ -359,11 +639,66 @@ export function openBarcodeSheetDialog(
     toast('Etiqueta PNG (300 DPI) descargada', 'ok');
   };
 
+  // Inicializar vista
+  refreshQueueList();
   updatePreview();
 
+  // Construir cuerpo del modal
   const body = h(
     'div',
     { class: 'barcode-sheet-modal form' },
+    // Sección de gestión de productos en la cola
+    h(
+      'section',
+      { class: 'sheet-queue-section' },
+      h(
+        'div',
+        { class: 'sheet-queue-header' },
+        h(
+          'div',
+          { class: 'row', style: 'gap: 8px; align-items: center;' },
+          h('h4', { style: 'margin: 0;' }, '📋 Productos en esta hoja / cola'),
+          queueSummaryEl,
+        ),
+        h(
+          'div',
+          { class: 'row', style: 'gap: 6px;' },
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn sm ghost',
+              title: 'Poner 1 copia para cada producto',
+              onclick: () => setAllQuantities(1),
+            },
+            'Todas a 1',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn sm ghost',
+              title: 'Ajustar copias según existencia teórica de cada uno',
+              onclick: () => setAllQuantities('expected'),
+            },
+            'Según existencia',
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              class: 'btn sm danger ghost',
+              title: 'Vaciar la cola de impresión',
+              onclick: clearEntireQueue,
+            },
+            'Vaciar cola',
+          ),
+        ),
+      ),
+      h('div', { class: 'queue-search-box' }, searchInput, searchDropdown),
+      queueListContainer,
+    ),
+    // Configuración de hoja y offset
     h(
       'div',
       { class: 'grid2' },
@@ -376,26 +711,21 @@ export function openBarcodeSheetDialog(
       h(
         'label',
         { class: 'field' },
-        h('span', null, 'Copias por artículo'),
-        copiesSelect,
+        h('span', null, 'Iniciar en la etiqueta No. (Offset)'),
+        offsetInput,
       ),
     ),
     h(
       'div',
-      { class: 'grid2' },
+      { class: 'row wrap', style: 'gap: 16px; margin: 2px 0;' },
       h(
         'label',
-        { class: 'field' },
-        h('span', null, 'Iniciar en la etiqueta No. (Offset)'),
-        offsetInput,
-      ),
-      h(
-        'label',
-        { class: 'check-inline', style: 'align-self: center; margin-top: 18px;' },
+        { class: 'check-inline' },
         borderCheckbox,
         h('span', null, 'Mostrar bordes de corte en pantalla'),
       ),
     ),
+    // Previsualización de la hoja
     h(
       'div',
       {
@@ -408,9 +738,10 @@ export function openBarcodeSheetDialog(
     h(
       'p',
       { class: 'muted small' },
-      'Nota para imprimir en Avery: En el cuadro de diálogo de impresión, selecciona Margen: "Ninguno" y Escala: "100%".',
+      'Nota para imprimir en Avery: En el cuadro de diálogo de impresión del navegador, selecciona Margen: "Ninguno" y Escala: "100%".',
     ),
     previewWrap,
+    // Botones de acción
     h(
       'div',
       { class: 'row wrap', style: 'margin-top: 12px; gap: 8px;' },
@@ -447,7 +778,7 @@ export function openBarcodeSheetDialog(
     ),
   );
 
-  openDialog(defaultTitle, body, [{ label: 'Cerrar' }]);
+  openDialog(dialogTitle, body, [{ label: 'Cerrar' }]);
 }
 
 // Exponer en window para E2E testing
@@ -457,4 +788,8 @@ if (typeof window !== 'undefined') {
   (window as any).__renderLabelSlot = renderLabelSlot;
   (window as any).__applyQuantityMultiplier = applyQuantityMultiplier;
   (window as any).__openBarcodeSheetDialog = openBarcodeSheetDialog;
+  (window as any).__getPrintQueue = getPrintQueue;
+  (window as any).__addToPrintQueue = addToPrintQueue;
+  (window as any).__clearPrintQueue = clearPrintQueue;
+  (window as any).__expandQueueToProducts = expandQueueToProducts;
 }

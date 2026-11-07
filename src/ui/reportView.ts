@@ -205,7 +205,15 @@ export const reportView: View = {
             class: 'btn',
             onclick: () => {
               const sessionProducts = products.filter((p) => counts.some((c) => c.barcode === p.barcode));
-              openBarcodeSheetDialog(sessionProducts.length ? sessionProducts : products, `Etiquetas de sesión: ${session.name}`);
+              const initialQuantities: Record<string, number> = {};
+              for (const c of counts) {
+                initialQuantities[c.barcode] = (initialQuantities[c.barcode] || 0) + (c.qty || 1);
+              }
+              openBarcodeSheetDialog({
+                products: sessionProducts.length ? sessionProducts : products,
+                initialQuantities,
+                defaultTitle: `Etiquetas de sesión: ${session.name}`,
+              });
             },
           }, icon('scan'), 'Imprimir etiquetas de sesión'),
           isClosed

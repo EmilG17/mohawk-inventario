@@ -14,6 +14,7 @@ import {
 } from './dom';
 import { editProductDialog, sourceBadge } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
+import { addToPrintQueue, getPrintQueueTotalCount, getPrintQueue } from '../barcode/printQueue';
 import type { View } from './router';
 import { navigate } from './router';
 
@@ -446,14 +447,25 @@ export function openMassActionsDialog(
       h('p', { class: 'muted small' }, 'Genera e imprime etiquetas con códigos de barras uniformes en hojas Avery o rollo continuo.'),
       h('div', { class: 'row wrap' },
         selectedBarcodes.length > 0
-          ? h('button', {
-            class: 'btn primary sm',
-            onclick: () => {
-              dlg.close();
-              const sel = all.filter((p) => selectedBarcodes.includes(p.barcode));
-              openBarcodeSheetDialog(sel);
-            },
-          }, icon('scan'), `Etiquetas de los ${selectedBarcodes.length} seleccionados`)
+          ? [
+            h('button', {
+              class: 'btn primary sm',
+              onclick: () => {
+                dlg.close();
+                const sel = all.filter((p) => selectedBarcodes.includes(p.barcode));
+                openBarcodeSheetDialog(sel);
+              },
+            }, icon('scan'), `Etiquetas de los ${selectedBarcodes.length} seleccionados`),
+            h('button', {
+              class: 'btn sm ghost',
+              onclick: () => {
+                dlg.close();
+                const sel = all.filter((p) => selectedBarcodes.includes(p.barcode));
+                for (const p of sel) addToPrintQueue(p, 1);
+                toast(`${sel.length} producto(s) añadidos a la cola`, 'ok');
+              },
+            }, icon('plus'), `Añadir los ${selectedBarcodes.length} a la cola`),
+          ]
           : null,
         visibleItems.length > 0
           ? h('button', {
@@ -471,6 +483,13 @@ export function openMassActionsDialog(
             openBarcodeSheetDialog(all);
           },
         }, icon('scan'), `Etiquetas de todo el catálogo (${all.length})`),
+        h('button', {
+          class: 'btn sm',
+          onclick: () => {
+            dlg.close();
+            openBarcodeSheetDialog();
+          },
+        }, icon('scan'), '🖨️ Abrir cola de impresión'),
       ),
     ),
 
@@ -555,6 +574,16 @@ export const catalogView: View = {
                 openBarcodeSheetDialog(sel);
               },
             }, icon('scan'), 'Etiquetas'),
+            h('button', {
+              class: 'btn sm ghost',
+              title: 'Añadir productos seleccionados a la cola de impresión de etiquetas',
+              onclick: () => {
+                const sel = products.filter((p) => selected.has(p.barcode));
+                for (const p of sel) addToPrintQueue(p, 1);
+                const total = getPrintQueueTotalCount();
+                toast(`${sel.length} producto(s) añadidos a la cola (${total} etiquetas totales)`, 'ok');
+              },
+            }, icon('plus'), 'Añadir a cola'),
             h('button', {
               class: 'btn primary sm',
               onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
@@ -672,6 +701,11 @@ export const catalogView: View = {
               openBarcodeSheetDialog(visible.length ? visible : products);
             },
           }, icon('scan'), 'Rótulos y hojas'),
+          h('button', {
+            class: 'btn',
+            title: 'Ver y gestionar la cola de impresión de etiquetas para imprimir distintos productos en la misma hoja',
+            onclick: () => openBarcodeSheetDialog(),
+          }, icon('scan'), 'Cola de etiquetas'),
           h('button', {
             class: 'btn', disabled: !products.length,
             onclick: () => downloadFile(buildCatalogWorkbook(products), 'catalogo_consumibles.xlsx', MIME.xlsx),

@@ -4,6 +4,7 @@ import { displayBarcode, parseNumber } from '../io/normalize';
 import { generateInternalCode, renderCode128Svg } from '../barcode/code128';
 import { downloadPng, downloadSvg, printLabel } from '../barcode/barcodeExport';
 import { openBarcodeSheetDialog } from './barcodeSheet';
+import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
 import { confirmDialog, h, icon, openDialog, toast } from './dom';
 
 export const SOURCE_LABEL: Record<Product['source'], string> = {
@@ -122,6 +123,24 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       },
     }, icon('download'), 'Descargar PNG');
 
+    const addQueueBtn = h('button', {
+      class: 'btn sm ghost',
+      type: 'button',
+      title: 'Añadir este producto a la cola para imprimirlo junto con otros productos en la misma hoja',
+      onclick: () => {
+        const tempProd: Product = {
+          ...p,
+          barcode: barcodeInput.value.trim() || p.barcode,
+          description: f.description.value.trim() || p.description,
+          sku: f.sku.value.trim() || p.sku,
+          unit: f.unit.value.trim() || p.unit,
+        };
+        addToPrintQueue(tempProd, 1);
+        const total = getPrintQueueTotalCount();
+        toast(`Añadido a la cola (${total} etiquetas en cola)`, 'ok');
+      },
+    }, icon('plus'), 'Añadir a cola');
+
     const sheetBtn = h('button', {
       class: 'btn sm',
       type: 'button',
@@ -133,9 +152,9 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
           sku: f.sku.value.trim() || p.sku,
           unit: f.unit.value.trim() || p.unit,
         };
-        openBarcodeSheetDialog([tempProd], `Etiqueta: ${tempProd.description || tempProd.barcode}`);
+        openBarcodeSheetDialog([tempProd], `Hoja de etiquetas`);
       },
-    }, '🏷️ Hoja de etiquetas');
+    }, '🏷️ Hoja de etiquetas / Cola');
 
     const status = h('div', { class: 'muted small' }, sourceBadge(p), p.brand ? ` · Marca: ${p.brand}` : '');
     const lookupBtn = h('button', {
@@ -167,7 +186,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         h('div', { class: 'row' }, barcodeInput, genBtn),
       ),
       barcodePreview,
-      h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, sheetBtn),
+      h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn),
       status,
       h('label', { class: 'field' }, h('span', null, 'Descripción'), f.description),
       lookupBtn,

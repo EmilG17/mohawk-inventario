@@ -573,11 +573,117 @@ textarea.input { min-height: 60px; resize: vertical; }
   margin: 6px 0 10px;
 }
 
-/* Modal de hojas de etiquetas */
 .barcode-sheet-modal {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+/* Cola de impresión de etiquetas en la misma hoja */
+.sheet-queue-section {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.sheet-queue-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.queue-search-box {
+  position: relative;
+  width: 100%;
+}
+.queue-search-dropdown {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  max-height: 220px;
+  overflow-y: auto;
+  background: #ffffff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  box-shadow: 0 4px 16px rgba(0,0,0,0.2);
+  z-index: 100;
+  margin-top: 4px;
+}
+.queue-search-item {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.queue-search-item:hover,
+.queue-search-item:active {
+  background: #f1f5f9;
+}
+.queue-items-list {
+  max-height: 200px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px;
+  background: var(--bg);
+}
+.queue-item-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+.queue-item-meta {
+  flex-grow: 1;
+  min-width: 0;
+}
+.queue-item-title {
+  font-weight: 600;
+  font-size: 13px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.queue-item-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+.queue-item-stepper {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+.queue-qty-input {
+  width: 44px;
+  text-align: center;
+  padding: 2px 4px;
+  font-weight: 700;
+  font-size: 13px;
+}
+.badge-queue {
+  background: #0284c7;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 10px;
+  margin-left: 4px;
 }
 .sheet-preview-wrap {
   max-height: 50vh;
