@@ -12,10 +12,18 @@ import {
   setPrintQueueItemQty,
   expandQueueToProducts,
 } from '../barcode/printQueue';
+import {
+  type BartenderFormatProfile,
+  getSavedBartenderProfile,
+  parseBartenderFile,
+  resetBartenderProfile,
+  saveBartenderProfile,
+} from '../barcode/bartenderFormat';
 import { clear, h, icon, openDialog, toast } from './dom';
 
 export type LabelTemplate =
   | 'intermec397x6'
+  | 'intermec397x6_full'
   | 'intermec6x397'
   | 'intermec397x6_dual'
   | 'intermec397x6_tri'
@@ -35,19 +43,36 @@ export interface TemplateConfig {
   pageSize: string;
   barHeight?: number;
   fontSize?: number;
+  moduleWidth?: number;
+  hideFooterByDefault?: boolean;
 }
 
 export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   intermec397x6: {
     id: 'intermec397x6',
-    name: 'Intermec PM43 (3.97" × 6" · Vertical · 203 DPI)',
+    name: 'Intermec PM43 · Formato BarTender (3.97" × 6" · Solo Descripción + Código)',
     perSheet: 1,
     columns: 1,
     rows: 1,
-    pageClass: 'intermec-397x6-page',
+    pageClass: 'intermec-397x6-page bartender-layout',
     pageSize: '3.97in 6in portrait',
-    barHeight: 65,
-    fontSize: 16,
+    barHeight: 32,
+    fontSize: 10,
+    moduleWidth: 2.2,
+    hideFooterByDefault: true,
+  },
+  intermec397x6_full: {
+    id: 'intermec397x6_full',
+    name: 'Intermec PM43 · Formato Completo (3.97" × 6" · Con SKU, Unidad y Marca)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-397x6-page bartender-layout with-footer',
+    pageSize: '3.97in 6in portrait',
+    barHeight: 34,
+    fontSize: 10,
+    moduleWidth: 2.2,
+    hideFooterByDefault: false,
   },
   intermec6x397: {
     id: 'intermec6x397',
@@ -57,8 +82,9 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     rows: 1,
     pageClass: 'intermec-6x397-page',
     pageSize: '6in 3.97in landscape',
-    barHeight: 60,
-    fontSize: 14,
+    barHeight: 40,
+    fontSize: 11,
+    moduleWidth: 2.2,
   },
   intermec397x6_dual: {
     id: 'intermec397x6_dual',
@@ -68,8 +94,9 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     rows: 2,
     pageClass: 'intermec-397x6-dual-page',
     pageSize: '3.97in 6in portrait',
-    barHeight: 45,
-    fontSize: 12,
+    barHeight: 32,
+    fontSize: 10,
+    moduleWidth: 2.0,
   },
   intermec397x6_tri: {
     id: 'intermec397x6_tri',
@@ -79,8 +106,9 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     rows: 3,
     pageClass: 'intermec-397x6-tri-page',
     pageSize: '3.97in 6in portrait',
-    barHeight: 36,
-    fontSize: 10,
+    barHeight: 28,
+    fontSize: 9,
+    moduleWidth: 2.0,
   },
   thermal4x2: {
     id: 'thermal4x2',
@@ -90,8 +118,9 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     rows: 1,
     pageClass: 'thermal-4x2-page',
     pageSize: '4in 2in landscape',
-    barHeight: 38,
+    barHeight: 34,
     fontSize: 10,
+    moduleWidth: 2.0,
   },
   avery5160: {
     id: 'avery5160',
@@ -144,6 +173,7 @@ export interface LabelSlotOptions {
   showUnit?: boolean;
   template?: LabelTemplate;
   border?: boolean;
+  bartenderProfile?: BartenderFormatProfile;
 }
 
 /**
@@ -210,6 +240,7 @@ export function renderLabelSlot(
     showUnit = true,
     template = 'avery5160',
     border = false,
+    bartenderProfile,
   } = options;
 
   const rawCode = product.barcode;
@@ -219,25 +250,35 @@ export function renderLabelSlot(
   const descText = product.description?.trim() || 'Sin descripción';
 
   const tmplConfig = TEMPLATES[template] || TEMPLATES.avery5160;
-  const barHeight = tmplConfig.barHeight ?? 24;
+  const isIntermec = template === 'intermec397x6' || template === 'intermec397x6_full';
+  const btProfile = isIntermec ? (bartenderProfile || getSavedBartenderProfile()) : null;
+
+  const barHeight = btProfile ? btProfile.barHeightPx : (tmplConfig.barHeight ?? 24);
   const fontSize = tmplConfig.fontSize ?? 8;
+  const moduleWidth = btProfile ? btProfile.moduleWidthPx : (tmplConfig.moduleWidth ?? 2);
+  const includeText = btProfile ? btProfile.includeHumanReadable : true;
 
   const svgMarkup = renderCode128Svg(codeText, codeText, {
     height: barHeight,
     fontSize,
+    width: moduleWidth,
     margin: 2,
-    includeText: true,
+    includeText,
   });
 
   const footerParts: string[] = [];
-  if (showSku && product.sku && product.sku !== codeText) {
-    footerParts.push(product.sku);
-  }
-  if (showUnit && product.unit) {
-    footerParts.push(product.unit);
-  }
-  if (showUnit && product.brand) {
-    footerParts.push(product.brand);
+  const shouldHideFooter = tmplConfig.hideFooterByDefault && !options.bartenderProfile?.includeFooter && template === 'intermec397x6';
+
+  if (!shouldHideFooter) {
+    if (showSku && product.sku && product.sku !== codeText) {
+      footerParts.push(product.sku);
+    }
+    if (showUnit && product.unit) {
+      footerParts.push(product.unit);
+    }
+    if (showUnit && product.brand) {
+      footerParts.push(product.brand);
+    }
   }
 
   const slot = h(
@@ -819,13 +860,67 @@ export function openBarcodeSheetDialog(
     ),
     h(
       'div',
-      { class: 'row wrap', style: 'gap: 16px; margin: 2px 0;' },
+      { class: 'row wrap', style: 'gap: 12px; align-items: center; margin: 4px 0;' },
       h(
         'label',
         { class: 'check-inline' },
         borderCheckbox,
         h('span', null, 'Mostrar bordes de corte en pantalla'),
       ),
+      h(
+        'label',
+        { class: 'check-inline' },
+        h('input', {
+          type: 'checkbox',
+          checked: showSku,
+          onchange: (e: Event) => {
+            const checked = (e.target as HTMLInputElement).checked;
+            showSku = checked;
+            showUnit = checked;
+            saveBartenderProfile({ includeFooter: checked });
+            updatePreview();
+          },
+        }),
+        h('span', null, 'Incluir SKU, Unidad y Marca en etiqueta'),
+      ),
+      (() => {
+        const fileInput = h('input', {
+          type: 'file',
+          accept: '.btw,.prn,.ipl,.zpl,.xml,.txt',
+          style: 'display: none;',
+          onchange: async (e: Event) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+            try {
+              const profile = await parseBartenderFile(file);
+              saveBartenderProfile(profile);
+              selectedTemplate = profile.includeFooter ? 'intermec397x6_full' : 'intermec397x6';
+              templateSelect.value = selectedTemplate;
+              if (typeof localStorage !== 'undefined') {
+                try { localStorage.setItem(PREF_KEY, selectedTemplate); } catch {}
+              }
+              applyPrintPageStyle(TEMPLATES[selectedTemplate].pageSize);
+              updatePreview();
+              toast(`Formato BarTender "${file.name}" cargado (${profile.labelWidthIn}"×${profile.labelHeightIn}", ${profile.dpi} DPI)`, 'ok');
+            } catch {
+              toast('Error al leer el archivo BarTender', 'error');
+            }
+          },
+        }) as HTMLInputElement;
+        const uploadBtn = h(
+          'button',
+          {
+            type: 'button',
+            class: 'btn sm ghost',
+            onclick: () => fileInput.click(),
+            title: 'Importar archivo de etiqueta BarTender (.btw) o archivo de comandos (.prn, .zpl)',
+          },
+          icon('upload'),
+          '📂 Cargar formato BarTender (.btw)',
+          fileInput,
+        );
+        return uploadBtn;
+      })(),
     ),
     // Previsualización de la hoja
     h(

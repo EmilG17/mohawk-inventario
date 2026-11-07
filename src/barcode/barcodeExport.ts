@@ -95,6 +95,8 @@ export interface PrintLabelOptions {
   unit?: string;
   brand?: string;
   pageSize?: string;
+  hideFooter?: boolean;
+  customClass?: string;
 }
 
 /**
@@ -136,7 +138,7 @@ export function printLabel(
     sheetRoot.innerHTML = '';
   }
 
-  // Inyectar tamaño de página (por defecto 4" x 2" landscape para etiquetas térmicas)
+  // Inyectar tamaño de página (por defecto 3.97" x 6" para Intermec PM43 o 4" x 2" landscape)
   const pageSize = options?.pageSize || '4in 2in landscape';
   applyPrintPageStyle(pageSize);
 
@@ -149,16 +151,18 @@ export function printLabel(
   }
 
   const footerParts: string[] = [];
-  if (options?.sku) footerParts.push(options.sku);
-  if (options?.unit) footerParts.push(options.unit);
-  if (options?.brand) footerParts.push(options.brand);
+  if (!options?.hideFooter) {
+    if (options?.sku) footerParts.push(options.sku);
+    if (options?.unit) footerParts.push(options.unit);
+    if (options?.brand) footerParts.push(options.brand);
+  }
 
   const footerHtml = footerParts.length > 0
     ? `<div class="label-footer">${escapeHtml(footerParts.join(' · '))}</div>`
     : '';
 
   const isIntermec = pageSize.includes('3.97');
-  const printClass = isIntermec ? 'intermec-397x6' : 'thermal-4x2';
+  const printClass = options?.customClass || (isIntermec ? 'intermec-397x6 bartender-layout' : 'thermal-4x2');
 
   printRoot.innerHTML = `
     <div class="single-label-print ${printClass}">

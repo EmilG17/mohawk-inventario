@@ -3,6 +3,11 @@ import { resolveDescription } from '../lookup/lookup';
 import { displayBarcode, parseNumber } from '../io/normalize';
 import { generateInternalCode, renderCode128Svg } from '../barcode/code128';
 import { downloadPng, downloadSvg, printLabel } from '../barcode/barcodeExport';
+import {
+  getSavedBartenderProfile,
+  parseBartenderFile,
+  saveBartenderProfile,
+} from '../barcode/bartenderFormat';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
 import { confirmDialog, h, icon, openDialog, toast } from './dom';
@@ -51,7 +56,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
 
     const getCurrentSvg = (): string => {
       const txt = barcodeInput.value.trim() || p.barcode || 'MHK-000000';
-      return renderCode128Svg(txt, txt, { height: 42, includeText: true });
+      return renderCode128Svg(txt, txt, { height: 34, width: 2.2, fontSize: 10, includeText: true });
     };
 
     const updatePreview = () => {
@@ -95,34 +100,48 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       },
     }, icon('scan'), 'Generar código interno');
 
+    const btProfileInit = getSavedBartenderProfile();
+    const includeFooterCheck = h('input', {
+      type: 'checkbox',
+      checked: btProfileInit.includeFooter,
+      onchange: (e: Event) => {
+        const checked = (e.target as HTMLInputElement).checked;
+        saveBartenderProfile({ includeFooter: checked });
+      },
+    }) as HTMLInputElement;
+
     const printSingleBtn = h('button', {
       class: 'btn sm primary',
       type: 'button',
       onclick: () => {
         const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem('mohawk_preferred_label_template') : null);
+        const btProfile = getSavedBartenderProfile();
         const pageSize = savedTemplate === 'intermec6x397'
           ? '6in 3.97in landscape'
           : savedTemplate === 'thermal4x2'
             ? '4in 2in landscape'
-            : savedTemplate?.startsWith('intermec')
-              ? '3.97in 6in'
-              : '3.97in 6in';
+            : '3.97in 6in';
 
         const isIntermec = pageSize.includes('3.97');
         const txt = barcodeInput.value.trim() || p.barcode || 'MHK-000000';
         const svgMarkup = renderCode128Svg(txt, txt, {
-          height: isIntermec ? 60 : 42,
-          fontSize: isIntermec ? 13 : 11,
-          width: isIntermec ? 2.5 : 2,
-          includeText: true,
+          height: isIntermec ? btProfile.barHeightPx : 34,
+          fontSize: isIntermec ? 10 : 10,
+          width: isIntermec ? btProfile.moduleWidthPx : 2,
+          includeText: isIntermec ? btProfile.includeHumanReadable : true,
           margin: 2,
         });
 
+        const withFooter = includeFooterCheck.checked || savedTemplate === 'intermec397x6_full';
         printLabel(svgMarkup, f.description.value.trim() || p.description || barcodeInput.value, {
           sku: f.sku.value.trim() || p.sku,
           unit: f.unit.value.trim() || p.unit,
           brand: p.brand,
           pageSize,
+          hideFooter: isIntermec && !withFooter,
+          customClass: isIntermec
+            ? `intermec-397x6 bartender-layout ${withFooter ? 'with-footer' : 'compact-only'}`
+            : 'thermal-4x2',
         });
       },
     }, icon('scan'), 'Imprimir etiqueta');
@@ -204,13 +223,45 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       },
     }, 'Buscar descripción en internet');
 
+    const btUploadInput = h('input', {
+      type: 'file',
+      accept: '.btw,.prn,.ipl,.zpl,.xml,.txt',
+      style: 'display: none;',
+      onchange: async (e: Event) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        try {
+          const profile = await parseBartenderFile(file);
+          saveBartenderProfile(profile);
+          includeFooterCheck.checked = profile.includeFooter;
+          updatePreview();
+          toast(`Formato BarTender "${file.name}" aplicado (${profile.labelWidthIn}"×${profile.labelHeightIn}")`, 'ok');
+        } catch {
+          toast('No se pudo leer el archivo BarTender', 'error');
+        }
+      },
+    }) as HTMLInputElement;
+
+    const btUploadBtn = h('button', {
+      class: 'btn sm ghost',
+      type: 'button',
+      title: 'Cargar archivo BarTender (.btw) para calibrar etiqueta',
+      onclick: () => btUploadInput.click(),
+    }, '📂 Cargar .btw', btUploadInput);
+
     const body = h('div', { class: 'form' },
       h('label', { class: 'field' },
         h('span', null, 'Código de barras'),
         h('div', { class: 'row' }, barcodeInput, genBtn),
       ),
       barcodePreview,
-      h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn),
+      h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn, btUploadBtn),
+      h(
+        'label',
+        { class: 'check-inline muted small', style: 'margin: 2px 0 4px 0;' },
+        includeFooterCheck,
+        h('span', null, 'Incluir SKU, Unidad y Marca debajo del código (Desmarcado = Formato BarTender limpio)'),
+      ),
       status,
       h('label', { class: 'field' }, h('span', null, 'Descripción'), f.description),
       lookupBtn,
