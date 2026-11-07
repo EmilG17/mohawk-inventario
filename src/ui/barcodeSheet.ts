@@ -28,8 +28,6 @@ export type LabelTemplate =
   | 'intermec397x6'
   | 'intermec397x6_full'
   | 'intermec6x397'
-  | 'intermec397x6_dual'
-  | 'intermec397x6_tri'
   | 'thermal4x2'
   | 'avery5160'
   | 'avery5163'
@@ -54,7 +52,7 @@ export interface TemplateConfig {
 export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   intermec325x2: {
     id: 'intermec325x2',
-    name: 'Intermec PM43 · receiving test.btw · USER (3.25 in × 2.00 in) Portrait (Solo Descripción + Código)',
+    name: 'Intermec PM43 · receiving test.btw · USER (3.25 in × 2.00 in) Portrait · 1 etiqueta por página (Solo Descripción + Código)',
     perSheet: 1,
     columns: 1,
     rows: 1,
@@ -67,7 +65,7 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   },
   intermec325x2_full: {
     id: 'intermec325x2_full',
-    name: 'Intermec PM43 · USER (3.25 in × 2.00 in) Portrait · Con SKU, Unidad y Marca',
+    name: 'Intermec PM43 · USER (3.25 in × 2.00 in) Portrait · 1 etiqueta por página (Con SKU, Unidad y Marca)',
     perSheet: 1,
     columns: 1,
     rows: 1,
@@ -80,12 +78,12 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   },
   intermec_composite: {
     id: 'intermec_composite',
-    name: 'Intermec PM43 · Etiqueta Compuesta 3-en-1 BarTender (Principal + Mini + 2D)',
+    name: 'Intermec PM43 · Etiqueta Compuesta BarTender · 1 etiqueta por página (Principal + Mini + 2D)',
     perSheet: 1,
     columns: 1,
     rows: 1,
     pageClass: 'intermec-composite-page',
-    pageSize: '3.97in 6in portrait',
+    pageSize: '3.25in 2in portrait',
     barHeight: 36,
     fontSize: 10,
     moduleWidth: 2.0,
@@ -93,7 +91,7 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   },
   intermec397x6: {
     id: 'intermec397x6',
-    name: 'Intermec PM43 · Formato BarTender (3.97" × 6" · Solo Descripción + Código)',
+    name: 'Intermec PM43 · Formato BarTender (3.97" × 6" · 1 etiqueta por página · Solo Descripción + Código)',
     perSheet: 1,
     columns: 1,
     rows: 1,
@@ -106,7 +104,7 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   },
   intermec397x6_full: {
     id: 'intermec397x6_full',
-    name: 'Intermec PM43 · Formato Completo (3.97" × 6" · Con SKU, Unidad y Marca)',
+    name: 'Intermec PM43 · Formato Completo (3.97" × 6" · 1 etiqueta por página · Con SKU, Unidad y Marca)',
     perSheet: 1,
     columns: 1,
     rows: 1,
@@ -119,7 +117,7 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   },
   intermec6x397: {
     id: 'intermec6x397',
-    name: 'Intermec PM43 (6" × 3.97" · Apaisado · 203 DPI)',
+    name: 'Intermec PM43 (6" × 3.97" · Apaisado · 1 etiqueta por página)',
     perSheet: 1,
     columns: 1,
     rows: 1,
@@ -128,30 +126,6 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     barHeight: 40,
     fontSize: 11,
     moduleWidth: 2.2,
-  },
-  intermec397x6_dual: {
-    id: 'intermec397x6_dual',
-    name: 'Intermec PM43 (3.97" × 6" · 2 etiquetas de 3.97" × 3")',
-    perSheet: 2,
-    columns: 1,
-    rows: 2,
-    pageClass: 'intermec-397x6-dual-page',
-    pageSize: '3.97in 6in portrait',
-    barHeight: 32,
-    fontSize: 10,
-    moduleWidth: 2.0,
-  },
-  intermec397x6_tri: {
-    id: 'intermec397x6_tri',
-    name: 'Intermec PM43 (3.97" × 6" · 3 etiquetas de 3.97" × 2")',
-    perSheet: 3,
-    columns: 1,
-    rows: 3,
-    pageClass: 'intermec-397x6-tri-page',
-    pageSize: '3.97in 6in portrait',
-    barHeight: 28,
-    fontSize: 9,
-    moduleWidth: 2.0,
   },
   thermal4x2: {
     id: 'thermal4x2',
@@ -1014,14 +988,14 @@ export function openBarcodeSheetDialog(
             try {
               const profile = await parseBartenderFile(file);
               saveBartenderProfile(profile);
-              selectedTemplate = profile.includeFooter ? 'intermec397x6_full' : 'intermec397x6';
+              selectedTemplate = profile.includeFooter ? 'intermec325x2_full' : 'intermec325x2';
               templateSelect.value = selectedTemplate;
               if (typeof localStorage !== 'undefined') {
                 try { localStorage.setItem(PREF_KEY, selectedTemplate); } catch {}
               }
               applyPrintPageStyle(TEMPLATES[selectedTemplate].pageSize);
               updatePreview();
-              toast(`Formato BarTender "${file.name}" cargado (${profile.labelWidthIn}"×${profile.labelHeightIn}", ${profile.dpi} DPI)`, 'ok');
+              toast(`Formato BarTender "${file.name}" cargado (${profile.labelWidthIn}"×${profile.labelHeightIn}", 1 etiqueta por página)`, 'ok');
             } catch {
               toast('Error al leer el archivo BarTender', 'error');
             }

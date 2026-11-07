@@ -71,5 +71,15 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
 
     expect(tmplComposite).toBeDefined();
     expect(tmplComposite.isComposite3in1).toBe(true);
+    expect(tmplComposite.perSheet).toBe(1);
+
+    // Ninguna plantilla de Intermec puede tener 2 o más etiquetas por página
+    const intermecTemplates = Object.values(TEMPLATES).filter((t) => t.id.startsWith('intermec'));
+    expect(intermecTemplates.length).toBeGreaterThanOrEqual(5);
+    for (const tmpl of intermecTemplates) {
+      expect(tmpl.perSheet).toBe(1);
+      expect(tmpl.columns).toBe(1);
+      expect(tmpl.rows).toBe(1);
+    }
   });
 });
