@@ -1,29 +1,40 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
   <defs>
     <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#1f3a5f" />
-      <stop offset="100%" stop-color="#0f1d30" />
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e3a5f" />
     </linearGradient>
-    <linearGradient id="accent" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#2a75d3" />
-      <stop offset="100%" stop-color="#19529b" />
+    <linearGradient id="scanGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38bdf8" stop-opacity="0.2" />
+      <stop offset="50%" stop-color="#38bdf8" stop-opacity="1" />
+      <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.2" />
     </linearGradient>
   </defs>
-  <rect width="512" height="512" rx="112" fill="url(#bg)" />
-  <!-- Esquinas de escaneo -->
-  <path d="M120 180 V130 A10 10 0 0 1 130 120 H180" stroke="#5cb85c" stroke-width="16" stroke-linecap="round" fill="none" />
-  <path d="M392 180 V130 A10 10 0 0 0 382 120 H332" stroke="#5cb85c" stroke-width="16" stroke-linecap="round" fill="none" />
-  <path d="M120 332 V382 A10 10 0 0 0 130 392 H180" stroke="#5cb85c" stroke-width="16" stroke-linecap="round" fill="none" />
-  <path d="M392 332 V382 A10 10 0 0 1 382 392 H332" stroke="#5cb85c" stroke-width="16" stroke-linecap="round" fill="none" />
-  <!-- Barras del código -->
-  <rect x="160" y="160" width="16" height="192" rx="6" fill="#ffffff" />
-  <rect x="192" y="160" width="32" height="192" rx="6" fill="#ffffff" />
-  <rect x="240" y="160" width="16" height="192" rx="6" fill="#ffffff" />
-  <rect x="272" y="160" width="48" height="192" rx="6" fill="#ffffff" />
-  <rect x="336" y="160" width="16" height="192" rx="6" fill="#ffffff" />
-  <!-- Línea láser de escaneo -->
-  <line x1="100" y1="256" x2="412" y2="256" stroke="#ff4d4f" stroke-width="8" stroke-linecap="round" filter="drop-shadow(0 0 8px #ff4d4f)" />
-  <!-- Letra M de Mohawk -->
-  <circle cx="256" cy="420" r="32" fill="url(#accent)" />
-  <text x="256" y="432" font-family="system-ui, -apple-system, sans-serif" font-size="32" font-weight="900" fill="#ffffff" text-anchor="middle">M</text>
+
+  <!-- Fondo minimalista squircle -->
+  <rect width="512" height="512" rx="116" fill="url(#bg)" />
+
+  <!-- Marco minimalista de visor de escaneo -->
+  <g stroke="#38bdf8" stroke-width="14" stroke-linecap="round" stroke-linejoin="round" fill="none" opacity="0.9">
+    <path d="M108 164 V124 A16 16 0 0 1 124 108 H164" />
+    <path d="M404 164 V124 A16 16 0 0 0 388 108 H348" />
+    <path d="M108 348 V388 A16 16 0 0 0 124 404 H164" />
+    <path d="M404 348 V388 A16 16 0 0 1 388 404 H348" />
+  </g>
+
+  <!-- Silueta geométrica minimalista de caja/consumible isométrico superior -->
+  <path d="M256 128 L364 182 L256 236 L148 182 Z" fill="none" stroke="#ffffff" stroke-width="16" stroke-linejoin="round" />
+  <path d="M202 155 L310 209" stroke="#38bdf8" stroke-width="12" stroke-linecap="round" />
+
+  <!-- Cuerpo inferior combinado con barras de código limpias -->
+  <path d="M148 182 V322 L256 376 L364 322 V182" fill="none" stroke="#ffffff" stroke-width="16" stroke-linecap="round" stroke-linejoin="round" />
+
+  <!-- Barras minimalistas de código de barras integradas en el frente -->
+  <rect x="190" y="252" width="16" height="68" rx="8" fill="#ffffff" />
+  <rect x="224" y="258" width="24" height="68" rx="8" fill="#38bdf8" />
+  <rect x="266" y="258" width="16" height="68" rx="8" fill="#ffffff" />
+  <rect x="300" y="252" width="22" height="68" rx="8" fill="#ffffff" />
+
+  <!-- Haz de lectura minimalista -->
+  <line x1="88" y1="286" x2="424" y2="286" stroke="url(#scanGrad)" stroke-width="8" stroke-linecap="round" />
 </svg>
