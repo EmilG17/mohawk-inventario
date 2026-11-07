@@ -101,6 +101,24 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
     }, icon('scan'), 'Generar código interno');
 
     const btProfileInit = getSavedBartenderProfile();
+    const savedTplInit = typeof localStorage !== 'undefined' ? localStorage.getItem('mohawk_preferred_label_template') : null;
+    const precut3in1Check = h('input', {
+      type: 'checkbox',
+      id: 'p-precut-3in1',
+      checked: savedTplInit ? savedTplInit === 'intermec_composite' : true,
+      onchange: (e: Event) => {
+        const checked = (e.target as HTMLInputElement).checked;
+        if (typeof localStorage !== 'undefined') {
+          try {
+            localStorage.setItem(
+              'mohawk_preferred_label_template',
+              checked ? 'intermec_composite' : 'intermec325x2',
+            );
+          } catch {}
+        }
+      },
+    }) as HTMLInputElement;
+
     const includeFooterCheck = h('input', {
       type: 'checkbox',
       checked: btProfileInit.includeFooter,
@@ -116,6 +134,20 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       onclick: () => {
         const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem('mohawk_preferred_label_template') : null);
         const btProfile = getSavedBartenderProfile();
+        const txt = barcodeInput.value.trim() || p.barcode || 'MHK-000000';
+
+        if (precut3in1Check.checked || savedTemplate === 'intermec_composite') {
+          printLabel('', f.description.value.trim() || p.description || txt, {
+            barcode: txt,
+            sku: f.sku.value.trim() || p.sku || txt,
+            unit: f.unit.value.trim() || p.unit,
+            brand: p.brand || 'MOHAWK',
+            pageSize: `${btProfile.labelWidthIn}in ${btProfile.labelHeightIn}in portrait`,
+            precut3in1: true,
+          });
+          return;
+        }
+
         const pageSize = savedTemplate === 'intermec6x397'
           ? '6in 3.97in landscape'
           : savedTemplate === 'thermal4x2'
@@ -125,7 +157,6 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
               : `${btProfile.labelWidthIn}in ${btProfile.labelHeightIn}in portrait`;
 
         const isIntermec = pageSize.includes('3.25') || pageSize.includes('3.97');
-        const txt = barcodeInput.value.trim() || p.barcode || 'MHK-000000';
         const svgMarkup = renderCode128Svg(txt, txt, {
           height: isIntermec ? btProfile.barHeightPx : 34,
           fontSize: 10,
@@ -140,6 +171,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
           savedTemplate === 'intermec397x6_full';
         const sizeClass = pageSize.includes('3.25') ? 'intermec-325x2' : 'intermec-397x6';
         printLabel(svgMarkup, f.description.value.trim() || p.description || barcodeInput.value, {
+          barcode: txt,
           sku: f.sku.value.trim() || p.sku,
           unit: f.unit.value.trim() || p.unit,
           brand: p.brand,
@@ -264,9 +296,15 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn, btUploadBtn),
       h(
         'label',
-        { class: 'check-inline muted small', style: 'margin: 2px 0 4px 0;' },
+        { class: 'check-inline muted small', style: 'margin: 2px 0 2px 0;' },
+        precut3in1Check,
+        h('span', null, 'Imprimir formato Etiqueta Pre-Cortada 3-en-1 BarTender (Principal + Mini + QR · 3.25" × 2.00")'),
+      ),
+      h(
+        'label',
+        { class: 'check-inline muted small', style: 'margin: 0 0 4px 0;' },
         includeFooterCheck,
-        h('span', null, 'Incluir SKU, Unidad y Marca debajo del código (Desmarcado = Formato BarTender limpio)'),
+        h('span', null, 'Incluir SKU, Unidad y Marca debajo del código (para etiquetas simples)'),
       ),
       status,
       h('label', { class: 'field' }, h('span', null, 'Descripción'), f.description),

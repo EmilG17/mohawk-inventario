@@ -1,6 +1,6 @@
 import { allProducts, type Product } from '../db/db';
 import { displayBarcode } from '../io/normalize';
-import { renderCode128Svg } from '../barcode/code128';
+import { renderCode128Svg, renderPrecut3in1Html } from '../barcode/code128';
 import { applyPrintPageStyle, downloadPng, downloadSvg } from '../barcode/barcodeExport';
 import {
   type PrintQueueItem,
@@ -22,9 +22,9 @@ import {
 import { clear, h, icon, openDialog, toast } from './dom';
 
 export type LabelTemplate =
+  | 'intermec_composite'
   | 'intermec325x2'
   | 'intermec325x2_full'
-  | 'intermec_composite'
   | 'intermec397x6'
   | 'intermec397x6_full'
   | 'intermec6x397'
@@ -50,6 +50,19 @@ export interface TemplateConfig {
 }
 
 export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
+  intermec_composite: {
+    id: 'intermec_composite',
+    name: 'Intermec PM43 · Etiqueta Pre-Cortada 3-en-1 BarTender · USER (3.25 in × 2.00 in) · 1 etiqueta por página (Principal + Mini + QR)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'intermec-composite-page',
+    pageSize: '3.25in 2in portrait',
+    barHeight: 36,
+    fontSize: 10,
+    moduleWidth: 2.0,
+    isComposite3in1: true,
+  },
   intermec325x2: {
     id: 'intermec325x2',
     name: 'Intermec PM43 · receiving test.btw · USER (3.25 in × 2.00 in) Portrait · 1 etiqueta por página (Solo Descripción + Código)',
@@ -75,19 +88,6 @@ export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
     fontSize: 10,
     moduleWidth: 2.0,
     hideFooterByDefault: false,
-  },
-  intermec_composite: {
-    id: 'intermec_composite',
-    name: 'Intermec PM43 · Etiqueta Compuesta BarTender · 1 etiqueta por página (Principal + Mini + 2D)',
-    perSheet: 1,
-    columns: 1,
-    rows: 1,
-    pageClass: 'intermec-composite-page',
-    pageSize: '3.25in 2in portrait',
-    barHeight: 36,
-    fontSize: 10,
-    moduleWidth: 2.0,
-    isComposite3in1: true,
   },
   intermec397x6: {
     id: 'intermec397x6',
@@ -269,71 +269,16 @@ export function renderLabelSlot(
   const tmplConfig = TEMPLATES[template] || TEMPLATES.avery5160;
 
   if (tmplConfig.isComposite3in1) {
-    const skuBannerText = product.sku || codeText;
-    const brandText = product.brand || 'MOHAWK';
-    const unitText = product.unit || '';
-    const mainSvg = renderCode128Svg(codeText, '', {
-      height: 36,
-      width: 2.0,
-      margin: 2,
-      includeText: false,
+    const compSlot = h('div', {
+      class: `sheet-label composite-3in1-label ${border ? 'with-border' : ''}`,
     });
-    const miniSvg = renderCode128Svg(codeText, '', {
-      height: 22,
-      width: 1.4,
-      margin: 1,
-      includeText: false,
+    compSlot.innerHTML = renderPrecut3in1Html({
+      barcode: codeText,
+      sku: product.sku || codeText,
+      description: descText,
+      brand: product.brand || 'MOHAWK',
+      unit: product.unit || '',
     });
-    const compSlot = h(
-      'div',
-      { class: `sheet-label composite-3in1-label ${border ? 'with-border' : ''}` },
-      h(
-        'div',
-        { class: 'comp-top-section' },
-        h('div', { class: 'comp-sku-banner' }, `SKU ${skuBannerText}`),
-        h('div', { class: 'comp-desc' }, descText),
-        h('div', { class: 'comp-main-barcode' }),
-        h(
-          'div',
-          { class: 'comp-mid-row' },
-          h('span', { class: 'comp-brand-left' }, brandText),
-          h('span', { class: 'comp-code-inv' }, codeText),
-          h('span', { class: 'comp-unit-right' }, unitText),
-        ),
-      ),
-      h(
-        'div',
-        { class: 'comp-bottom-row' },
-        h(
-          'div',
-          { class: 'comp-mini-left' },
-          h('div', { class: 'comp-mini-banner' }, `SKU ${skuBannerText}`),
-          h('div', { class: 'comp-mini-desc' }, descText),
-          h('div', { class: 'comp-mini-barcode' }),
-          h(
-            'div',
-            { class: 'comp-mini-foot' },
-            h('span', { class: 'comp-mini-inv' }, codeText),
-            h('span', { class: 'comp-mini-brand' }, brandText),
-          ),
-        ),
-        h(
-          'div',
-          { class: 'comp-mini-right' },
-          h('div', { class: 'comp-qr-title' }, `SKU ${skuBannerText}`),
-          h(
-            'div',
-            { class: 'comp-qr-body' },
-            h('span', { class: 'comp-qr-vert-code' }, codeText),
-            h('div', { class: 'comp-qr-box' }, '▦'),
-          ),
-        ),
-      ),
-    );
-    const mainWrap = compSlot.querySelector('.comp-main-barcode');
-    if (mainWrap) mainWrap.innerHTML = mainSvg;
-    const miniWrap = compSlot.querySelector('.comp-mini-barcode');
-    if (miniWrap) miniWrap.innerHTML = miniSvg;
     return compSlot;
   }
 

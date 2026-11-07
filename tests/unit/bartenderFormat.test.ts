@@ -7,6 +7,7 @@ import {
   resetBartenderProfile,
   saveBartenderProfile,
 } from '../../src/barcode/bartenderFormat';
+import { renderPrecut3in1Html, renderQrCodeSvg } from '../../src/barcode/code128';
 import { renderLabelSlot, TEMPLATES } from '../../src/ui/barcodeSheet';
 
 describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
@@ -82,4 +83,27 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
       expect(tmpl.rows).toBe(1);
     }
   });
+
+  it('generates scannable SVG QR code and 3-zone pre-cut BarTender HTML', () => {
+    const qrSvg = renderQrCodeSvg('1234567', 84, 0);
+    expect(qrSvg).toContain('<svg');
+    expect(qrSvg).toContain('class="qr-code-svg"');
+    expect(qrSvg).toContain('class="qr-module"');
+
+    const html = renderPrecut3in1Html({
+      barcode: '1234567',
+      sku: 'XXXXX',
+      description: 'BEIGE TONE/ PICKLE (12X24)',
+      brand: 'DALTILE',
+      unit: 'PZA',
+    });
+    expect(html).toContain('precut-zone-top');
+    expect(html).toContain('precut-zone-bl');
+    expect(html).toContain('precut-zone-br');
+    expect(html).toContain('SKU NUMBER XXXXX');
+    expect(html).toContain('DALTILE');
+    expect(html).toContain('1234567');
+    expect(html).toContain('qr-code-svg');
+  });
 });
+

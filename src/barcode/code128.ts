@@ -1,3 +1,5 @@
+import { QRCodeDecoderErrorCorrectionLevel, QRCodeEncoder } from '@zxing/library';
+
 /**
  * Motor Code 128 Auto (Code B / Code C) en TypeScript puro sin dependencias externas.
  * Cumple con el estándar ISO/IEC 15417.
@@ -266,10 +268,147 @@ export function sanitizeFilename(name: string): string {
     .slice(0, 80) || 'barcode';
 }
 
+/**
+ * Genera un código QR vectorial SVG nítido y escaneable usando @zxing/library.
+ */
+export function renderQrCodeSvg(
+  text: string,
+  sizePx = 68,
+  marginModules = 1,
+): string {
+  const safeText = text?.trim() || 'MHK-000000';
+  try {
+    const qr = QRCodeEncoder.encode(safeText, QRCodeDecoderErrorCorrectionLevel.M);
+    const matrix = qr.getMatrix();
+    const w = matrix.getWidth();
+    const h = matrix.getHeight();
+    const totalModules = w + marginModules * 2;
+    const rects: string[] = [];
+
+    for (let y = 0; y < h; y++) {
+      let run = 0;
+      let startX = 0;
+      for (let x = 0; x < w; x++) {
+        if (matrix.get(x, y) === 1) {
+          if (run === 0) startX = x + marginModules;
+          run++;
+        } else if (run > 0) {
+          rects.push(
+            `<rect class="qr-module" x="${startX}" y="${y + marginModules}" width="${run}" height="1" fill="#000000" style="fill:#000000!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;"/>`,
+          );
+          run = 0;
+        }
+      }
+      if (run > 0) {
+        rects.push(
+          `<rect class="qr-module" x="${startX}" y="${y + marginModules}" width="${run}" height="1" fill="#000000" style="fill:#000000!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;"/>`,
+        );
+      }
+    }
+
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalModules} ${totalModules}" width="${sizePx}" height="${sizePx}" class="qr-code-svg" shape-rendering="crispEdges" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;"><rect width="${totalModules}" height="${totalModules}" fill="#ffffff"/>${rects.join('')}</svg>`;
+  } catch {
+    return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" width="${sizePx}" height="${sizePx}"><rect width="24" height="24" fill="#ffffff" stroke="#000000" stroke-width="2"/></svg>`;
+  }
+}
+
+export interface Precut3in1Data {
+  barcode: string;
+  sku?: string;
+  description?: string;
+  brand?: string;
+  unit?: string;
+}
+
+/**
+ * Genera el marcado HTML completo para la etiqueta pre-cortada 3-en-1 de BarTender
+ * (1. Etiqueta Principal Superior, 2. Mini Etiqueta Inferior Izquierda, 3. Etiqueta QR Inferior Derecha)
+ * calibrada milimétricamente a las zonas de troquelado de USER (3.25 in x 2.00 in · 660x406 dots @ 203 DPI).
+ */
+export function renderPrecut3in1Html(data: Precut3in1Data): string {
+  const rawBarcode = data.barcode?.trim() || 'MHK-000000';
+  const code = escapeXml(rawBarcode);
+  const rawSku = data.sku?.trim() || rawBarcode;
+  const skuLabel = rawSku.toUpperCase().startsWith('SKU')
+    ? escapeXml(rawSku.toUpperCase())
+    : `SKU NUMBER ${escapeXml(rawSku.toUpperCase())}`;
+
+  const fullDesc = (data.description?.trim() || 'SIN DESCRIPCIÓN').toUpperCase();
+  const descLine1 = escapeXml(fullDesc.slice(0, 46));
+  const descLine2 = escapeXml(
+    fullDesc.length > 46
+      ? fullDesc.slice(46, 92)
+      : data.unit
+        ? `${data.unit.toUpperCase()}`
+        : '',
+  );
+  const miniDesc = escapeXml(fullDesc.slice(0, 28));
+  const brandTitle = escapeXml((data.brand?.trim() || 'MOHAWK').toUpperCase());
+
+  const mainBarcodeSvg = renderCode128Svg(rawBarcode, '', {
+    height: 72,
+    width: 2.0,
+    margin: 0,
+    includeText: false,
+  }).replace('<svg ', '<svg preserveAspectRatio="none" ');
+
+  const miniBarcodeSvg = renderCode128Svg(rawBarcode, '', {
+    height: 44,
+    width: 1.5,
+    margin: 0,
+    includeText: false,
+  }).replace('<svg ', '<svg preserveAspectRatio="none" ');
+
+  const qrSvg = renderQrCodeSvg(rawBarcode, 84, 0);
+
+  return `
+    <div class="precut-3in1-sheet">
+      <!-- ZONA 1: ETIQUETA PRINCIPAL SUPERIOR (X: 6.1%..93.8%, Y: 7.6%..60.3%) -->
+      <div class="precut-zone-top">
+        <div class="precut-top-banner">${skuLabel}</div>
+        <div class="precut-top-descs">
+          <div class="precut-top-desc">${descLine1}</div>
+          <div class="precut-top-desc">${descLine2 || '&nbsp;'}</div>
+        </div>
+        <div class="precut-top-barcode">${mainBarcodeSvg}</div>
+        <div class="precut-top-footer-bar">
+          <span class="precut-brand-badge">${brandTitle}</span>
+          <span class="precut-main-number">${code}</span>
+        </div>
+      </div>
+
+      <!-- ZONA INFERIOR DIVIDIDA EN 2 PRE-CORTES (IZQUIERDA MINI + DERECHA QR) -->
+      <div class="precut-bottom-split">
+        <!-- ZONA 2: MINI ETIQUETA INFERIOR IZQUIERDA (X: 4.1%..43.2%, Y: 67.5%..95.1%) -->
+        <div class="precut-zone-bl">
+          <div class="precut-bl-banner">${skuLabel}</div>
+          <div class="precut-bl-desc">${miniDesc}</div>
+          <div class="precut-bl-barcode">${miniBarcodeSvg}</div>
+          <div class="precut-bl-footer">
+            <span class="precut-bl-code-inv">${code}</span>
+            <span class="precut-bl-brand">${brandTitle}</span>
+          </div>
+        </div>
+
+        <!-- ZONA 3: ETIQUETA QR INFERIOR DERECHA (X: 77.4%..96.1%, Y: 66.0%..93.3%) -->
+        <div class="precut-zone-br">
+          <div class="precut-br-sku">${skuLabel}</div>
+          <div class="precut-br-qr-row">
+            <span class="precut-br-vert-num">${code}</span>
+            <div class="precut-br-qr-wrap">${qrSvg}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 // Exponer en window para E2E testing
 if (typeof window !== 'undefined') {
   (window as any).__encodeCode128 = encodeCode128;
   (window as any).__renderCode128Svg = renderCode128Svg;
+  (window as any).__renderQrCodeSvg = renderQrCodeSvg;
+  (window as any).__renderPrecut3in1Html = renderPrecut3in1Html;
   (window as any).__generateInternalCode = generateInternalCode;
   (window as any).__sanitizeFilename = sanitizeFilename;
 }

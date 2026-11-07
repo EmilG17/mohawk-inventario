@@ -803,159 +803,291 @@ textarea.input { min-height: 60px; resize: vertical; }
   margin-top: 2px;
 }
 
-/* Intermec PM43 - Etiqueta Compuesta 3-en-1 BarTender (Principal + Mini + 2D) */
+/* Intermec PM43 - Etiqueta Pre-Cortada 3-en-1 BarTender (USER 3.25" x 2.00" · 660x406 dots @ 203 DPI) */
 .intermec-composite-page {
-  width: 3.97in;
-  min-height: 2.6in;
+  width: 3.25in;
+  height: 2.00in;
+  min-height: 2.00in;
+  max-height: 2.00in;
   box-sizing: border-box;
-  padding: 0.14in 0.18in;
+  padding: 0;
   background: #ffffff;
   box-shadow: 0 2px 8px rgba(0,0,0,0.15);
   margin: 0 auto 12px auto;
+  overflow: hidden;
+  position: relative;
 }
 .composite-3in1-label {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  color: #000;
-}
-.comp-top-section {
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-}
-.comp-sku-banner {
-  width: 100%;
-  background: #000000;
-  color: #ffffff;
-  font-weight: 800;
-  font-size: 11pt;
-  padding: 2px 6px;
-  text-align: left;
-  letter-spacing: 0.5px;
+  width: 3.25in !important;
+  height: 2.00in !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  display: block !important;
+  position: relative !important;
+  background: #ffffff;
+  color: #000000;
   box-sizing: border-box;
 }
-.comp-desc {
-  width: 100%;
-  font-size: 8.5pt;
-  font-weight: 700;
-  text-align: left;
-  text-transform: uppercase;
-  line-height: 1.15;
+.precut-3in1-sheet {
+  position: relative;
+  width: 3.25in;
+  height: 2.00in;
+  box-sizing: border-box;
+  background: #ffffff;
+  color: #000000;
+  overflow: hidden;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
-.comp-main-barcode {
-  width: 100%;
-  display: flex;
-  justify-content: center;
+.composite-3in1-label.with-border .precut-zone-top,
+.composite-3in1-label.with-border .precut-zone-bl,
+.composite-3in1-label.with-border .precut-zone-br {
+  outline: 1px dashed #cbd5e1;
+  outline-offset: 2px;
 }
-.comp-main-barcode svg {
-  width: 100%;
-  max-height: 0.5in;
-}
-.comp-mid-row {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 6px;
-}
-.comp-brand-left,
-.comp-unit-right {
-  font-weight: 900;
-  font-size: 10pt;
-}
-.comp-code-inv {
-  background: #000000;
-  color: #ffffff;
-  font-weight: 900;
-  font-size: 12pt;
-  padding: 1px 8px;
-}
-.comp-bottom-row {
-  width: 100%;
-  display: flex;
-  justify-content: space-between;
-  align-items: flex-start;
-  gap: 12px;
-  margin-top: 4px;
-}
-.comp-mini-left {
-  width: 56%;
+
+/* ZONA 1: Etiqueta Principal Superior (X: 6.1%..93.8%, Y: 7.6%..60.3%) */
+.precut-zone-top {
+  position: absolute;
+  top: 7.4%;
+  left: 6.0%;
+  width: 87.8%;
+  height: 53.0%;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  justify-content: space-between;
+  align-items: stretch;
+  box-sizing: border-box;
 }
-.comp-mini-banner {
-  background: #000000;
-  color: #ffffff;
-  font-size: 7pt;
+.precut-top-banner {
+  background: #000000 !important;
+  color: #ffffff !important;
+  font-family: Arial, Helvetica, sans-serif;
   font-weight: 800;
+  font-size: 9pt;
+  line-height: 1.15;
   padding: 1px 4px;
   text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
-.comp-mini-desc {
-  font-size: 6pt;
+.precut-top-descs {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 1px 0;
+}
+.precut-top-desc {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 6.5pt;
+  font-weight: 600;
+  line-height: 1.15;
   text-align: left;
+  color: #000000;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.comp-mini-barcode svg {
+.precut-top-barcode {
   width: 100%;
-  max-height: 0.32in;
+  height: 34%;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+  margin: 0;
 }
-.comp-mini-foot {
+.precut-top-barcode svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  display: block;
+}
+.precut-top-footer-bar {
+  width: 100%;
+  height: 24%;
+  background: #000000 !important;
+  color: #ffffff !important;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  padding: 0 5px;
+  box-sizing: border-box;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
 }
-.comp-mini-inv {
-  background: #000000;
-  color: #ffffff;
-  font-weight: 800;
-  font-size: 8pt;
-  padding: 0 4px;
+.precut-brand-badge {
+  font-family: Impact, 'Arial Black', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: 10.5pt;
+  color: #ffffff !important;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
 }
-.comp-mini-brand {
-  font-weight: 800;
-  font-size: 7.5pt;
+.precut-main-number {
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 900;
+  font-size: 13pt;
+  color: #ffffff !important;
+  letter-spacing: 0.4px;
+  white-space: nowrap;
 }
-.comp-mini-right {
-  width: 38%;
+
+/* ZONA 2: Mini Etiqueta Inferior Izquierda (X: 4.1%..43.2%, Y: 67.5%..95.1%) */
+.precut-zone-bl {
+  position: absolute;
+  top: 67.2%;
+  left: 4.1%;
+  width: 39.2%;
+  height: 28.0%;
   display: flex;
   flex-direction: column;
-  align-items: flex-end;
+  justify-content: space-between;
+  align-items: stretch;
+  box-sizing: border-box;
+}
+.precut-bl-banner {
+  background: #000000 !important;
+  color: #ffffff !important;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 800;
+  font-size: 5.5pt;
+  line-height: 1.15;
+  padding: 1px 3px;
+  text-align: left;
+  width: 100%;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.precut-bl-desc {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 4.8pt;
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: left;
+  color: #000000;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.precut-bl-barcode {
+  width: 100%;
+  height: 39%;
+  display: flex;
+  align-items: stretch;
+  justify-content: center;
+}
+.precut-bl-barcode svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  display: block;
+}
+.precut-bl-footer {
+  width: 100%;
+  height: 24%;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-sizing: border-box;
+}
+.precut-bl-code-inv {
+  background: #000000 !important;
+  color: #ffffff !important;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 900;
+  font-size: 6.5pt;
+  line-height: 1.1;
+  padding: 1px 4px;
+  white-space: nowrap;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.precut-bl-brand {
+  font-family: Impact, 'Arial Black', sans-serif;
+  font-weight: 900;
+  font-style: italic;
+  font-size: 6.8pt;
+  color: #000000 !important;
+  white-space: nowrap;
+  padding-right: 2px;
+}
+
+/* ZONA 3: Etiqueta QR Inferior Derecha (X: 77.4%..96.1%, Y: 66.0%..93.3%) */
+.precut-zone-br {
+  position: absolute;
+  top: 65.8%;
+  left: 76.5%;
+  width: 19.8%;
+  height: 28.2%;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: stretch;
+  box-sizing: border-box;
+}
+.precut-br-sku {
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 4.3pt;
+  font-weight: 700;
+  color: #000000;
+  text-align: left;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.precut-br-qr-row {
+  width: 100%;
+  height: 82%;
+  display: flex;
+  justify-content: space-between;
+  align-items: stretch;
   gap: 2px;
 }
-.comp-qr-title {
-  font-size: 6.5pt;
-  font-weight: 700;
-}
-.comp-qr-body {
-  display: flex;
-  align-items: center;
-  gap: 3px;
-}
-.comp-qr-vert-code {
-  background: #000000;
-  color: #ffffff;
-  font-size: 7pt;
-  font-weight: 800;
+.precut-br-vert-num {
+  background: #000000 !important;
+  color: #ffffff !important;
+  font-family: Arial, Helvetica, sans-serif;
+  font-weight: 900;
+  font-size: 5.8pt;
   writing-mode: vertical-rl;
-  padding: 3px 1px;
-}
-.comp-qr-box {
-  width: 0.55in;
-  height: 0.55in;
-  border: 2px solid #000;
+  text-orientation: mixed;
   display: flex;
   align-items: center;
   justify-content: center;
-  font-size: 26pt;
-  line-height: 1;
+  padding: 2px 1px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow: hidden;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.precut-br-qr-wrap {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+}
+.precut-br-qr-wrap svg {
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 0.42in !important;
+  max-height: 0.42in !important;
+  display: block;
 }
 
 /* Intermec PM43 - Rollo 3.97" x 6" · Formato BarTender (101mm x 152mm · 203 DPI) */
@@ -1349,6 +1481,25 @@ textarea.input { min-height: 60px; resize: vertical; }
     align-items: center !important;
     text-align: center !important;
     margin: 0 auto !important;
+  }
+  .single-label-print.intermec-composite-page,
+  .intermec-composite-page {
+    width: 3.25in !important;
+    height: 2.00in !important;
+    max-width: 3.25in !important;
+    min-height: 2.00in !important;
+    max-height: 2.00in !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    page-break-inside: avoid !important;
+    break-inside: avoid !important;
+  }
+  .composite-3in1-label.with-border .precut-zone-top,
+  .composite-3in1-label.with-border .precut-zone-bl,
+  .composite-3in1-label.with-border .precut-zone-br {
+    outline: none !important;
   }
   .single-label-print.intermec-325x2,
   .intermec-325x2-page {

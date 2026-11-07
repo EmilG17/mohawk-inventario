@@ -1,5 +1,5 @@
 import { downloadFile } from '../ui/dom';
-import { sanitizeFilename } from './code128';
+import { renderPrecut3in1Html, sanitizeFilename } from './code128';
 
 /**
  * Descarga una cadena SVG como archivo .svg.
@@ -91,12 +91,14 @@ function escapeHtml(s: string): string {
 }
 
 export interface PrintLabelOptions {
+  barcode?: string;
   sku?: string;
   unit?: string;
   brand?: string;
   pageSize?: string;
   hideFooter?: boolean;
   customClass?: string;
+  precut3in1?: boolean;
 }
 
 /**
@@ -138,10 +140,6 @@ export function printLabel(
     sheetRoot.innerHTML = '';
   }
 
-  // Inyectar tamaño de página (por defecto 3.97" x 6" para Intermec PM43 o 4" x 2" landscape)
-  const pageSize = options?.pageSize || '4in 2in landscape';
-  applyPrintPageStyle(pageSize);
-
   let printRoot = document.getElementById('single-print-root');
   if (!printRoot) {
     printRoot = document.createElement('div');
@@ -149,6 +147,29 @@ export function printLabel(
     printRoot.className = 'single-print-root';
     document.body.appendChild(printRoot);
   }
+
+  if (options?.precut3in1) {
+    const pageSize = options?.pageSize || '3.25in 2in portrait';
+    applyPrintPageStyle(pageSize);
+    const precutHtml = renderPrecut3in1Html({
+      barcode: options.barcode || 'MHK-000000',
+      sku: options.sku || options.barcode || 'MHK-000000',
+      description: title || '',
+      brand: options.brand || 'MOHAWK',
+      unit: options.unit || '',
+    });
+    printRoot.innerHTML = `
+      <div class="single-label-print intermec-composite-page">
+        <div class="sheet-label composite-3in1-label">${precutHtml}</div>
+      </div>
+    `;
+    window.print();
+    return;
+  }
+
+  // Inyectar tamaño de página (por defecto 3.97" x 6" para Intermec PM43 o 4" x 2" landscape)
+  const pageSize = options?.pageSize || '4in 2in landscape';
+  applyPrintPageStyle(pageSize);
 
   const footerParts: string[] = [];
   if (!options?.hideFooter) {
@@ -161,7 +182,7 @@ export function printLabel(
     ? `<div class="label-footer">${escapeHtml(footerParts.join(' · '))}</div>`
     : '';
 
-  const isIntermec = pageSize.includes('3.97');
+  const isIntermec = pageSize.includes('3.97') || pageSize.includes('3.25');
   const printClass = options?.customClass || (isIntermec ? 'intermec-397x6 bartender-layout' : 'thermal-4x2');
 
   printRoot.innerHTML = `

@@ -41,20 +41,27 @@ test.describe('Impresión de código de barras y etiquetas térmicas 4x2', () =>
     expect(printPageStyle).toMatch(/size:\s*(3\.25in 2in portrait|3\.97in 6in|4in 2in landscape)/);
     expect(printPageStyle).toContain('margin: 0 !important');
 
-    // Verificar el contenedor de impresión individual
+    // Verificar el contenedor de impresión individual (Pre-Cut 3-in-1 BarTender por defecto)
     const singlePrintRoot = page.locator('#single-print-root');
     await expect(singlePrintRoot).toBeAttached();
 
     const thermalLabel = singlePrintRoot.locator('.single-label-print');
     await expect(thermalLabel).toBeAttached();
 
-    // Verificar que el título y el SVG del código de barras existen
-    const desc = thermalLabel.locator('.label-desc');
+    // Verificar las 3 zonas pre-cortadas (Principal Superior, Mini Inferior Izquierda y QR Inferior Derecha)
+    await expect(thermalLabel.locator('.precut-zone-top')).toBeAttached();
+    await expect(thermalLabel.locator('.precut-zone-bl')).toBeAttached();
+    await expect(thermalLabel.locator('.precut-zone-br')).toBeAttached();
+
+    const desc = thermalLabel.locator('.precut-top-desc').first();
     await expect(desc).toBeAttached();
     expect((await desc.textContent())?.length).toBeGreaterThan(0);
 
-    const svg = thermalLabel.locator('.single-barcode-wrap svg');
+    const svg = thermalLabel.locator('.precut-top-barcode svg');
     await expect(svg).toBeAttached();
+
+    const qrSvg = thermalLabel.locator('.precut-br-qr-wrap svg.qr-code-svg');
+    await expect(qrSvg).toBeAttached();
 
     // Verificar que las barras SVG incluyen -webkit-print-color-adjust: exact para impresoras térmicas
     const rectStyle = await svg.locator('rect.barcode-bar').first().getAttribute('style');
