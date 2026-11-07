@@ -197,14 +197,14 @@ export function renderCode128Svg(
       currentRun++;
     } else if (currentRun > 0) {
       rects.push(
-        `<rect x="${startX}" y="${opts.margin}" width="${currentRun * opts.width}" height="${opts.height}" fill="${opts.color}"/>`,
+        `<rect class="barcode-bar" x="${startX}" y="${opts.margin}" width="${currentRun * opts.width}" height="${opts.height}" fill="${opts.color}" style="fill:${opts.color}!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;"/>`,
       );
       currentRun = 0;
     }
   }
   if (currentRun > 0) {
     rects.push(
-      `<rect x="${startX}" y="${opts.margin}" width="${currentRun * opts.width}" height="${opts.height}" fill="${opts.color}"/>`,
+      `<rect class="barcode-bar" x="${startX}" y="${opts.margin}" width="${currentRun * opts.width}" height="${opts.height}" fill="${opts.color}" style="fill:${opts.color}!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;"/>`,
     );
   }
 
@@ -212,14 +212,14 @@ export function renderCode128Svg(
   if (opts.includeText) {
     const label = escapeXml(displayText ?? text);
     const textY = opts.margin + opts.height + opts.fontSize + 1;
-    textSvg = `<text x="${totalWidth / 2}" y="${textY}" text-anchor="middle" font-family="ui-monospace, monospace" font-size="${opts.fontSize}" fill="${opts.color}">${label}</text>`;
+    textSvg = `<text x="${totalWidth / 2}" y="${textY}" text-anchor="middle" font-family="ui-monospace, monospace" font-size="${opts.fontSize}" font-weight="bold" fill="${opts.color}" style="fill:${opts.color}!important;-webkit-print-color-adjust:exact;print-color-adjust:exact;">${label}</text>`;
   }
 
-  const bgRect = opts.background
+  const bgRect = opts.background && opts.background !== 'transparent'
     ? `<rect width="${totalWidth}" height="${totalHeight}" fill="${opts.background}"/>`
     : '';
 
-  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalWidth} ${totalHeight}" width="${totalWidth}" height="${totalHeight}" class="barcode-svg" shape-rendering="crispEdges">${bgRect}${rects.join('')}${textSvg}</svg>`;
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${totalWidth} ${totalHeight}" width="${totalWidth}" height="${totalHeight}" class="barcode-svg" shape-rendering="crispEdges" style="-webkit-print-color-adjust:exact;print-color-adjust:exact;">${bgRect}${rects.join('')}${textSvg}</svg>`;
 }
 
 /**

@@ -1,7 +1,7 @@
 import { allProducts, type Product } from '../db/db';
 import { displayBarcode } from '../io/normalize';
 import { renderCode128Svg } from '../barcode/code128';
-import { downloadPng, downloadSvg } from '../barcode/barcodeExport';
+import { applyPrintPageStyle, downloadPng, downloadSvg } from '../barcode/barcodeExport';
 import {
   type PrintQueueItem,
   getPrintQueue,
@@ -14,7 +14,12 @@ import {
 } from '../barcode/printQueue';
 import { clear, h, icon, openDialog, toast } from './dom';
 
-export type LabelTemplate = 'avery5160' | 'avery5163' | 'continuous';
+export type LabelTemplate =
+  | 'avery5160'
+  | 'thermal4x2'
+  | 'avery5163'
+  | 'thermal2x1'
+  | 'continuous';
 
 export interface TemplateConfig {
   id: LabelTemplate;
@@ -23,32 +28,66 @@ export interface TemplateConfig {
   columns: number;
   rows: number;
   pageClass: string;
+  pageSize: string;
+  barHeight?: number;
+  fontSize?: number;
 }
 
 export const TEMPLATES: Record<LabelTemplate, TemplateConfig> = {
   avery5160: {
     id: 'avery5160',
-    name: 'Avery 5160 (30 etiquetas · 2.625" × 1")',
+    name: 'Avery 5160 (30 etiquetas en hoja Carta · 2.625" × 1")',
     perSheet: 30,
     columns: 3,
     rows: 10,
     pageClass: 'avery-5160-page',
+    pageSize: 'letter portrait',
+    barHeight: 22,
+    fontSize: 8,
+  },
+  thermal4x2: {
+    id: 'thermal4x2',
+    name: 'Rollo térmico 4" × 2" (100mm × 50mm · Zebra, Brother, Rollo)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'thermal-4x2-page',
+    pageSize: '4in 2in landscape',
+    barHeight: 38,
+    fontSize: 10,
   },
   avery5163: {
     id: 'avery5163',
-    name: 'Avery 5163 (10 etiquetas · 4" × 2")',
+    name: 'Avery 5163 (10 etiquetas en hoja Carta · 4" × 2")',
     perSheet: 10,
     columns: 2,
     rows: 5,
     pageClass: 'avery-5163-page',
+    pageSize: 'letter portrait',
+    barHeight: 38,
+    fontSize: 10,
+  },
+  thermal2x1: {
+    id: 'thermal2x1',
+    name: 'Rollo térmico 2.25" × 1.25" (57mm × 32mm)',
+    perSheet: 1,
+    columns: 1,
+    rows: 1,
+    pageClass: 'thermal-2x1-page',
+    pageSize: '2.25in 1.25in landscape',
+    barHeight: 26,
+    fontSize: 8,
   },
   continuous: {
     id: 'continuous',
-    name: 'Rollo continuo térmico (1 etiqueta)',
+    name: 'Rollo continuo térmico (50mm × 30mm)',
     perSheet: 1,
     columns: 1,
     rows: 1,
     pageClass: 'continuous-page',
+    pageSize: '50mm 30mm landscape',
+    barHeight: 26,
+    fontSize: 8,
   },
 };
 
@@ -131,9 +170,9 @@ export function renderLabelSlot(
     : displayBarcode(rawCode);
   const descText = product.description?.trim() || 'Sin descripción';
 
-  const barHeight =
-    template === 'avery5163' ? 38 : template === 'continuous' ? 28 : 22;
-  const fontSize = template === 'avery5163' ? 10 : 8;
+  const tmplConfig = TEMPLATES[template] || TEMPLATES.avery5160;
+  const barHeight = tmplConfig.barHeight ?? 24;
+  const fontSize = tmplConfig.fontSize ?? 8;
 
   const svgMarkup = renderCode128Svg(codeText, codeText, {
     height: barHeight,
@@ -241,7 +280,9 @@ export function openBarcodeSheetDialog(
     queue = existingQueue;
   }
 
-  let selectedTemplate: LabelTemplate = 'avery5160';
+  const PREF_KEY = 'mohawk_preferred_label_template';
+  const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem(PREF_KEY) : null) as LabelTemplate | null;
+  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'avery5160';
   let startingOffset = 0;
   let showSku = true;
   let showUnit = true;
@@ -265,6 +306,10 @@ export function openBarcodeSheetDialog(
       id: 'sheet-template',
       onchange: (e: Event) => {
         selectedTemplate = (e.target as HTMLSelectElement).value as LabelTemplate;
+        if (typeof localStorage !== 'undefined') {
+          try { localStorage.setItem(PREF_KEY, selectedTemplate); } catch {}
+        }
+        applyPrintPageStyle(TEMPLATES[selectedTemplate].pageSize);
         updatePreview();
       },
     },
@@ -593,6 +638,12 @@ export function openBarcodeSheetDialog(
   };
 
   const preparePrintContainer = () => {
+    // Limpiar cualquier residuo de impresión individual previo
+    const singleRoot = document.getElementById('single-print-root');
+    if (singleRoot) {
+      singleRoot.innerHTML = '';
+    }
+
     let printRoot = document.getElementById('print-sheet-root');
     if (!printRoot) {
       printRoot = document.createElement('div');
@@ -609,6 +660,8 @@ export function openBarcodeSheetDialog(
       toast('No hay productos en la cola para imprimir', 'warn');
       return;
     }
+    const config = TEMPLATES[selectedTemplate];
+    applyPrintPageStyle(config.pageSize);
     preparePrintContainer();
     window.print();
   };
@@ -639,7 +692,8 @@ export function openBarcodeSheetDialog(
     toast('Etiqueta PNG (300 DPI) descargada', 'ok');
   };
 
-  // Inicializar vista
+  // Inicializar vista y dimensiones de página para impresión
+  applyPrintPageStyle(TEMPLATES[selectedTemplate].pageSize);
   refreshQueueList();
   updatePreview();
 

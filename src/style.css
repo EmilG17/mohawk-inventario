@@ -729,6 +729,94 @@ textarea.input { min-height: 60px; resize: vertical; }
   row-gap: 0in;
 }
 
+/* Rollo térmico 4" x 2" (100mm x 50mm) */
+.thermal-4x2-page {
+  width: 4in;
+  height: 2in;
+  box-sizing: border-box;
+  padding: 0.08in 0.12in;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+  margin: 0 auto 12px auto;
+}
+.thermal-4x2-page .sheet-label {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+}
+.thermal-4x2-page .sheet-label .label-desc {
+  font-size: 9.5pt;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.thermal-4x2-page .sheet-label .label-barcode-wrap {
+  width: 100%;
+  flex: 1;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+}
+.thermal-4x2-page .sheet-label .label-barcode-wrap svg {
+  max-width: 96%;
+  max-height: 100%;
+  height: auto;
+}
+.thermal-4x2-page .sheet-label .label-footer {
+  font-size: 8pt;
+  font-weight: 600;
+  margin-top: 2px;
+}
+
+/* Rollo térmico 2.25" x 1.25" (57mm x 32mm) */
+.thermal-2x1-page {
+  width: 2.25in;
+  height: 1.25in;
+  box-sizing: border-box;
+  padding: 0.05in 0.08in;
+  background: #ffffff;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+  text-align: center;
+  overflow: hidden;
+  margin: 0 auto 12px auto;
+}
+.thermal-2x1-page .sheet-label {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: center;
+}
+.thermal-2x1-page .sheet-label .label-desc {
+  font-size: 7pt;
+  font-weight: 700;
+  margin-bottom: 1px;
+}
+.thermal-2x1-page .sheet-label .label-barcode-wrap svg {
+  max-width: 96%;
+  max-height: 100%;
+  height: auto;
+}
+.thermal-2x1-page .sheet-label .label-footer {
+  font-size: 6pt;
+  margin-top: 1px;
+}
+
 /* Rollo continuo térmico (etiqueta única para impresoras tipo Zebra/Brother 50mm) */
 .continuous-page,
 .thermal-page {
@@ -741,6 +829,7 @@ textarea.input { min-height: 60px; resize: vertical; }
   display: flex;
   flex-direction: column;
   justify-content: center;
+  margin: 0 auto 12px auto;
 }
 
 /* Ranura / Etiqueta individual dentro de la hoja */
@@ -808,22 +897,21 @@ textarea.input { min-height: 60px; resize: vertical; }
 
 /* ---------- Reglas de Impresión (@media print) ---------- */
 @page {
-  size: letter portrait;
   margin: 0;
 }
 
 @media print {
   /* Forzar fondo blanco y texto negro puro */
   html, body {
-    background: white !important;
-    color: black !important;
+    background: #ffffff !important;
+    color: #000000 !important;
     margin: 0 !important;
     padding: 0 !important;
-    -webkit-print-color-adjust: exact;
-    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
-  /* Ocultar elementos de navegación, interfaz y botones */
+  /* Ocultar elementos de navegación, interfaz, toasts y modales */
   header,
   nav,
   .tabs,
@@ -835,7 +923,9 @@ textarea.input { min-height: 60px; resize: vertical; }
   .select-toolbar,
   .mass-bar,
   #app,
-  dialog {
+  dialog,
+  #toast,
+  .toast {
     display: none !important;
   }
 
@@ -866,18 +956,57 @@ textarea.input { min-height: 60px; resize: vertical; }
     background: transparent !important;
   }
 
+  /* Impresión individual optimizada para etiquetas térmicas 4x2 */
   .single-label-print {
-    padding: 10mm;
-    text-align: center;
+    box-sizing: border-box;
     page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .single-label-print.thermal-4x2 {
+    width: 4in !important;
+    height: 2in !important;
+    max-width: 4in !important;
+    max-height: 2in !important;
+    padding: 0.08in 0.12in !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    text-align: center !important;
+    margin: 0 auto !important;
   }
   .single-label-print .label-desc {
-    font-size: 14pt;
+    font-size: 10pt;
     font-weight: 700;
-    margin-bottom: 4mm;
+    line-height: 1.2;
+    margin-bottom: 2px;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
-  .single-label-print svg {
-    max-width: 90%;
+  .single-label-print .single-barcode-wrap {
+    width: 100%;
+    flex: 1;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 0;
+  }
+  .single-label-print .single-barcode-wrap svg {
+    max-width: 96%;
+    max-height: 100%;
     height: auto;
+    display: block;
+  }
+  .single-label-print .label-footer {
+    font-size: 8pt;
+    font-weight: 600;
+    color: #000000;
+    margin-top: 2px;
+    width: 100%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }

@@ -96,10 +96,15 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
     }, icon('scan'), 'Generar código interno');
 
     const printSingleBtn = h('button', {
-      class: 'btn sm',
+      class: 'btn sm primary',
       type: 'button',
       onclick: () => {
-        printLabel(getCurrentSvg(), f.description.value.trim() || p.description || barcodeInput.value);
+        printLabel(getCurrentSvg(), f.description.value.trim() || p.description || barcodeInput.value, {
+          sku: f.sku.value.trim() || p.sku,
+          unit: f.unit.value.trim() || p.unit,
+          brand: p.brand,
+          pageSize: '4in 2in landscape',
+        });
       },
     }, icon('scan'), 'Imprimir etiqueta');
 

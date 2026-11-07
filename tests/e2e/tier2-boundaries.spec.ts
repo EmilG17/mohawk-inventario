@@ -45,6 +45,8 @@ test.describe('Tier 2: Boundary & Corner Cases (F1 to F10)', () => {
     await closeBtn.click();
     const confirmBtn = page.locator('dialog[open]').getByRole('button', { name: /Finalizar|Cerrar|Aceptar/i });
     if ((await confirmBtn.count()) > 0) await confirmBtn.click();
+    await expect(page.locator('dialog[open]')).toBeHidden();
+    await expect(page.locator('body')).toContainText(/Sin sesión activa/i);
 
     const sessions = await getDbSessions(page);
     expect(sessions.length).toBeGreaterThan(0);
