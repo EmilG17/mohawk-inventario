@@ -7,6 +7,7 @@ import { clear, confirmDialog, fmtDateTime, h, icon, promptDialog, toast } from 
 import { installState, promptInstall } from './install';
 import type { View } from './router';
 import { navigate } from './router';
+import { openUnifyReportsDialog } from './unifyReportsDialog';
 
 export async function askCounterName(force = false): Promise<string | null> {
   const s = await loadSettings();
@@ -73,6 +74,10 @@ export const homeView: View = {
           h('button', { class: 'btn primary xl', onclick: () => navigate('/contar') }, icon('scan'), 'Continuar conteo'),
           h('div', { class: 'row wrap' },
             h('button', { class: 'btn', onclick: () => navigate('/reporte') }, icon('chart'), 'Ver reporte'),
+            h('button', {
+              class: 'btn',
+              onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+            }, icon('users'), 'Unificar reportes de técnicos'),
             h('button', { class: 'btn', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, 'Nueva sesión'),
             h('button', {
               class: 'btn danger ghost',
@@ -95,10 +100,14 @@ export const homeView: View = {
         : h('section', { class: 'card' },
           h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
           h('h2', null, 'Sin sesión activa'),
-          h('p', { class: 'muted' }, 'No hay ninguna sesión de conteo en curso. Puedes iniciar una nueva sesión para escanear consumibles o revisar las sesiones anteriores.'),
+          h('p', { class: 'muted' }, 'No hay ninguna sesión de conteo en curso. Puedes iniciar una nueva sesión para escanear consumibles, unificar reportes de técnicos o revisar sesiones anteriores.'),
           h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
             icon('scan'), 'Iniciar nueva sesión'),
           h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
+            h('button', {
+              class: 'btn',
+              onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+            }, icon('users'), 'Unificar reportes de técnicos'),
             h('button', { class: 'btn', onclick: () => navigate('/catalogo') }, icon('list'), 'Ver catálogo de productos'),
             h('button', { class: 'btn ghost', onclick: () => navigate('/equipo') }, icon('users'), 'Ver todas las sesiones'),
           ),

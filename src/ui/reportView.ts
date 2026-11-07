@@ -12,6 +12,7 @@ import {
 } from './dom';
 import { editProductDialog } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
+import { openUnifyReportsDialog } from './unifyReportsDialog';
 import { navigate, type View } from './router';
 
 let selectedSessionId: string | null = null;
@@ -203,6 +204,13 @@ export const reportView: View = {
           h('button', { class: 'btn', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
           h('button', {
             class: 'btn',
+            onclick: () => void openUnifyReportsDialog((sid) => {
+              selectedSessionId = sid;
+              navigate(`/reporte?session=${sid}`);
+            }),
+          }, icon('users'), 'Unificar reportes de técnicos'),
+          h('button', {
+            class: 'btn',
             onclick: () => {
               const sessionProducts = products.filter((p) => counts.some((c) => c.barcode === p.barcode));
               const initialQuantities: Record<string, number> = {};
@@ -246,6 +254,39 @@ export const reportView: View = {
                 },
               }, 'Activar sesión'),
         ),
+        (() => {
+          const techStats = new Map<string, { scans: number; units: number; products: Set<string> }>();
+          for (const c of counts) {
+            const name = c.counter?.trim() || session.counter || 'Técnico';
+            const st = techStats.get(name) ?? { scans: 0, units: 0, products: new Set<string>() };
+            st.scans++;
+            st.units += c.qty;
+            st.products.add(c.barcode);
+            techStats.set(name, st);
+          }
+          if (techStats.size === 0) return null;
+          return h(
+            'details',
+            { class: 'help-box', open: techStats.size > 1 },
+            h('summary', null, `👷 Resumen por técnico (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
+            h(
+              'ul',
+              { class: 'contributor-list', style: 'margin-top: 6px;' },
+              [...techStats.entries()].map(([name, info]) =>
+                h(
+                  'li',
+                  null,
+                  h('span', null, h('b', null, name)),
+                  h(
+                    'span',
+                    { class: 'muted small' },
+                    `${info.products.size} prod. · ${info.scans} escaneo(s) · ${fmtNum(info.units)} u.`,
+                  ),
+                ),
+              ),
+            ),
+          );
+        })(),
         h('label', { class: 'check-inline small muted' },
           h('input', {
             type: 'checkbox', checked: includeNotCounted,

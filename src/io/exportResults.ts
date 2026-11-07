@@ -80,10 +80,22 @@ export function buildReportWorkbook(opts: {
   const wb = XLSX.utils.book_new();
   const pMap = new Map(products.map((p) => [p.barcode, p]));
 
+  const techMap = new Map<string, { scans: number; units: number; barcodes: Set<string> }>();
+  for (const c of counts) {
+    const name = c.counter?.trim() || session.counter || 'Técnico';
+    const cur = techMap.get(name) ?? { scans: 0, units: 0, barcodes: new Set<string>() };
+    cur.scans += 1;
+    cur.units += c.qty;
+    cur.barcodes.add(c.barcode);
+    techMap.set(name, cur);
+  }
+  const techList = [...techMap.keys()].join(', ') || session.counter;
+
   const resumen = [
     ['Inventario de consumibles – Mohawk'],
     ['Sesión', session.name],
     ['Responsable', session.counter],
+    ['Técnicos participantes', techList],
     ['Inicio', fmtDate(session.createdAt)],
     ['Generado', fmtDate(Date.now())],
     [],
@@ -109,6 +121,21 @@ export function buildReportWorkbook(opts: {
   addSheet(wb, 'Conteo completo', reportSheetRows(rows), headers);
   addSheet(wb, 'Diferencias', reportSheetRows(rows.filter((r) => r.status === 'faltante' || r.status === 'sobrante')), headers);
   addSheet(wb, 'No catalogados', reportSheetRows(rows.filter((r) => r.status === 'no_catalogado')), headers);
+
+  if (techMap.size > 1) {
+    const techRows = [...techMap.entries()].map(([name, info]) => ({
+      'Técnico / Contador': name,
+      'Productos distintos': info.barcodes.size,
+      'Escaneos registrados': info.scans,
+      'Unidades contadas': info.units,
+    }));
+    addSheet(
+      wb,
+      'Por técnico',
+      techRows,
+      ['Técnico / Contador', 'Productos distintos', 'Escaneos registrados', 'Unidades contadas'],
+    );
+  }
 
   const detail = [...counts].sort((a, b) => a.timestamp - b.timestamp).map((c) => ({
     'Código de barras': displayBarcode(c.barcode),

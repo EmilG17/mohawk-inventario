@@ -31,13 +31,29 @@ export async function bootstrapApp(): Promise<void> {
   registerRoute('/ajustes', settingsView);
 
   const appEl = document.getElementById('app')!;
-  const titleEl = h('h1', { class: 'brand-title' }, 'Inventario Mohawk');
+  const titleEl = h('h1', { class: 'brand-title' }, 'Inventario de Consumibles');
   const sessionBadge = h('span', { class: 'top-session muted small' });
   const onlineDot = h('span', { class: 'online-dot', title: navigator.onLine ? 'En línea' : 'Sin conexión' });
 
+  const brandLogoEl = h('span', { class: 'brand-mark', 'aria-hidden': 'true' });
+  brandLogoEl.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="24" height="24" style="display:block;">
+    <g stroke="#38bdf8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
+      <path d="M84 160 V108 A24 24 0 0 1 108 84 H160" />
+      <path d="M428 160 V108 A24 24 0 0 0 404 84 H352" />
+      <path d="M84 352 V404 A24 24 0 0 0 108 428 H160" />
+      <path d="M428 352 V404 A24 24 0 0 1 404 428 H352" />
+    </g>
+    <path d="M256 120 L372 178 L256 236 L140 178 Z" fill="none" stroke="#ffffff" stroke-width="26" stroke-linejoin="round" />
+    <path d="M198 149 L314 207" stroke="#38bdf8" stroke-width="22" stroke-linecap="round" />
+    <path d="M140 178 V328 L256 386 L372 328 V178" fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
+    <rect x="190" y="254" width="22" height="72" rx="10" fill="#ffffff" />
+    <rect x="234" y="260" width="28" height="72" rx="10" fill="#38bdf8" />
+    <rect x="284" y="254" width="24" height="72" rx="10" fill="#ffffff" />
+  </svg>`;
+
   const header = h('header', { class: 'app-header' },
     h('div', { class: 'header-left', onclick: () => navigate('/') },
-      h('span', { class: 'brand-mark' }, 'M'),
+      brandLogoEl,
       titleEl,
     ),
     h('div', { class: 'header-right' },
@@ -81,7 +97,7 @@ export async function bootstrapApp(): Promise<void> {
   updateNet();
 
   startRouter(main, (path, view) => {
-    document.title = `${view.title} · Inventario Mohawk`;
+    document.title = `${view.title} · Inventario de Consumibles`;
     const cur = path || '/';
     navButtons.forEach((btn, p) => btn.classList.toggle('active', p === cur));
     void updateHeaderSession();

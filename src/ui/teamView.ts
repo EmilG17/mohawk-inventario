@@ -3,12 +3,13 @@ import {
   reopenSession, setActiveSession, type Session,
 } from '../db/db';
 import { buildCountFile, safeFileName, type CountFile } from '../io/exportResults';
-import { mergeCountFiles, parseAppFile } from '../io/mergeCounts';
+import { mergeCountFiles, parseTechnicianReportFile } from '../io/mergeCounts';
 import {
   clear, confirmDialog, fmtDateTime, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
 import { askCounterName, newSessionFlow } from './home';
 import { navigate, type View } from './router';
+import { openUnifyReportsDialog } from './unifyReportsDialog';
 
 export const teamView: View = {
   title: 'Equipo',
@@ -38,27 +39,25 @@ export const teamView: View = {
       await shareOrDownload(JSON.stringify(file, null, 2), name, MIME.json, `Conteo de ${current.counter}`);
     };
 
-    // Importar conteos de otros
+    // Importar conteos o reportes de otros (.xlsx, .csv, .json)
     const importOthers = async () => {
       if (!current) {
         toast('Selecciona una sesión activa primero', 'warn');
         return;
       }
-      const picked = await pickFiles('.json,application/json', true);
+      const picked = await pickFiles(
+        '.json,.xlsx,.xls,.csv,application/json,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        true,
+      );
       if (!picked.length) return;
       const countFiles: CountFile[] = [];
       const errors: string[] = [];
       for (const f of picked) {
         try {
-          const text = await f.text();
-          const parsed = parseAppFile(text);
-          if (parsed.kind !== 'conteo') {
-            errors.push(`${f.name}: no es un archivo de conteo`);
-            continue;
-          }
+          const parsed = await parseTechnicianReportFile(f);
           countFiles.push(parsed);
         } catch (e) {
-          errors.push(`${f.name}: ${(e as Error).message}`);
+          errors.push((e as Error).message);
         }
       }
       if (errors.length) toast(errors.join('\n'), 'warn', 5000);
@@ -84,7 +83,11 @@ export const teamView: View = {
           h('h2', null, current.name),
           h('p', { class: 'muted small' }, `Responsable: ${current.counter} · Iniciada ${fmtDateTime(current.createdAt)}`),
           h('div', { class: 'row wrap' },
-            h('button', { class: 'btn primary', onclick: importOthers }, icon('upload'), 'Importar archivos de otros'),
+            h('button', {
+              class: 'btn primary',
+              onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+            }, icon('users'), 'Unificar reportes de técnicos'),
+            h('button', { class: 'btn', onclick: importOthers }, icon('upload'), 'Importar archivos de otros'),
             h('button', { class: 'btn', onclick: shareMyCount, disabled: !curCounts.length }, icon('share'), 'Compartir mi conteo'),
             h('button', {
               class: 'btn danger ghost',
@@ -99,13 +102,13 @@ export const teamView: View = {
             }, 'Finalizar sesión'),
           ),
           h('details', { class: 'help-box' },
-            h('summary', null, '¿Cómo contar en equipo sin servidor?'),
+            h('summary', null, '¿Cómo contar en equipo y unificar reportes de técnicos?'),
             h('ol', { class: 'small' },
-              h('li', null, 'Cada contador abre la app en su teléfono y pone su nombre.'),
+              h('li', null, 'Cada técnico abre la app en su teléfono y pone su nombre.'),
               h('li', null, 'Todos importan el mismo Excel de catálogo (o el supervisor se los comparte en JSON desde Catálogo → Compartir).'),
-              h('li', null, 'Cada quien cuenta en su zona. No se requiere internet.'),
-              h('li', null, 'Al terminar, cada uno entra aquí y toca ', h('b', null, 'Compartir mi conteo'), ' (por WhatsApp, correo, etc.).'),
-              h('li', null, 'El supervisor recibe los archivos en su teléfono o PC, entra aquí y toca ', h('b', null, 'Importar archivos de otros'), '. Todos los conteos se suman automáticamente.'),
+              h('li', null, 'Cada quien cuenta en su zona sin necesidad de internet.'),
+              h('li', null, 'Al terminar, cada técnico envía su reporte (puede ser el archivo ', h('b', null, 'Excel (.xlsx)'), ', ', h('b', null, 'CSV (.csv)'), ' o ', h('b', null, 'Compartir mi conteo (.json)'), ').'),
+              h('li', null, 'El supervisor toca ', h('b', null, 'Unificar reportes de técnicos'), ', selecciona todos los archivos recibidos y genera al instante el ', h('b', null, 'Reporte Maestro Unificado'), ' con desglose por técnico.'),
             ),
           ),
           contributors.size > 0
@@ -123,8 +126,14 @@ export const teamView: View = {
         : h('section', { class: 'card' },
           h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
           h('h2', null, 'Sin sesión activa'),
-          h('p', { class: 'muted' }, 'No hay ninguna sesión activa seleccionada. Puedes seleccionar o reabrir una de las sesiones guardadas abajo, o iniciar una nueva.'),
-          h('button', { class: 'btn primary', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, icon('scan'), 'Iniciar nueva sesión'),
+          h('p', { class: 'muted' }, 'No hay ninguna sesión activa seleccionada. Puedes unificar los reportes enviados por los técnicos, seleccionar una sesión guardada abajo o iniciar una nueva.'),
+          h('div', { class: 'row wrap' },
+            h('button', {
+              class: 'btn primary',
+              onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+            }, icon('users'), 'Unificar reportes de técnicos'),
+            h('button', { class: 'btn', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, icon('scan'), 'Iniciar nueva sesión'),
+          ),
         ),
 
       // Lista de sesiones

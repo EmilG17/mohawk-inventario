@@ -7,7 +7,7 @@ test.describe('Flujo completo de inventario en teléfono', () => {
   test('inicio -> catálogo de prueba -> conteo -> reporte -> offline', async ({ page, context }) => {
     // 1. Abrir la app
     await page.goto('/');
-    await expect(page.locator('h1')).toHaveText('Inventario Mohawk');
+    await expect(page.locator('h1')).toHaveText('Inventario de Consumibles');
     await page.screenshot({ path: path.join(outDir, '01_inicio_vacio.png') });
 
     // 2. Asignar nombre del contador
