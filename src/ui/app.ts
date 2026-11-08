@@ -1,6 +1,12 @@
 import { getActiveSession } from '../db/db';
 import { startPendingWatcher } from '../lookup/pendingQueue';
 import { loadSettings } from '../settings';
+import {
+  consumeUrlSyncParams,
+  onCloudRoomUpdate,
+  onCloudStatusChange,
+  startLiveCloudSync,
+} from '../sync/cloudSync';
 import { catalogView } from './catalog';
 import { countView } from './count';
 import { clear, h, icon, toast } from './dom';
@@ -8,7 +14,7 @@ import { homeView } from './home';
 import { initInstall } from './install';
 import { movementsView } from './movementsView';
 import { reportView } from './reportView';
-import { currentPath, navigate, registerRoute, startRouter, type View } from './router';
+import { currentPath, navigate, registerRoute, startRouter } from './router';
 import { settingsView } from './settingsView';
 import { teamView } from './teamView';
 
@@ -18,12 +24,19 @@ const NAV_ITEMS: { path: string; label: string; icon: string }[] = [
   { path: '/movimientos', label: 'Kardex', icon: 'swap' },
   { path: '/catalogo', label: 'Catálogo', icon: 'list' },
   { path: '/reporte', label: 'Reporte', icon: 'chart' },
-  { path: '/equipo', label: 'Equipo', icon: 'users' },
+  { path: '/equipo', label: 'Supervisor', icon: 'users' },
   { path: '/ajustes', label: 'Ajustes', icon: 'gear' },
 ];
 
 export async function bootstrapApp(): Promise<void> {
-  await loadSettings();
+  const initialSettings = await loadSettings();
+  const urlJoin = await consumeUrlSyncParams();
+  if (!urlJoin && initialSettings.syncEnabled && initialSettings.syncRoomCode) {
+    startLiveCloudSync({
+      roomCode: initialSettings.syncRoomCode,
+      endpointUrl: initialSettings.syncEndpointUrl,
+    });
+  }
 
   registerRoute('/', homeView);
   registerRoute('/contar', countView);
@@ -35,6 +48,13 @@ export async function bootstrapApp(): Promise<void> {
 
   const appEl = document.getElementById('app')!;
   const titleEl = h('h1', { class: 'brand-title' }, 'Inventario de Consumibles');
+  const cloudBadge = h('button', {
+    class: 'top-cloud-pill',
+    type: 'button',
+    hidden: true,
+    title: 'Estado de sincronización en tiempo real (clic para abrir Monitor de Supervisor)',
+    onclick: () => navigate('/equipo'),
+  });
   const sessionBadge = h('span', { class: 'top-session muted small' });
   const onlineDot = h('span', { class: 'online-dot', title: navigator.onLine ? 'En línea' : 'Sin conexión' });
 
@@ -60,6 +80,7 @@ export async function bootstrapApp(): Promise<void> {
       titleEl,
     ),
     h('div', { class: 'header-right' },
+      cloudBadge,
       sessionBadge,
       onlineDot,
     ),
@@ -90,6 +111,31 @@ export async function bootstrapApp(): Promise<void> {
     sessionBadge.textContent = s ? s.name : 'Sin sesión';
   };
 
+  onCloudStatusChange((st) => {
+    if (!st.roomCode || st.state === 'disabled') {
+      cloudBadge.hidden = true;
+      return;
+    }
+    cloudBadge.hidden = false;
+    if (st.state === 'connected') {
+      cloudBadge.className = 'top-cloud-pill live';
+      cloudBadge.textContent = `● EN VIVO · ${st.roomCode}`;
+    } else if (st.state === 'connecting') {
+      cloudBadge.className = 'top-cloud-pill connecting';
+      cloudBadge.textContent = `◌ Conectando · ${st.roomCode}`;
+    } else if (st.state === 'error') {
+      cloudBadge.className = 'top-cloud-pill error';
+      cloudBadge.textContent = `⚠ Error Firebase · ${st.roomCode}`;
+    } else {
+      cloudBadge.className = 'top-cloud-pill local';
+      cloudBadge.textContent = `● Sala Local · ${st.roomCode}`;
+    }
+  });
+
+  onCloudRoomUpdate(() => {
+    void updateHeaderSession();
+  });
+
   const updateNet = () => {
     const on = navigator.onLine;
     onlineDot.className = `online-dot ${on ? 'on' : 'off'}`;
@@ -106,8 +152,15 @@ export async function bootstrapApp(): Promise<void> {
     void updateHeaderSession();
   });
 
+  if (urlJoin?.joinedRoom) {
+    toast(
+      `Conectado en tiempo real a la Sala ${urlJoin.joinedRoom}${urlJoin.endpointUrl ? ' (Firebase activo)' : ''}`,
+      'ok',
+      4500,
+    );
+  }
+
   initInstall(() => {
-    // Si la pantalla de inicio está activa, re-renderizar para mostrar botón de instalar
     if (currentPath() === '/') navigate('/');
   });
 
@@ -115,3 +168,4 @@ export async function bootstrapApp(): Promise<void> {
     toast(`Se obtuvieron ${resolved} descripción(es) en internet`, 'ok');
   });
 }
+

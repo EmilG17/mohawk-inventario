@@ -2,9 +2,13 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { addCount, countsForSession, createSession, getDB, putProduct } from '../../src/db/db';
 import {
   _clearMemoryRooms,
+  buildRoomEndpointUrl,
+  buildRoomInviteUrl,
+  coerceRemoteRoomState,
   decodeCompactCountQr,
   encodeCompactCountQrChunks,
   isCompactCountQr,
+  normalizeEndpointBaseUrl,
   syncNow,
 } from '../../src/sync/cloudSync';
 
@@ -53,6 +57,44 @@ describe('cloudSync (Sincronización en Línea y QR)', () => {
     const res3 = await syncNow({ sessionId: s2.id, roomCode: 'MHK-SALA-1' });
     expect(res3.addedCounts).toBe(0);
     expect(res3.duplicateCounts).toBe(2);
+  });
+
+  it('normaliza enlaces de consola de Firebase y construye endpoints .json válidos', () => {
+    const consoleLink =
+      'https://console.firebase.google.com/u/0/project/mohawk-inv/database/mohawk-inv-default-rtdb/data/~2F';
+    expect(normalizeEndpointBaseUrl(consoleLink)).toBe('https://mohawk-inv-default-rtdb.firebaseio.com');
+    expect(buildRoomEndpointUrl(consoleLink, 'mhk-2026')).toBe(
+      'https://mohawk-inv-default-rtdb.firebaseio.com/rooms/MHK-2026.json',
+    );
+    expect(normalizeEndpointBaseUrl('mi-db-default-rtdb.firebaseio.com/rooms/X.json')).toBe(
+      'https://mi-db-default-rtdb.firebaseio.com',
+    );
+    const invite = buildRoomInviteUrl('MHK-2026', consoleLink);
+    expect(invite).toContain('room=MHK-2026');
+    expect(invite).toContain('mohawk-inv-default-rtdb.firebaseio.com');
+  });
+
+  it('tolera respuestas de Firebase Realtime DB sin arreglos vacíos o con objetos indexados', () => {
+    const emptyFirebaseObj = {
+      app: 'mohawk-inventario',
+      roomCode: 'MHK-100',
+      sessionName: 'Sala Vacía',
+      updatedAt: 1700000000000,
+    };
+    const coercedEmpty = coerceRemoteRoomState(emptyFirebaseObj, 'MHK-100');
+    expect(coercedEmpty).not.toBeNull();
+    expect(coercedEmpty?.counts).toEqual([]);
+    expect(coercedEmpty?.movements).toEqual([]);
+
+    const indexedFirebaseObj = {
+      roomCode: 'MHK-100',
+      counts: {
+        '0': { id: 'c1', sessionId: 's1', barcode: '123', qty: 5, counter: 'Ana', deviceId: 'd1', timestamp: 100 },
+      },
+    };
+    const coercedIndexed = coerceRemoteRoomState(indexedFirebaseObj, 'MHK-100');
+    expect(coercedIndexed?.counts).toHaveLength(1);
+    expect(coercedIndexed?.counts[0].counter).toBe('Ana');
   });
 
   it('codifica y decodifica conteos en código QR compacto (MHKSYNC1|...)', async () => {

@@ -1,6 +1,14 @@
 import { clearProducts, getDB } from '../db/db';
 import { loadSampleCatalog } from '../sampleData';
-import { loadSettings, saveSettings, type Settings } from '../settings';
+import { loadSettings, saveSettings } from '../settings';
+import {
+  normalizeEndpointBaseUrl,
+  normalizeRoomCode,
+  startLiveCloudSync,
+  stopLiveCloudSync,
+  syncNow,
+  testFirebaseConnection,
+} from '../sync/cloudSync';
 import {
   clear, confirmDialog, h, icon, toast,
 } from './dom';
@@ -22,9 +30,14 @@ export const settingsView: View = {
     const syncEnabledCheck = h('input', { type: 'checkbox', checked: s.syncEnabled }) as HTMLInputElement;
     const syncAutoCheck = h('input', { type: 'checkbox', checked: s.syncAuto }) as HTMLInputElement;
     const syncRoomInput = h('input', { class: 'input', value: s.syncRoomCode, placeholder: 'Ej. MHK-PLANTA-1' }) as HTMLInputElement;
-    const syncEndpointInput = h('input', { class: 'input', value: s.syncEndpointUrl, placeholder: 'Opcional: https://tu-proyecto.firebaseio.com o URL REST' }) as HTMLInputElement;
+    const syncEndpointInput = h('input', { class: 'input', value: s.syncEndpointUrl, placeholder: 'https://tu-proyecto-default-rtdb.firebaseio.com' }) as HTMLInputElement;
 
     const save = async () => {
+      const cleanRoom = normalizeRoomCode(syncRoomInput.value);
+      const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
+      syncRoomInput.value = cleanRoom;
+      syncEndpointInput.value = cleanEndpoint;
+
       await saveSettings({
         counterName: nameInput.value.trim(),
         onlineLookup: lookupCheck.checked,
@@ -36,9 +49,16 @@ export const settingsView: View = {
         currency: (currInput.value.trim() || 'MXN').toUpperCase(),
         syncEnabled: syncEnabledCheck.checked,
         syncAuto: syncAutoCheck.checked,
-        syncRoomCode: syncRoomInput.value.trim().toUpperCase(),
-        syncEndpointUrl: syncEndpointInput.value.trim(),
+        syncRoomCode: cleanRoom,
+        syncEndpointUrl: cleanEndpoint,
       });
+
+      if (syncEnabledCheck.checked && cleanRoom) {
+        startLiveCloudSync({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
+        void syncNow({ roomCode: cleanRoom, endpointUrl: cleanEndpoint }).catch(() => {});
+      } else {
+        stopLiveCloudSync();
+      }
       toast('Ajustes guardados', 'ok');
     };
 

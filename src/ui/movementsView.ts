@@ -40,6 +40,7 @@ import {
   openDialog,
   toast,
 } from './dom';
+import { onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
 import type { View } from './router';
 
 export type MovementStatus = IdealStatus;
@@ -78,6 +79,7 @@ let viewRootEl: HTMLElement | null = null;
 let activeModalDialog: HTMLDialogElement | null = null;
 let activeModalScanner: ScannerHandle | null = null;
 let keydownListener: ((e: KeyboardEvent) => void) | null = null;
+let unsubscribeCloud: (() => void) | null = null;
 let keyBuffer = '';
 let keyLast = 0;
 let isModalOpening = false;
@@ -142,10 +144,21 @@ export const movementsView: View = {
     if (!viewRootEl) return;
     setupKeyboardWedge();
     setupSimulationHook();
+
+    if (unsubscribeCloud) unsubscribeCloud();
+    unsubscribeCloud = onCloudRoomUpdate(() => {
+      if (viewRootEl && (!activeModalDialog || !activeModalDialog.open)) {
+        void renderMainView();
+      }
+    });
   },
 
   async destroy(): Promise<void> {
     isModalOpening = false;
+    if (unsubscribeCloud) {
+      unsubscribeCloud();
+      unsubscribeCloud = null;
+    }
     if (keydownListener) {
       window.removeEventListener('keydown', keydownListener);
       keydownListener = null;
@@ -682,6 +695,7 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
     lastSavedVal = newQty;
 
     await setIdealLevel(row.sku, newQty);
+    triggerBackgroundSync();
     row.idealQty = newQty;
     row.idealGap = Math.round((row.dynamicStock - newQty) * 1000) / 1000;
     row.status = computeIdealStatus({
@@ -949,6 +963,7 @@ function renderBitacoraSection(
               );
               if (ok) {
                 await deleteMovement(m.id);
+                triggerBackgroundSync();
                 toast('Movimiento eliminado correctamente', 'ok');
                 await renderMainView();
               }
@@ -1334,6 +1349,7 @@ export async function openMovementRegistrationModal(
         folio: folioInput.value.trim(),
         notes: notesInput.value.trim(),
       });
+      triggerBackgroundSync();
 
       beep('ok');
       vibrate('ok');
