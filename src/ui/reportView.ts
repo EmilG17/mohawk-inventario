@@ -3,6 +3,11 @@ import {
   reopenSession, setActiveSession, type CountEntry, type Product, type Session,
 } from '../db/db';
 import {
+  getIdealLevels,
+  getMovementSummariesBySku,
+  listMovements,
+} from '../db/movements';
+import {
   buildCountFile, buildReportCsv, buildReportWorkbook, safeFileName,
 } from '../io/exportResults';
 import { displayBarcode } from '../io/normalize';
@@ -26,8 +31,8 @@ export const reportView: View = {
     if (params?.get('session')) {
       selectedSessionId = params.get('session');
     }
-    const [allSess, activeSession, products, deviceId] = await Promise.all([
-      allSessions(), getActiveSession(), allProducts(), getDeviceId(),
+    const [allSess, activeSession, products, deviceId, movementSummaries, idealLevels] = await Promise.all([
+      allSessions(), getActiveSession(), allProducts(), getDeviceId(), getMovementSummariesBySku(), getIdealLevels(),
     ]);
 
     let session: Session | undefined;
@@ -55,7 +60,11 @@ export const reportView: View = {
     const isCur = activeSession?.id === session.id;
     const isClosed = session.closed;
     const counts = await countsForSession(session.id);
-    const allRows = buildReport(products, counts, includeNotCounted);
+    const allRows = buildReport(products, counts, {
+      includeNotCounted,
+      movementsBySku: movementSummaries,
+      idealLevels,
+    });
     const summary = summarize(allRows);
 
     const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -144,8 +153,20 @@ export const reportView: View = {
 
     // Exportar
     const baseName = `inventario_${safeFileName(session.name)}_${new Date().toISOString().slice(0, 10)}`;
-    const doExportXlsx = () => {
-      const bytes = buildReportWorkbook({ session, rows: allRows, summary, counts, products });
+    const doExportXlsx = async () => {
+      const [currentMovements, currentIdealLevels] = await Promise.all([
+        listMovements(),
+        getIdealLevels(),
+      ]);
+      const bytes = buildReportWorkbook({
+        session,
+        rows: allRows,
+        summary,
+        counts,
+        products,
+        movements: currentMovements,
+        idealLevels: currentIdealLevels,
+      });
       downloadFile(bytes, `${baseName}.xlsx`, MIME.xlsx);
       toast('Excel generado', 'ok');
     };

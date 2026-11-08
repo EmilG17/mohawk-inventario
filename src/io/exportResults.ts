@@ -1,9 +1,17 @@
 import * as XLSX from 'xlsx';
 import type { CountEntry, Product, Session } from '../db/db';
+import type { Movement } from '../db/movements';
 import { displayBarcode } from './normalize';
-import { STATUS_LABEL, type ReportRow, type ReportSummary } from '../report';
+import { STATUS_LABEL, round, computeIdealStatus, type IdealStatus, type ReportRow, type ReportSummary } from '../report';
 
 export const APP_ID = 'mohawk-inventario';
+
+export const IDEAL_STATUS_LABEL: Record<IdealStatus, string> = {
+  optimal: 'Óptimo',
+  deficit: 'Déficit',
+  critical: 'Crítico',
+  excess: 'Exceso',
+};
 
 export interface CountFile {
   app: typeof APP_ID;
@@ -33,9 +41,15 @@ function reportSheetRows(rows: ReportRow[]) {
     'No. de parte': r.sku,
     'Descripción': r.description,
     'Unidad': r.unit,
-    'Existencia teórica': r.expected ?? '',
-    'Contado': r.counted,
+    'Existencia teórica inicial': r.expected ?? '',
+    'Entradas (+)': r.totalIn ?? 0,
+    'Salidas (-)': r.totalOut ?? 0,
+    'Stock dinámico': r.dynamicExpected ?? (r.expected ?? ''),
+    'Contado físico': r.counted,
     'Diferencia': r.diff ?? '',
+    'Inventario ideal': r.idealQty ?? '',
+    'Brecha vs Ideal': r.idealGap ?? '',
+    'Estado ideal': r.idealStatus ? (IDEAL_STATUS_LABEL[r.idealStatus] ?? r.idealStatus) : '',
     'Costo unitario': r.unitCost ?? '',
     'Valor diferencia': r.diffValue ?? '',
     'Estado': STATUS_LABEL[r.status],
@@ -47,25 +61,44 @@ function reportSheetRows(rows: ReportRow[]) {
 
 /** Fuerza que la columna de código sea texto para que Excel no elimine ceros a la izquierda. */
 function codeColumnAsText(ws: XLSX.WorkSheet, col = 0) {
-  const range = XLSX.utils.decode_range(ws['!ref'] ?? 'A1');
+  if (!ws['!ref']) return;
+  const range = XLSX.utils.decode_range(ws['!ref']);
   for (let r = range.s.r + 1; r <= range.e.r; r++) {
     const ref = XLSX.utils.encode_cell({ r, c: col });
     const c = ws[ref];
-    if (c) { c.t = 's'; c.v = String(c.v); c.z = '@'; }
+    if (c && c.v !== undefined && c.v !== null && c.v !== '') {
+      c.t = 's';
+      c.v = String(c.v);
+      c.z = '@';
+    }
   }
 }
 
-function autoWidth(ws: XLSX.WorkSheet, rows: Record<string, unknown>[]) {
-  if (!rows.length) return;
-  ws['!cols'] = Object.keys(rows[0]).map((k) => ({
+function autoWidth(ws: XLSX.WorkSheet, rows: Record<string, unknown>[], header?: string[]) {
+  if (!rows.length) {
+    if (header && header.length) {
+      ws['!cols'] = header.map((h) => ({ wch: Math.max(h.length + 3, 14) }));
+    }
+    return;
+  }
+  const keys = header && header.length ? header : Object.keys(rows[0]);
+  ws['!cols'] = keys.map((k) => ({
     wch: Math.min(60, Math.max(k.length, ...rows.map((r) => String(r[k] ?? '').length)) + 2),
   }));
 }
 
-function addSheet(wb: XLSX.WorkBook, name: string, rows: Record<string, unknown>[], header?: string[]) {
+function addSheet(
+  wb: XLSX.WorkBook,
+  name: string,
+  rows: Record<string, unknown>[],
+  header?: string[],
+  textCols: number[] = [0],
+) {
   const ws = XLSX.utils.json_to_sheet(rows, header ? { header } : undefined);
-  codeColumnAsText(ws);
-  autoWidth(ws, rows);
+  for (const c of textCols) {
+    codeColumnAsText(ws, c);
+  }
+  autoWidth(ws, rows, header);
   XLSX.utils.book_append_sheet(wb, ws, name);
 }
 
@@ -75,10 +108,13 @@ export function buildReportWorkbook(opts: {
   summary: ReportSummary;
   counts: CountEntry[];
   products: Product[];
+  movements?: Movement[];
+  idealLevels?: Record<string, number>;
 }): Uint8Array {
   const { session, rows, summary, counts, products } = opts;
   const wb = XLSX.utils.book_new();
   const pMap = new Map(products.map((p) => [p.barcode, p]));
+  const pBySku = new Map(products.filter((p) => p.sku).map((p) => [p.sku, p]));
 
   const techMap = new Map<string, { scans: number; units: number; barcodes: Set<string> }>();
   for (const c of counts) {
@@ -124,9 +160,9 @@ export function buildReportWorkbook(opts: {
 
   const headers = Object.keys(reportSheetRows([{ barcode: '', sku: '', description: '', unit: '', expected: 0, counted: 0,
     diff: 0, unitCost: 0, diffValue: 0, status: 'ok', counters: [], scans: 0, source: undefined }])[0]);
-  addSheet(wb, 'Conteo completo', reportSheetRows(rows), headers);
-  addSheet(wb, 'Diferencias', reportSheetRows(rows.filter((r) => r.status === 'faltante' || r.status === 'sobrante')), headers);
-  addSheet(wb, 'No catalogados', reportSheetRows(rows.filter((r) => r.status === 'no_catalogado')), headers);
+  addSheet(wb, 'Conteo completo', reportSheetRows(rows), headers, [0, 1]);
+  addSheet(wb, 'Diferencias', reportSheetRows(rows.filter((r) => r.status === 'faltante' || r.status === 'sobrante')), headers, [0, 1]);
+  addSheet(wb, 'No catalogados', reportSheetRows(rows.filter((r) => r.status === 'no_catalogado')), headers, [0, 1]);
 
   const reorderRows = rows.filter((r) => r.needsReorder);
   if (reorderRows.length > 0) {
@@ -160,6 +196,7 @@ export function buildReportWorkbook(opts: {
         'Costo estimado compra',
         'Marca',
       ],
+      [0, 1],
     );
   }
 
@@ -175,9 +212,130 @@ export function buildReportWorkbook(opts: {
       'Por técnico',
       techRows,
       ['Técnico / Contador', 'Productos distintos', 'Escaneos registrados', 'Unidades contadas'],
+      [],
     );
   }
 
+  if (opts.movements !== undefined || opts.idealLevels !== undefined) {
+    // ----------------- HOJA: Entradas y Salidas (Kardex) -----------------
+    const movementsList = [...(opts.movements ?? [])].sort((a, b) => a.timestamp - b.timestamp);
+    const kardexRows = movementsList.map((m) => {
+      const prod = (m.barcode ? pMap.get(m.barcode) : undefined) ?? pBySku.get(m.sku);
+      return {
+        'Fecha/Hora': fmtDate(m.timestamp),
+        'Folio/Ref': m.folio || '-',
+        'Tipo': m.type === 'IN' ? 'ENTRADA' : 'SALIDA',
+        'SKU': m.sku,
+        'Código de barras': m.barcode ? displayBarcode(m.barcode) : '',
+        'Descripción': prod?.description ?? '',
+        'Cantidad': m.quantity,
+        'Unidad': prod?.unit ?? 'PZA',
+        'Técnico/Proveedor': m.technicianOrSupplier || '-',
+        'Máquina/Área': m.machineOrArea || '-',
+        'Notas': m.notes ?? '',
+      };
+    });
+    const kardexHeaders = [
+      'Fecha/Hora',
+      'Folio/Ref',
+      'Tipo',
+      'SKU',
+      'Código de barras',
+      'Descripción',
+      'Cantidad',
+      'Unidad',
+      'Técnico/Proveedor',
+      'Máquina/Área',
+      'Notas',
+    ];
+    addSheet(wb, 'Entradas y Salidas (Kardex)', kardexRows, kardexHeaders, [3, 4]);
+
+    // ----------------- HOJA: Inventario Ideal -----------------
+    const idealRows = rows.map((r) => {
+      const prod = pMap.get(r.barcode) ?? pBySku.get(r.sku);
+      const initialExpected = r.expected ?? 0;
+      const totalIn = r.totalIn ?? 0;
+      const totalOut = r.totalOut ?? 0;
+      const dynamicStock = r.dynamicExpected ?? round(initialExpected + totalIn - totalOut);
+      const counted = r.counted;
+
+      const configuredIdeal =
+        (opts.idealLevels && r.sku && opts.idealLevels[r.sku] !== undefined)
+          ? opts.idealLevels[r.sku]
+          : r.idealQty;
+
+      const idealQty = configuredIdeal !== undefined ? configuredIdeal : (prod?.maxQty ?? r.expected ?? '');
+      const idealNum = typeof idealQty === 'number' ? idealQty : undefined;
+      const gap = idealNum !== undefined ? round(counted - idealNum) : (r.idealGap ?? '');
+      const gapNum = typeof gap === 'number' ? gap : undefined;
+
+      let statusLabel = '';
+      if (r.idealStatus) {
+        statusLabel = IDEAL_STATUS_LABEL[r.idealStatus] ?? r.idealStatus;
+      } else if (idealNum !== undefined) {
+        statusLabel = IDEAL_STATUS_LABEL[computeIdealStatus({
+          currentStock: counted,
+          idealQty: idealNum,
+          minQty: r.minQty,
+          maxQty: r.maxQty,
+        })];
+      }
+
+      const unitCost = r.unitCost ?? prod?.unitCost ?? '';
+      const gapValue =
+        typeof gapNum === 'number' && typeof unitCost === 'number'
+          ? Math.round(gapNum * unitCost * 100) / 100
+          : '';
+
+      let alertLabel = 'Óptimo';
+      if (r.idealStatus === 'critical' || (typeof gapNum === 'number' && idealNum !== undefined && counted <= 0.25 * idealNum)) {
+        alertLabel = 'Crítico (Stockout / Muy bajo)';
+      } else if (r.idealStatus === 'deficit' || r.needsReorder || (typeof gapNum === 'number' && gapNum < 0)) {
+        alertLabel = 'Reposición Requerida';
+      } else if (r.idealStatus === 'excess' || (typeof gapNum === 'number' && gapNum > 0)) {
+        alertLabel = 'Exceso de Stock';
+      }
+
+      return {
+        'SKU': r.sku,
+        'Código de barras': displayBarcode(r.barcode),
+        'Descripción': r.description,
+        'Unidad': r.unit,
+        'Stock Teórico Inicial': r.expected ?? '',
+        'Total Entradas': totalIn,
+        'Total Salidas': totalOut,
+        'Stock Dinámico': dynamicStock,
+        'Último Conteo Físico': counted,
+        'Inventario Ideal': idealQty,
+        'Brecha vs Ideal': gap,
+        'Estado Nivel': statusLabel,
+        'Costo Unitario': unitCost,
+        'Valor Brecha': gapValue,
+        'Alerta de Reposición': alertLabel,
+      };
+    });
+
+    const idealHeaders = [
+      'SKU',
+      'Código de barras',
+      'Descripción',
+      'Unidad',
+      'Stock Teórico Inicial',
+      'Total Entradas',
+      'Total Salidas',
+      'Stock Dinámico',
+      'Último Conteo Físico',
+      'Inventario Ideal',
+      'Brecha vs Ideal',
+      'Estado Nivel',
+      'Costo Unitario',
+      'Valor Brecha',
+      'Alerta de Reposición',
+    ];
+    addSheet(wb, 'Inventario Ideal', idealRows, idealHeaders, [0, 1]);
+  }
+
+  // ----------------- HOJA: Detalle de escaneos -----------------
   const detail = [...counts].sort((a, b) => a.timestamp - b.timestamp).map((c) => ({
     'Código de barras': displayBarcode(c.barcode),
     'Descripción': pMap.get(c.barcode)?.description ?? '',

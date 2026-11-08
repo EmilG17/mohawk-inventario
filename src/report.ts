@@ -1,6 +1,8 @@
 import type { CountEntry, Product } from './db/db';
+import type { Movement } from './db/movements';
 
 export type RowStatus = 'ok' | 'faltante' | 'sobrante' | 'no_contado' | 'no_catalogado';
+export type IdealStatus = 'optimal' | 'deficit' | 'critical' | 'excess';
 
 export interface ReportRow {
   barcode: string;
@@ -8,6 +10,17 @@ export interface ReportRow {
   description: string;
   unit: string;
   expected: number | undefined;
+  // Extended Movement Integration:
+  totalIn?: number;
+  totalOut?: number;
+  netMovements?: number;
+  dynamicExpected?: number;
+  dynamicDiff?: number;
+  // Extended Ideal Inventory Integration:
+  idealQty?: number;
+  idealGap?: number;
+  idealStatus?: IdealStatus;
+  // Existing fields:
   minQty?: number;
   maxQty?: number;
   counted: number;
@@ -40,11 +53,91 @@ export interface ReportSummary {
   reorderValue: number;
 }
 
+export interface BuildReportOptions {
+  includeNotCounted?: boolean;
+  movementsBySku?: Map<string, { totalIn: number; totalOut: number }>;
+  idealLevels?: Record<string, number>;
+}
+
+export interface MovementsKpiSummary {
+  // Movements Ledger KPIs
+  totalMovements: number;
+  totalEntriesCount: number;
+  totalExitsCount: number;
+  totalUnitsIn: number;
+  totalUnitsOut: number;
+  netMovementUnits: number;
+  totalValueIn: number;
+  totalValueOut: number;
+  netMovementValue: number;
+
+  // Ideal Inventory KPIs
+  totalSkusTracked: number;
+  optimalCount: number;
+  deficitCount: number;
+  criticalCount: number;
+  excessCount: number;
+  idealFulfillmentRate: number; // 0 - 100%
+  totalIdealUnitsGap: number;   // Missing units across deficit & critical items
+  totalExcessUnits: number;     // Excess units across surplus items
+  estimatedRestockCost: number; // Investment required to bring all items to ideal
+}
+
 /**
- * Cruza catálogo y conteos.
- * @param includeNotCounted incluir productos del catálogo que no se contaron (diferencia = -teórico)
+ * Determina el estado operacional respecto al inventario ideal:
+ * - critical: stock agotado o en/bajo umbral crítico (<= minQty o <= 25% de ideal)
+ * - deficit: stock menor a la cantidad ideal objetivo
+ * - excess: stock mayor al umbral máximo permitido (maxQty ?? idealQty)
+ * - optimal: stock equilibrado en el rango ideal
  */
-export function buildReport(products: Product[], counts: CountEntry[], includeNotCounted = true): ReportRow[] {
+export function computeIdealStatus(params: {
+  currentStock: number;
+  idealQty: number;
+  minQty?: number;
+  maxQty?: number;
+}): IdealStatus {
+  const { currentStock, idealQty, minQty, maxQty } = params;
+  if (idealQty <= 0 && currentStock === 0) return 'optimal';
+
+  // 1. Critical: stockout o bajo umbral mínimo de seguridad (<= minQty o <= 25% de ideal)
+  const criticalThreshold = minQty !== undefined ? minQty : 0.25 * idealQty;
+  if (currentStock <= 0 || currentStock <= criticalThreshold) {
+    return 'critical';
+  }
+
+  // 2. Deficit: por debajo del inventario ideal objetivo
+  if (currentStock < idealQty) {
+    return 'deficit';
+  }
+
+  // 3. Excess: por encima del nivel máximo o del nivel ideal
+  const excessThreshold = maxQty !== undefined && maxQty >= idealQty ? maxQty : idealQty;
+  if (currentStock > excessThreshold) {
+    return 'excess';
+  }
+
+  // 4. Optimal: dentro de los límites ideales
+  return 'optimal';
+}
+
+/**
+ * Cruza catálogo, conteos físicos y opcionalmente movimientos y niveles ideales.
+ * @param optionsOrIncludeNotCounted booleano para compatibilidad previa o BuildReportOptions
+ */
+export function buildReport(
+  products: Product[],
+  counts: CountEntry[],
+  optionsOrIncludeNotCounted: boolean | BuildReportOptions = true,
+): ReportRow[] {
+  const opts: BuildReportOptions =
+    typeof optionsOrIncludeNotCounted === 'boolean'
+      ? { includeNotCounted: optionsOrIncludeNotCounted }
+      : optionsOrIncludeNotCounted;
+
+  const includeNotCounted = opts.includeNotCounted ?? true;
+  const movementsBySku = opts.movementsBySku;
+  const idealLevels = opts.idealLevels;
+
   const byCode = new Map<string, { qty: number; counters: Set<string>; scans: number }>();
   for (const c of counts) {
     const a = byCode.get(c.barcode) ?? { qty: 0, counters: new Set<string>(), scans: 0 };
@@ -86,12 +179,68 @@ export function buildReport(products: Product[], counts: CountEntry[], includeNo
     else if (!a) status = 'no_contado';
     else if (diff === undefined || diff === 0) status = 'ok';
     else status = diff < 0 ? 'faltante' : 'sobrante';
+
+    // ---------------- Movements Integration ----------------
+    const sku = p?.sku ?? '';
+    const mov =
+      (sku && movementsBySku ? movementsBySku.get(sku) : undefined) ??
+      (code && movementsBySku ? movementsBySku.get(code) : undefined);
+
+    const totalIn = mov ? round(mov.totalIn) : undefined;
+    const totalOut = mov ? round(mov.totalOut) : undefined;
+    const netMovements = mov ? round(mov.totalIn - mov.totalOut) : undefined;
+
+    let dynamicExpected: number | undefined;
+    let dynamicDiff: number | undefined;
+    if (mov !== undefined || expected !== undefined) {
+      const baseExpected = expected ?? 0;
+      const inQty = totalIn ?? 0;
+      const outQty = totalOut ?? 0;
+      dynamicExpected = round(baseExpected + inQty - outQty);
+      dynamicDiff = round(counted - dynamicExpected);
+    }
+
+    // ---------------- Ideal Inventory Integration ----------------
+    const configuredIdeal =
+      sku && idealLevels && idealLevels[sku] !== undefined
+        ? idealLevels[sku]
+        : code && idealLevels && idealLevels[code] !== undefined
+          ? idealLevels[code]
+          : undefined;
+
+    const idealQty =
+      configuredIdeal !== undefined
+        ? configuredIdeal
+        : maxQty !== undefined
+          ? maxQty
+          : expected;
+
+    let idealGap: number | undefined;
+    let idealStatus: IdealStatus | undefined;
+    if (idealQty !== undefined) {
+      idealGap = round(counted - idealQty);
+      idealStatus = computeIdealStatus({
+        currentStock: counted,
+        idealQty,
+        minQty,
+        maxQty,
+      });
+    }
+
     rows.push({
       barcode: code,
-      sku: p?.sku ?? '',
+      sku,
       description: p?.description ?? '',
       unit: p?.unit ?? '',
       expected,
+      totalIn,
+      totalOut,
+      netMovements,
+      dynamicExpected,
+      dynamicDiff,
+      idealQty,
+      idealGap,
+      idealStatus,
       ...(minQty !== undefined ? { minQty } : {}),
       ...(maxQty !== undefined ? { maxQty } : {}),
       counted,
@@ -107,6 +256,7 @@ export function buildReport(products: Product[], counts: CountEntry[], includeNo
       source: p?.source,
     });
   }
+
   const order: Record<RowStatus, number> = { faltante: 0, sobrante: 1, no_catalogado: 2, no_contado: 3, ok: 4 };
   return rows.sort(
     (x, y) => order[x.status] - order[y.status] || Math.abs(y.diffValue ?? 0) - Math.abs(x.diffValue ?? 0) ||
@@ -143,7 +293,99 @@ export function summarize(rows: ReportRow[]): ReportSummary {
   return s;
 }
 
-function round(n: number): number {
+export function computeMovementsKpis(
+  movements: Movement[],
+  rows: ReportRow[],
+): MovementsKpiSummary {
+  const costMap = new Map<string, number>();
+  for (const r of rows) {
+    if (r.sku && r.unitCost !== undefined) {
+      costMap.set(r.sku, r.unitCost);
+    }
+    if (r.barcode && r.unitCost !== undefined) {
+      costMap.set(r.barcode, r.unitCost);
+    }
+  }
+
+  let totalEntriesCount = 0;
+  let totalExitsCount = 0;
+  let totalUnitsIn = 0;
+  let totalUnitsOut = 0;
+  let totalValueIn = 0;
+  let totalValueOut = 0;
+
+  for (const m of movements) {
+    const cost = m.cost ?? costMap.get(m.sku) ?? (m.barcode ? costMap.get(m.barcode) : undefined) ?? 0;
+    if (m.type === 'IN') {
+      totalEntriesCount++;
+      totalUnitsIn += m.quantity;
+      totalValueIn += m.quantity * cost;
+    } else if (m.type === 'OUT') {
+      totalExitsCount++;
+      totalUnitsOut += m.quantity;
+      totalValueOut += m.quantity * cost;
+    }
+  }
+
+  let optimalCount = 0;
+  let deficitCount = 0;
+  let criticalCount = 0;
+  let excessCount = 0;
+  let totalIdealUnitsGap = 0;
+  let totalExcessUnits = 0;
+  let estimatedRestockCost = 0;
+  let totalSkusTracked = 0;
+
+  for (const r of rows) {
+    if (r.idealQty === undefined) continue;
+    totalSkusTracked++;
+    const gap = r.idealGap ?? 0;
+    const cost = r.unitCost ?? 0;
+
+    if (r.idealStatus === 'critical') {
+      criticalCount++;
+      const needed = Math.max(0, -gap);
+      totalIdealUnitsGap += needed;
+      estimatedRestockCost += needed * cost;
+    } else if (r.idealStatus === 'deficit') {
+      deficitCount++;
+      const needed = Math.max(0, -gap);
+      totalIdealUnitsGap += needed;
+      estimatedRestockCost += needed * cost;
+    } else if (r.idealStatus === 'optimal') {
+      optimalCount++;
+    } else if (r.idealStatus === 'excess') {
+      excessCount++;
+      totalExcessUnits += Math.max(0, gap);
+    }
+  }
+
+  const idealFulfillmentRate =
+    totalSkusTracked > 0 ? Math.round((optimalCount / totalSkusTracked) * 1000) / 10 : 0;
+
+  return {
+    totalMovements: movements.length,
+    totalEntriesCount,
+    totalExitsCount,
+    totalUnitsIn: round(totalUnitsIn),
+    totalUnitsOut: round(totalUnitsOut),
+    netMovementUnits: round(totalUnitsIn - totalUnitsOut),
+    totalValueIn: Math.round(totalValueIn * 100) / 100,
+    totalValueOut: Math.round(totalValueOut * 100) / 100,
+    netMovementValue: Math.round((totalValueIn - totalValueOut) * 100) / 100,
+    totalSkusTracked,
+    optimalCount,
+    deficitCount,
+    criticalCount,
+    excessCount,
+    idealFulfillmentRate,
+    totalIdealUnitsGap: round(totalIdealUnitsGap),
+    totalExcessUnits: round(totalExcessUnits),
+    estimatedRestockCost: Math.round(estimatedRestockCost * 100) / 100,
+  };
+}
+
+export function round(n: number): number {
   return Math.round(n * 1000) / 1000;
 }
 

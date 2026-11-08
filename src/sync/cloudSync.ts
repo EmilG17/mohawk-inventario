@@ -12,6 +12,13 @@ import {
   type Product,
   type Session,
 } from '../db/db';
+import {
+  getIdealLevels,
+  listMovements,
+  saveAllMovements,
+  setIdealLevels,
+  type Movement,
+} from '../db/movements';
 import { APP_ID, type CountFile } from '../io/exportResults';
 import { mergeCountFiles } from '../io/mergeCounts';
 import { normalizeBarcode } from '../io/normalize';
@@ -34,6 +41,8 @@ export interface CloudRoomState {
   counts: CountEntry[];
   products: Product[];
   participants: Record<string, CloudParticipant>;
+  movements?: Movement[];
+  idealLevels?: Record<string, number>;
 }
 
 export interface SyncResult {
@@ -43,6 +52,7 @@ export interface SyncResult {
   duplicateCounts: number;
   productsAdded: number;
   totalRoomCounts: number;
+  totalRoomMovements?: number;
   participants: CloudParticipant[];
   syncedAt: number;
   transport: 'remote' | 'local';
@@ -64,6 +74,12 @@ if (typeof BroadcastChannel !== 'undefined') {
       const data = ev.data as CloudRoomState | undefined;
       if (data && data.roomCode && Array.isArray(data.counts)) {
         saveLocalRoomMirror(data.roomCode, data);
+        if (data.movements && Array.isArray(data.movements)) {
+          void saveAllMovements(data.movements);
+        }
+        if (data.idealLevels && typeof data.idealLevels === 'object') {
+          void setIdealLevels(data.idealLevels);
+        }
         for (const fn of syncListeners) {
           try {
             fn(data);
@@ -199,6 +215,8 @@ export function mergeRoomStates(
     sessionName: string;
     counts: CountEntry[];
     products: Product[];
+    movements?: Movement[];
+    idealLevels?: Record<string, number>;
   },
 ): CloudRoomState {
   const roomCode = normalizeRoomCode(incoming.roomCode);
@@ -251,6 +269,44 @@ export function mergeRoomStates(
     participants[key] = cur;
   }
 
+  // Movements: deduplicar por UUID (m.id), tomando la marca de tiempo más reciente en colisión
+  const movMap = new Map<string, Movement>();
+  if (base?.movements && Array.isArray(base.movements)) {
+    for (const m of base.movements) {
+      if (m && m.id) movMap.set(m.id, m);
+    }
+  }
+  if (incoming.movements && Array.isArray(incoming.movements)) {
+    for (const m of incoming.movements) {
+      if (m && m.id) {
+        const prev = movMap.get(m.id);
+        if (!prev || m.timestamp >= (prev.timestamp || 0)) {
+          movMap.set(m.id, m);
+        }
+      }
+    }
+  }
+  const mergedMovements = [...movMap.values()].sort((a, b) => a.timestamp - b.timestamp);
+
+  // Niveles ideales: fusionar diccionarios de SKU
+  const mergedIdealLevels: Record<string, number> = {};
+  if (base?.idealLevels && typeof base.idealLevels === 'object') {
+    for (const [k, v] of Object.entries(base.idealLevels)) {
+      const sku = k.trim().toUpperCase();
+      if (sku && typeof v === 'number' && !isNaN(v) && v >= 0) {
+        mergedIdealLevels[sku] = v;
+      }
+    }
+  }
+  if (incoming.idealLevels && typeof incoming.idealLevels === 'object') {
+    for (const [k, v] of Object.entries(incoming.idealLevels)) {
+      const sku = k.trim().toUpperCase();
+      if (sku && typeof v === 'number' && !isNaN(v) && v >= 0) {
+        mergedIdealLevels[sku] = v;
+      }
+    }
+  }
+
   return {
     app: APP_ID,
     version: 1,
@@ -260,6 +316,8 @@ export function mergeRoomStates(
     counts: allCounts,
     products: [...prodMap.values()],
     participants,
+    movements: mergedMovements,
+    idealLevels: mergedIdealLevels,
   };
 }
 
@@ -309,9 +367,11 @@ export async function syncNow(opts?: {
     session = await createSession(sessName, counter);
   }
 
-  const [localCounts, localProducts] = await Promise.all([
+  const [localCounts, localProducts, localMovements, localIdealLevels] = await Promise.all([
     countsForSession(session.id),
     allProducts(),
+    listMovements(),
+    getIdealLevels(),
   ]);
 
   const touchedBarcodes = new Set(localCounts.map((c) => c.barcode));
@@ -325,6 +385,8 @@ export async function syncNow(opts?: {
     sessionName: session.name,
     counts: localCounts,
     products: changedProducts,
+    movements: localMovements,
+    idealLevels: localIdealLevels,
   });
 
   // 3. Importar a la sesión local los conteos que venían de otros dispositivos/técnicos
@@ -355,6 +417,14 @@ export async function syncNow(opts?: {
     productsAdded = mergeRes.productsAdded;
   }
 
+  // Persistir movimientos y niveles ideales fusionados en IndexedDB local
+  if (mergedRoom.movements) {
+    await saveAllMovements(mergedRoom.movements);
+  }
+  if (mergedRoom.idealLevels) {
+    await setIdealLevels(mergedRoom.idealLevels);
+  }
+
   // 4. Guardar estado consolidado en espejo local, BroadcastChannel y endpoint remoto
   saveLocalRoomMirror(roomCode, mergedRoom);
   if (broadcastChannel) {
@@ -383,6 +453,7 @@ export async function syncNow(opts?: {
     duplicateCounts,
     productsAdded,
     totalRoomCounts: mergedRoom.counts.length,
+    totalRoomMovements: mergedRoom.movements?.length ?? 0,
     participants: Object.values(mergedRoom.participants),
     syncedAt,
     transport,

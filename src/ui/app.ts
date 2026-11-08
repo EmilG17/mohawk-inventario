@@ -6,6 +6,7 @@ import { countView } from './count';
 import { clear, h, icon, toast } from './dom';
 import { homeView } from './home';
 import { initInstall } from './install';
+import { movementsView } from './movementsView';
 import { reportView } from './reportView';
 import { currentPath, navigate, registerRoute, startRouter, type View } from './router';
 import { settingsView } from './settingsView';
@@ -14,6 +15,7 @@ import { teamView } from './teamView';
 const NAV_ITEMS: { path: string; label: string; icon: string }[] = [
   { path: '/', label: 'Inicio', icon: 'home' },
   { path: '/contar', label: 'Contar', icon: 'scan' },
+  { path: '/movimientos', label: 'Kardex', icon: 'swap' },
   { path: '/catalogo', label: 'Catálogo', icon: 'list' },
   { path: '/reporte', label: 'Reporte', icon: 'chart' },
   { path: '/equipo', label: 'Equipo', icon: 'users' },
@@ -25,6 +27,7 @@ export async function bootstrapApp(): Promise<void> {
 
   registerRoute('/', homeView);
   registerRoute('/contar', countView);
+  registerRoute('/movimientos', movementsView);
   registerRoute('/catalogo', catalogView);
   registerRoute('/reporte', reportView);
   registerRoute('/equipo', teamView);

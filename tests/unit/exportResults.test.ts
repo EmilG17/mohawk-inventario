@@ -17,7 +17,15 @@ describe('exportResults', () => {
   it('genera un libro Excel con todas las hojas requeridas', () => {
     const rows = buildReport(products, counts, true);
     const summary = summarize(rows);
-    const bytes = buildReportWorkbook({ session, rows, summary, counts, products });
+    const bytes = buildReportWorkbook({
+      session,
+      rows,
+      summary,
+      counts,
+      products,
+      movements: [],
+      idealLevels: {},
+    });
     expect(bytes).toBeInstanceOf(Uint8Array);
     expect(bytes.length).toBeGreaterThan(1000);
 
@@ -27,6 +35,8 @@ describe('exportResults', () => {
       'Conteo completo',
       'Diferencias',
       'No catalogados',
+      'Entradas y Salidas (Kardex)',
+      'Inventario Ideal',
       'Detalle de escaneos',
     ]);
 
@@ -39,6 +49,14 @@ describe('exportResults', () => {
     expect(completo).toHaveLength(2);
     // Código de barras preserva el cero inicial en la vista de reporte
     expect(completo[0]['Código de barras']).toBe('071153000108');
+    expect(completo[0]['Existencia teórica inicial']).toBe(45);
+    expect(completo[0]['Contado físico']).toBe(40);
+
+    // Inventario Ideal contiene las filas de catálogo con análisis de brecha
+    const ideal = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets['Inventario Ideal']);
+    expect(ideal).toHaveLength(2);
+    expect(ideal[0]['SKU']).toBe('MHK-001');
+    expect(ideal[0]['Último Conteo Físico']).toBe(40);
   });
 
   it('genera CSV con BOM UTF-8 para apertura correcta en Excel', () => {

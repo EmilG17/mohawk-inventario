@@ -74,6 +74,7 @@ export const homeView: View = {
           h('button', { class: 'btn primary xl', onclick: () => navigate('/contar') }, icon('scan'), 'Continuar conteo'),
           h('div', { class: 'row wrap' },
             h('button', { class: 'btn', onclick: () => navigate('/reporte') }, icon('chart'), 'Ver reporte'),
+            h('button', { class: 'btn', onclick: () => navigate('/movimientos') }, icon('swap'), 'Kardex / Movimientos'),
             h('button', {
               class: 'btn',
               onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
@@ -104,6 +105,7 @@ export const homeView: View = {
           h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
             icon('scan'), 'Iniciar nueva sesión'),
           h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
+            h('button', { class: 'btn', onclick: () => navigate('/movimientos') }, icon('swap'), 'Kardex / Movimientos'),
             h('button', {
               class: 'btn',
               onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
@@ -169,6 +171,14 @@ export const homeView: View = {
           ? h('p', null, `${catalogCount} productos`, withExpected ? ` · ${withExpected} con existencia teórica` : '')
           : h('p', { class: 'warn-text' }, 'No hay catálogo cargado. Puedes contar igual: la descripción se buscará en internet o se capturará a mano. Para comparar contra existencias, importa tu Excel.'),
         pending ? h('p', { class: 'muted small' }, `${pending} código(s) pendiente(s) de descripción`) : null,
+      ),
+
+      h('section', { class: 'card' },
+        h('div', { class: 'card-head' },
+          h('h3', null, 'Kardex e Inventario Ideal'),
+          h('button', { class: 'btn ghost sm', onclick: () => navigate('/movimientos') }, 'Abrir'),
+        ),
+        h('p', { class: 'muted small' }, 'Registro de entradas y salidas, trazabilidad por técnico/máquina y monitoreo del inventario ideal vs. stock dinámico.'),
       ),
 
       install.canPrompt
