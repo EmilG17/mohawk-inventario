@@ -138,17 +138,75 @@ export function buildReport(
   const movementsBySku = opts.movementsBySku;
   const idealLevels = opts.idealLevels;
 
+  const pMap = new Map<string, Product>();
+  const aliasToCanonical = new Map<string, string>();
+
+  // Registrar primero productos catalogados oficiales para que tengan prioridad de conciliación
+  const sortedProds = [...products].sort((a, b) => Number(Boolean(a.uncataloged)) - Number(Boolean(b.uncataloged)));
+  for (const p of sortedProds) {
+    pMap.set(p.barcode, p);
+    aliasToCanonical.set(p.barcode, p.barcode);
+    aliasToCanonical.set(p.barcode.toUpperCase(), p.barcode);
+    const noZeros = p.barcode.replace(/^0+/, '');
+    if (noZeros && !aliasToCanonical.has(noZeros)) {
+      aliasToCanonical.set(noZeros, p.barcode);
+    }
+    if (p.sku) {
+      const upperSku = p.sku.trim().toUpperCase();
+      if (upperSku) {
+        if (!aliasToCanonical.has(upperSku)) aliasToCanonical.set(upperSku, p.barcode);
+        if (!aliasToCanonical.has(`SKU:${upperSku}`)) aliasToCanonical.set(`SKU:${upperSku}`, p.barcode);
+      }
+    }
+  }
+
+  const resolveCanonicalCode = (raw: string): string => {
+    const clean = (raw || '').trim();
+    if (!clean) return raw;
+    if (aliasToCanonical.has(clean)) return aliasToCanonical.get(clean)!;
+    const upper = clean.toUpperCase();
+    if (aliasToCanonical.has(upper)) return aliasToCanonical.get(upper)!;
+    const noZeros = clean.replace(/^0+/, '');
+    if (noZeros && aliasToCanonical.has(noZeros)) return aliasToCanonical.get(noZeros)!;
+    if (upper.startsWith('SKU:')) {
+      const bare = upper.slice(4).trim();
+      if (aliasToCanonical.has(bare)) return aliasToCanonical.get(bare)!;
+    }
+    return clean;
+  };
+
   const byCode = new Map<string, { qty: number; counters: Set<string>; scans: number }>();
   for (const c of counts) {
-    const a = byCode.get(c.barcode) ?? { qty: 0, counters: new Set<string>(), scans: 0 };
+    const code = resolveCanonicalCode(c.barcode);
+    const a = byCode.get(code) ?? { qty: 0, counters: new Set<string>(), scans: 0 };
     a.qty += c.qty;
     a.scans++;
     if (c.counter) a.counters.add(c.counter);
-    byCode.set(c.barcode, a);
+    byCode.set(code, a);
   }
-  const pMap = new Map(products.map((p) => [p.barcode, p]));
+
   const codes = new Set<string>([...byCode.keys()]);
-  if (includeNotCounted) for (const p of products) if (!p.uncataloged) codes.add(p.barcode);
+  if (includeNotCounted) {
+    for (const p of products) {
+      if (!p.uncataloged) {
+        codes.add(p.barcode);
+      }
+    }
+  }
+
+  // Normalizar mapas de movimientos y niveles ideales a mayúsculas para búsqueda resiliente
+  const normMovMap = new Map<string, { totalIn: number; totalOut: number }>();
+  if (movementsBySku) {
+    for (const [k, v] of movementsBySku.entries()) {
+      normMovMap.set(k.trim().toUpperCase(), v);
+    }
+  }
+  const normIdealMap: Record<string, number> = {};
+  if (idealLevels) {
+    for (const [k, v] of Object.entries(idealLevels)) {
+      normIdealMap[k.trim().toUpperCase()] = v;
+    }
+  }
 
   const rows: ReportRow[] = [];
   for (const code of codes) {
@@ -182,9 +240,11 @@ export function buildReport(
 
     // ---------------- Movements Integration ----------------
     const sku = p?.sku ?? '';
+    const skuUpper = sku.trim().toUpperCase();
+    const codeUpper = code.trim().toUpperCase();
     const mov =
-      (sku && movementsBySku ? movementsBySku.get(sku) : undefined) ??
-      (code && movementsBySku ? movementsBySku.get(code) : undefined);
+      (skuUpper ? normMovMap.get(skuUpper) : undefined) ??
+      (codeUpper ? normMovMap.get(codeUpper) : undefined);
 
     const totalIn = mov ? round(mov.totalIn) : undefined;
     const totalOut = mov ? round(mov.totalOut) : undefined;
@@ -202,10 +262,10 @@ export function buildReport(
 
     // ---------------- Ideal Inventory Integration ----------------
     const configuredIdeal =
-      sku && idealLevels && idealLevels[sku] !== undefined
-        ? idealLevels[sku]
-        : code && idealLevels && idealLevels[code] !== undefined
-          ? idealLevels[code]
+      skuUpper && normIdealMap[skuUpper] !== undefined
+        ? normIdealMap[skuUpper]
+        : codeUpper && normIdealMap[codeUpper] !== undefined
+          ? normIdealMap[codeUpper]
           : undefined;
 
     const idealQty =

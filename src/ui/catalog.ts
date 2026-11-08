@@ -1,27 +1,29 @@
 import {
-  allProducts, bulkModifyProducts, bulkPutProducts, clearProducts, deleteProducts, deleteProduct,
+  allProducts, bulkModifyProducts, bulkPutProducts, clearProducts, deleteProducts,
   type MassProductPatch, type Product,
 } from '../db/db';
 import { buildCatalogFile, buildCatalogWorkbook } from '../io/exportResults';
 import {
   detectHeaderRow, FIELD_LABELS, guessMapping, readWorkbook, rowsToProducts, type Field, type Mapping, type Workbook,
 } from '../io/importCatalog';
-import { importCatalogFile, parseAppFile } from '../io/mergeCounts';
+import { importCatalogFile, parseAppFile, reconcileCatalogProducts } from '../io/mergeCounts';
 import { displayBarcode, parseNumber } from '../io/normalize';
 import { processPending } from '../lookup/pendingQueue';
+import { onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
 import { editProductDialog, sourceBadge } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
-import { addToPrintQueue, getPrintQueueTotalCount, getPrintQueue } from '../barcode/printQueue';
+import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
 import type { View } from './router';
 import { navigate } from './router';
 
 let filter: 'todos' | 'sin_desc' | 'no_cat' = 'todos';
 let query = '';
+let unsubscribeCatalogCloud: (() => void) | null = null;
 
-export async function importCatalogFlow(): Promise<void> {
+export async function importCatalogFlow(onCompleted?: () => void): Promise<void> {
   const [file] = await pickFiles('.xlsx,.xls,.csv,.txt,.json,application/json');
   if (!file) return;
   try {
@@ -29,25 +31,36 @@ export async function importCatalogFlow(): Promise<void> {
     if (/\.json$/i.test(file.name)) {
       const f = parseAppFile(new TextDecoder().decode(buf));
       if (f.kind !== 'catalogo') {
-        toast('Ese es un archivo de conteo; impórtalo en la pestaña Equipo.', 'warn', 4000);
+        toast('Ese es un archivo de conteo; impórtalo en la pestaña Supervisor.', 'warn', 4000);
         return;
       }
       const replace = await confirmDialog('Importar catálogo',
-        `El archivo trae ${f.products.length} productos. ¿Reemplazar el catálogo actual? (Cancelar = combinar)`, 'Reemplazar');
-      const n = await importCatalogFile(f, replace ? 'replace' : 'merge');
-      toast(`${n} productos importados`, 'ok');
-      navigate('/catalogo');
+        `El archivo trae ${f.products.length} productos. ¿Reemplazar el catálogo actual? (Cancelar = combinar y conciliar)`, 'Reemplazar');
+      let n = 0;
+      if (replace) {
+        const keep = (await allProducts()).filter((p) => p.uncataloged);
+        n = await importCatalogFile(f, 'replace');
+        if (keep.length) await bulkPutProducts(keep, 'merge');
+        await reconcileCatalogProducts(f.products);
+      } else {
+        const rec = await reconcileCatalogProducts(f.products);
+        n = rec.added + rec.updated;
+      }
+      triggerBackgroundSync();
+      toast(`${n || f.products.length} productos importados y conciliados`, 'ok');
+      if (onCompleted) onCompleted();
+      else navigate('/catalogo');
       return;
     }
     const wb = readWorkbook(buf, file.name);
-    mappingDialog(wb, file.name);
+    mappingDialog(wb, file.name, onCompleted);
   } catch (e) {
     console.error(e);
     toast('No se pudo leer el archivo: ' + (e as Error).message, 'error', 5000);
   }
 }
 
-function mappingDialog(wb: Workbook, fileName: string) {
+function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void) {
   let sheet = wb.sheetNames[0];
   let rows = wb.rows(sheet);
   let headerRow = detectHeaderRow(rows);
@@ -118,9 +131,9 @@ function mappingDialog(wb: Workbook, fileName: string) {
         : null,
       h('div', { class: 'radio-row' },
         h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'replace', onchange: () => (mode = 'replace') }), ' Reemplazar catálogo'),
-        h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'merge', onchange: () => (mode = 'merge') }), ' Combinar / actualizar'),
+        h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'merge', onchange: () => (mode = 'merge') }), ' Combinar / conciliar'),
       ),
-      h('p', { class: 'muted small' }, 'Reemplazar conserva los productos no catalogados ya escaneados y sus descripciones.'),
+      h('p', { class: 'muted small' }, 'Concilia automáticamente los productos escaneados previamente por código de barras o SKU.'),
     );
   };
   render();
@@ -128,23 +141,24 @@ function mappingDialog(wb: Workbook, fileName: string) {
   openDialog('Importar catálogo', body, [
     { label: 'Cancelar' },
     {
-      label: 'Importar', kind: 'primary',
+      label: 'Importar y Conciliar', kind: 'primary',
       onClick: async () => {
         try {
           const r = rowsToProducts(rows, headerRow, mapping);
           if (!r.products.length) { toast('No hay productos para importar', 'warn'); return true; }
           if (mode === 'replace') {
-            // conservar no catalogados y descripciones obtenidas antes
             const keep = (await allProducts()).filter((p) => p.uncataloged);
             await bulkPutProducts(r.products, 'replace');
-            const imported = new Set(r.products.map((p) => p.barcode));
-            await bulkPutProducts(keep.filter((p) => !imported.has(p.barcode)));
+            if (keep.length) await bulkPutProducts(keep, 'merge');
+            await reconcileCatalogProducts(r.products);
           } else {
-            await bulkPutProducts(r.products, 'merge');
+            await reconcileCatalogProducts(r.products);
           }
-          toast(`${r.products.length} productos importados`, 'ok');
+          triggerBackgroundSync();
+          toast(`${r.products.length} productos importados y conciliados`, 'ok');
           void processPending();
-          navigate('/catalogo');
+          if (onCompleted) onCompleted();
+          else navigate('/catalogo');
         } catch (e) {
           toast((e as Error).message, 'error', 5000);
           return true;
@@ -685,7 +699,7 @@ export const catalogView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
-        h('p', { class: 'muted small' }, 'Gestiona el catálogo de consumibles: crea códigos de barras, importa desde Excel o modifica en lote.'),
+        h('p', { class: 'muted small' }, 'Consulta consumibles, imprime etiquetas de código de barras o aplica modificaciones en lote. Para importar o compartir el catálogo ve a Ajustes.'),
         h('div', { class: 'row wrap' },
           h('button', {
             class: 'btn primary',
@@ -696,7 +710,6 @@ export const catalogView: View = {
               }
             },
           }, icon('scan'), 'Nuevo producto'),
-          h('button', { class: 'btn', onclick: importCatalogFlow }, icon('upload'), 'Importar Excel/CSV'),
           h('button', {
             class: 'btn', disabled: !products.length,
             onclick: () => {
@@ -717,14 +730,6 @@ export const catalogView: View = {
             onclick: () => openBarcodeSheetDialog(),
           }, icon('scan'), 'Cola de etiquetas'),
           h('button', {
-            class: 'btn', disabled: !products.length,
-            onclick: () => downloadFile(buildCatalogWorkbook(products), 'catalogo_consumibles.xlsx', MIME.xlsx),
-          }, icon('download'), 'Excel'),
-          h('button', {
-            class: 'btn', disabled: !products.length,
-            onclick: () => shareOrDownload(JSON.stringify(buildCatalogFile(products)), 'catalogo_inventario.json', MIME.json, 'Catálogo de inventario'),
-          }, icon('share'), 'Compartir'),
-          h('button', {
             class: 'btn',
             onclick: () => {
               const words = norm(query).split(/\s+/).filter(Boolean);
@@ -738,6 +743,10 @@ export const catalogView: View = {
               openMassActionsDialog(visible, Array.from(selected), products, refreshData);
             },
           }, icon('edit'), 'Acciones masivas'),
+          h('button', {
+            class: 'btn ghost sm',
+            onclick: () => navigate('/ajustes'),
+          }, icon('gear'), 'Importar / Compartir en Ajustes'),
         ),
         noDesc
           ? h('button', {
@@ -760,5 +769,18 @@ export const catalogView: View = {
       list,
     );
     draw();
+
+    if (unsubscribeCatalogCloud) unsubscribeCatalogCloud();
+    unsubscribeCatalogCloud = onCloudRoomUpdate(() => {
+      if (root.isConnected) {
+        void refreshData(false);
+      }
+    });
+  },
+  destroy() {
+    if (unsubscribeCatalogCloud) {
+      unsubscribeCatalogCloud();
+      unsubscribeCatalogCloud = null;
+    }
   },
 };

@@ -10,6 +10,7 @@ import {
 } from '../barcode/bartenderFormat';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
+import { triggerBackgroundSync } from '../sync/cloudSync';
 import { confirmDialog, h, icon, openDialog, toast } from './dom';
 
 export const SOURCE_LABEL: Record<Product['source'], string> = {
@@ -329,6 +330,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         onClick: async () => {
           if (code && await confirmDialog('Eliminar del catálogo', `¿Eliminar "${p.description || code}" del catálogo?`, 'Eliminar', true)) {
             await deleteProduct(code);
+            triggerBackgroundSync();
             result = 'deleted';
             toast('Producto eliminado');
           } else if (!code) {
@@ -370,6 +372,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
             await deleteProduct(code);
           }
           await putProduct(next);
+          triggerBackgroundSync();
           result = next;
           toast('Producto guardado', 'ok');
         },

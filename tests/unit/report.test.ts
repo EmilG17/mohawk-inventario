@@ -123,4 +123,24 @@ describe('buildReport y summarize', () => {
     expect(summary.reorderCount).toBe(1);
     expect(summary.reorderValue).toBe(5000);
   });
+
+  it('concilia lecturas por SKU, prefijo SKU: y código de barras sin ceros a la izquierda contra el catálogo', () => {
+    const counts: CountEntry[] = [
+      // Escaneado sin ceros a la izquierda
+      { id: 'c1', sessionId: 's1', barcode: '71153000108', qty: 20, counter: 'Juan', deviceId: 'd1', timestamp: 1 },
+      // Escaneado como SKU directo
+      { id: 'c2', sessionId: 's1', barcode: 'MHK-001', qty: 15, counter: 'Pedro', deviceId: 'd2', timestamp: 2 },
+      // Escaneado con código temporal SKU:...
+      { id: 'c3', sessionId: 's1', barcode: 'SKU:mhk-001', qty: 10, counter: 'Ana', deviceId: 'd3', timestamp: 3 },
+    ];
+
+    const rows = buildReport(products, counts, false);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].barcode).toBe('00071153000108');
+    expect(rows[0].sku).toBe('MHK-001');
+    expect(rows[0].counted).toBe(45);
+    expect(rows[0].status).toBe('ok');
+    expect(Boolean(rows[0].uncataloged)).toBe(false);
+  });
 });
+

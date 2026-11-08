@@ -2124,3 +2124,199 @@ textarea.input { min-height: 60px; resize: vertical; }
   flex-shrink: 0;
 }
 
+/* ==========================================================================
+   VISTA COMPACTA Y ORGANIZADA DE AJUSTES Y CATÁLOGO
+   ========================================================================== */
+
+.settings-header-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.settings-compact-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.settings-card {
+  margin: 0 !important;
+  padding: 14px !important;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-card-wide {
+  grid-column: 1 / -1;
+}
+
+.settings-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.settings-card-title {
+  margin: 0 !important;
+  font-size: 0.98rem !important;
+}
+
+.settings-stat-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  background: var(--bg);
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+}
+
+.settings-stat-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12.5px;
+  padding-right: 8px;
+  border-right: 1px solid var(--border);
+}
+.settings-stat-pill:last-of-type {
+  border-right: none;
+}
+
+.settings-action-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 8px;
+}
+@media (max-width: 460px) {
+  .settings-action-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.settings-subactions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding-top: 6px;
+  border-top: 1px dashed var(--border);
+}
+
+.settings-row-2col {
+  display: grid;
+  grid-template-columns: 1fr 120px;
+  gap: 8px;
+}
+.settings-card-wide .settings-row-2col {
+  grid-template-columns: 1fr 1.4fr;
+}
+@media (max-width: 520px) {
+  .settings-row-2col,
+  .settings-card-wide .settings-row-2col {
+    grid-template-columns: 1fr;
+  }
+}
+
+.compact-field {
+  margin: 0 !important;
+  gap: 3px !important;
+}
+.compact-field > span:first-child {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--muted);
+}
+
+.input-sm {
+  padding: 6px 10px !important;
+  font-size: 13px !important;
+  min-height: 34px !important;
+}
+
+.settings-switch-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+}
+.settings-switch-grid-2 {
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+
+.settings-switch-tile {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  user-select: none;
+  transition: border-color 0.12s ease;
+}
+.settings-switch-tile:hover {
+  border-color: var(--primary);
+}
+.settings-switch-text {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.2;
+}
+.settings-switch-title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+.settings-switch-sub {
+  font-size: 10.8px;
+  color: var(--muted);
+}
+
+.settings-advanced {
+  padding: 10px 14px !important;
+  margin-bottom: 16px;
+}
+.settings-advanced-summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 13px;
+  list-style: none;
+}
+.settings-advanced-summary::-webkit-details-marker {
+  display: none;
+}
+.settings-advanced-body {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-danger-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding: 10px 12px;
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.25);
+  border-radius: var(--radius-sm);
+}

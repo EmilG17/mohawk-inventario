@@ -21,7 +21,7 @@ import {
   type Movement,
 } from '../db/movements';
 import { APP_ID, type CountFile } from '../io/exportResults';
-import { mergeCountFiles } from '../io/mergeCounts';
+import { mergeCountFiles, reconcileCatalogProducts } from '../io/mergeCounts';
 import { normalizeBarcode } from '../io/normalize';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
 
@@ -484,16 +484,80 @@ export function mergeRoomStates(
   }
 
   const prodMap = new Map<string, Product>();
-  if (base?.products) {
-    for (const p of base.products) {
-      if (p && p.barcode) prodMap.set(p.barcode, p);
+  const skuToBarcode = new Map<string, string>();
+
+  const upsertProdInRoom = (p: Product) => {
+    if (!p || !p.barcode) return;
+    const skuUpper = (p.sku || '').trim().toUpperCase();
+    let existingKey = prodMap.has(p.barcode) ? p.barcode : undefined;
+    if (!existingKey && skuUpper && skuToBarcode.has(skuUpper)) {
+      const candidateKey = skuToBarcode.get(skuUpper)!;
+      const cand = prodMap.get(candidateKey);
+      if (cand && (cand.barcode.startsWith('SKU:') || p.barcode.startsWith('SKU:') || cand.uncataloged || p.uncataloged)) {
+        existingKey = candidateKey;
+      }
     }
+
+    if (!existingKey) {
+      prodMap.set(p.barcode, p);
+      if (skuUpper) skuToBarcode.set(skuUpper, p.barcode);
+      return;
+    }
+
+    const prev = prodMap.get(existingKey)!;
+    const targetBarcode =
+      prev.barcode.startsWith('SKU:') && !p.barcode.startsWith('SKU:')
+        ? p.barcode
+        : p.barcode.startsWith('SKU:') && !prev.barcode.startsWith('SKU:')
+          ? prev.barcode
+          : p.barcode;
+
+    if (existingKey !== targetBarcode) {
+      prodMap.delete(existingKey);
+    }
+
+    const pIsOfficial = !p.uncataloged && (p.source === 'catalogo' || p.source === 'manual');
+    const prevIsPending = prev.source === 'pendiente' || Boolean(prev.uncataloged);
+    const nextDesc =
+      p.description && (prevIsPending || pIsOfficial || !prev.description)
+        ? p.description
+        : prev.description || p.description;
+    const nextSource: Product['source'] =
+      p.source === 'catalogo' || prev.source === 'catalogo'
+        ? 'catalogo'
+        : prev.source === 'pendiente' && p.source !== 'pendiente'
+          ? p.source
+          : prev.source;
+    const nextUncataloged =
+      p.uncataloged === false || prev.uncataloged === false || nextSource === 'catalogo'
+        ? false
+        : Boolean(prev.uncataloged && p.uncataloged);
+
+    const mergedProd: Product = {
+      ...prev,
+      ...p,
+      barcode: targetBarcode,
+      description: nextDesc,
+      sku: p.sku || prev.sku,
+      unit: p.unit || prev.unit,
+      expectedQty: p.expectedQty !== undefined ? p.expectedQty : prev.expectedQty,
+      minQty: p.minQty !== undefined ? p.minQty : prev.minQty,
+      maxQty: p.maxQty !== undefined ? p.maxQty : prev.maxQty,
+      unitCost: p.unitCost !== undefined ? p.unitCost : prev.unitCost,
+      brand: p.brand || prev.brand,
+      imageUrl: p.imageUrl || prev.imageUrl,
+      uncataloged: nextUncataloged,
+      source: nextSource,
+    };
+    prodMap.set(targetBarcode, mergedProd);
+    if (mergedProd.sku) skuToBarcode.set(mergedProd.sku.trim().toUpperCase(), targetBarcode);
+  };
+
+  if (base?.products) {
+    for (const p of base.products) upsertProdInRoom(p);
   }
   for (const p of incoming.products) {
-    if (p && p.barcode) {
-      const prev = prodMap.get(p.barcode);
-      prodMap.set(p.barcode, prev ? { ...prev, ...p, description: p.description || prev.description } : p);
-    }
+    upsertProdInRoom(p);
   }
 
   const allCounts = [...countMap.values()].sort((a, b) => a.timestamp - b.timestamp);
@@ -592,7 +656,11 @@ function computeStateFingerprint(state: CloudRoomState | null): string {
   const lastCountTs = state.counts.length ? state.counts[state.counts.length - 1].timestamp : 0;
   const lastMovTs = state.movements?.length ? state.movements[state.movements.length - 1].timestamp : 0;
   const idealKeys = state.idealLevels ? Object.entries(state.idealLevels).map(([k, v]) => `${k}:${v}`).sort().join(',') : '';
-  return `${state.counts.length}|${lastCountTs}|${state.products.length}|${state.movements?.length ?? 0}|${lastMovTs}|${idealKeys}`;
+  const prodSig = state.products
+    .map((p) => `${p.barcode}:${p.sku}:${p.description}:${p.expectedQty ?? ''}:${p.minQty ?? ''}:${p.maxQty ?? ''}`)
+    .sort()
+    .join(';');
+  return `${state.counts.length}|${lastCountTs}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${idealKeys}`;
 }
 
 /**
@@ -621,9 +689,8 @@ async function applyIncomingRoomStateToLocal(
   let hasNewChanges = prevFp !== nextFp;
 
   if (incomingState.products && incomingState.products.length > 0) {
-    const localProds = await allProducts();
-    if (localProds.length === 0 && incomingState.products.length > 0) {
-      await bulkPutProducts(incomingState.products, 'merge');
+    const recRes = await reconcileCatalogProducts(incomingState.products);
+    if (recRes.added > 0 || recRes.updated > 0) {
       hasNewChanges = true;
     }
   }
@@ -759,10 +826,9 @@ export async function syncNow(opts?: {
 
   const touchedBarcodes = new Set(localCounts.map((c) => c.barcode));
   const touchedSkus = new Set(localMovements.map((m) => m.sku.toUpperCase()));
-  // Si el catálogo local es manejable (<= 800 productos) o la sala remota aún no tiene productos,
-  // sincronizamos el catálogo completo para que el supervisor y los técnicos vean descripciones y metas.
+  // Sincronizar el catálogo completo (hasta 5000 productos) para garantizar conciliación total entre dispositivos
   const includeFullCatalog =
-    localProducts.length <= 800 || !remoteState || (remoteState.products?.length ?? 0) === 0;
+    localProducts.length <= 5000 || !remoteState || (remoteState.products?.length ?? 0) === 0;
   const changedProducts = includeFullCatalog
     ? localProducts
     : localProducts.filter(

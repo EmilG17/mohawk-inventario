@@ -275,6 +275,151 @@ export interface MergeResult {
   counters: string[];
 }
 
+export interface ReconcileCatalogResult {
+  added: number;
+  updated: number;
+}
+
+/**
+ * Concilia una lista de productos entrantes (desde Firebase, archivo importado o catálogo)
+ * con el catálogo local en IndexedDB, unificando por código de barras y por SKU,
+ * promoviendo productos "no catalogados" cuando aparece su registro oficial y actualizando
+ * existencias teóricas, mínimos, máximos, costos y descripciones.
+ */
+export async function reconcileCatalogProducts(
+  incomingProducts: Product[],
+): Promise<ReconcileCatalogResult> {
+  if (!incomingProducts || incomingProducts.length === 0) {
+    return { added: 0, updated: 0 };
+  }
+  const db = await getDB();
+  const localAll = await db.getAll('products');
+  const byBarcode = new Map<string, Product>();
+  const bySku = new Map<string, Product>();
+
+  for (const lp of localAll) {
+    byBarcode.set(lp.barcode, lp);
+    if (lp.sku) {
+      bySku.set(lp.sku.trim().toUpperCase(), lp);
+    }
+  }
+
+  const toPut: Product[] = [];
+  const toDeleteBarcodes = new Set<string>();
+  const barcodeRemap = new Map<string, string>();
+  let added = 0;
+  let updated = 0;
+
+  for (const p of incomingProducts) {
+    if (!p || !p.barcode) continue;
+    const skuUpper = (p.sku || '').trim().toUpperCase();
+    let local = byBarcode.get(p.barcode);
+
+    // Si no coincidió por barcode directo, verificar si existía como código temporal SKU:... o mismo SKU
+    if (!local && skuUpper) {
+      const skuMatch = bySku.get(skuUpper) || byBarcode.get(`SKU:${skuUpper}`);
+      if (skuMatch && (skuMatch.uncataloged || skuMatch.barcode.startsWith('SKU:'))) {
+        local = skuMatch;
+      }
+    }
+
+    if (!local) {
+      toPut.push(p);
+      byBarcode.set(p.barcode, p);
+      if (skuUpper) bySku.set(skuUpper, p);
+      added++;
+      continue;
+    }
+
+    const incomingIsOfficial = !p.uncataloged && (p.source === 'catalogo' || p.source === 'manual');
+    const localIsPending = local.source === 'pendiente' || Boolean(local.uncataloged);
+
+    // Elegir el barcode canónico (preferir el código de barras real frente a un placeholder SKU:...)
+    const targetBarcode =
+      local.barcode.startsWith('SKU:') && !p.barcode.startsWith('SKU:')
+        ? p.barcode
+        : p.barcode.startsWith('SKU:') && !local.barcode.startsWith('SKU:')
+          ? local.barcode
+          : local.barcode;
+
+    if (local.barcode !== targetBarcode) {
+      toDeleteBarcodes.add(local.barcode);
+      barcodeRemap.set(local.barcode, targetBarcode);
+    }
+    if (p.barcode !== targetBarcode) {
+      barcodeRemap.set(p.barcode, targetBarcode);
+    }
+
+    const nextDesc =
+      p.description && (localIsPending || incomingIsOfficial || !local.description)
+        ? p.description
+        : local.description || p.description;
+
+    const nextSource: Product['source'] =
+      p.source === 'catalogo' || local.source === 'catalogo'
+        ? 'catalogo'
+        : local.source === 'pendiente' && p.source !== 'pendiente'
+          ? p.source
+          : local.source;
+
+    const nextUncataloged =
+      p.uncataloged === false || local.uncataloged === false || nextSource === 'catalogo'
+        ? false
+        : Boolean(local.uncataloged && p.uncataloged);
+
+    const merged: Product = {
+      ...local,
+      ...p,
+      barcode: targetBarcode,
+      description: nextDesc,
+      sku: p.sku || local.sku,
+      unit: p.unit || local.unit,
+      expectedQty: p.expectedQty !== undefined ? p.expectedQty : local.expectedQty,
+      minQty: p.minQty !== undefined ? p.minQty : local.minQty,
+      maxQty: p.maxQty !== undefined ? p.maxQty : local.maxQty,
+      unitCost: p.unitCost !== undefined ? p.unitCost : local.unitCost,
+      brand: p.brand || local.brand,
+      imageUrl: p.imageUrl || local.imageUrl,
+      uncataloged: nextUncataloged,
+      source: nextSource,
+    };
+
+    if (JSON.stringify(merged) !== JSON.stringify(local)) {
+      toPut.push(merged);
+      byBarcode.set(targetBarcode, merged);
+      if (merged.sku) bySku.set(merged.sku.trim().toUpperCase(), merged);
+      updated++;
+    }
+  }
+
+  if (toDeleteBarcodes.size > 0) {
+    const txDel = db.transaction('products', 'readwrite');
+    for (const oldBc of toDeleteBarcodes) {
+      await txDel.store.delete(oldBc);
+    }
+    await txDel.done;
+  }
+
+  if (toPut.length > 0) {
+    await bulkPutProducts(toPut, 'merge');
+  }
+
+  // Si algún código temporal SKU:... se remapeó a su código de barras oficial, actualizar conteos locales
+  if (barcodeRemap.size > 0) {
+    const allCounts = await db.getAll('counts');
+    const txCounts = db.transaction('counts', 'readwrite');
+    for (const c of allCounts) {
+      const mapped = barcodeRemap.get(c.barcode);
+      if (mapped && mapped !== c.barcode) {
+        await txCounts.store.put({ ...c, barcode: mapped });
+      }
+    }
+    await txCounts.done;
+  }
+
+  return { added, updated };
+}
+
 /**
  * Agrega a la sesión destino los conteos de uno o varios archivos.
  * Cada escaneo conserva su id único por sesión, así que importar el mismo archivo dos veces
@@ -285,32 +430,15 @@ export async function mergeCountFiles(targetSessionId: string, files: CountFile[
   const res: MergeResult = { added: 0, duplicates: 0, productsAdded: 0, counters: [] };
   const counters = new Set<string>();
 
-  // Productos: agregar los que no existen localmente o actualizar los que localmente están pendientes
+  // Conciliar todos los productos entrantes con el catálogo local
   const incoming = new Map<string, Product>();
-  for (const f of files) for (const p of f.products) incoming.set(p.barcode, p);
-  const toPut: Product[] = [];
-  for (const p of incoming.values()) {
-    const local = await db.get('products', p.barcode);
-    if (!local || (local.source === 'pendiente' && p.source !== 'pendiente')) {
-      toPut.push(
-        local
-          ? {
-              ...local,
-              description: p.description || local.description,
-              sku: p.sku || local.sku,
-              unit: p.unit || local.unit,
-              expectedQty: local.expectedQty ?? p.expectedQty,
-              unitCost: local.unitCost ?? p.unitCost,
-              brand: p.brand || local.brand,
-              imageUrl: p.imageUrl || local.imageUrl,
-              source: p.source,
-            }
-          : p,
-      );
+  for (const f of files) {
+    for (const p of f.products || []) {
+      if (p && p.barcode) incoming.set(p.barcode, p);
     }
   }
-  if (toPut.length) await bulkPutProducts(toPut);
-  res.productsAdded = toPut.length;
+  const recRes = await reconcileCatalogProducts([...incoming.values()]);
+  res.productsAdded = recRes.added + recRes.updated;
 
   const tx = db.transaction('counts', 'readwrite');
   for (const f of files) {
