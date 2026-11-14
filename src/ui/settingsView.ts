@@ -319,7 +319,7 @@ export const settingsView: View = {
             compactToggle('🔊 Pitido', 'Sonido al escanear', beepCheck),
             compactToggle('📳 Vibración', 'Respuesta háptica', vibCheck),
             compactToggle('⚡ Modo rápido (+1)', 'Suma 1 sin preguntar', quickCheck),
-            supervisorUI ? compactToggle('👁️ Mostrar teórico', 'Ver stock esperado al contar', showExpCheck) : null,
+            supervisorUI ? compactToggle('👁️ Mostrar teórico / ideal', 'Ver inventario ideal al contar', showExpCheck) : null,
             supervisorUI ? compactToggle('🌐 Buscar en internet', 'Autocompletar descripciones', lookupCheck) : null,
           ),
         ),

@@ -2,6 +2,7 @@ import {
   addCount, allProducts, closeSession, countsForSession, deleteCount, findBySku, getActiveSession, getProduct, putCount,
   type CountEntry, type Product, type Session,
 } from '../db/db';
+import { getIdealLevels } from '../db/movements';
 import { mergeCountFiles } from '../io/mergeCounts';
 import { displayBarcode, normalizeBarcode, parseNumber } from '../io/normalize';
 import { resolveDescription, setManualDescription, type ResolveStatus } from '../lookup/lookup';
@@ -31,6 +32,7 @@ interface Pending {
 }
 
 let session: Session | undefined;
+let countIdealLevels: Record<string, number> = {};
 let scanner: ScannerHandle | null = null;
 let torchOn = false;
 let pending: Pending | null = null;
@@ -194,7 +196,7 @@ function stopCamera(remember = true) {
   }
   if (els) {
     els.videoWrap.classList.add('off');
-    els.camMsg.textContent = 'Cámara apagada';
+    els.camMsg.textContent = 'Escáner físico listo · Cámara apagada';
     els.camBtn.replaceChildren(icon('camera'), 'Activar cámara');
     els.torchBtn.hidden = true;
   }
@@ -338,10 +340,11 @@ async function commitPending(silent = false): Promise<void> {
   pending = null;
   if (settingsSync().quickMode) {
     lastQuick = null;
-    renderCard();
     triggerCooldown(COOLDOWN_MS);
+    renderCard();
     return;
   }
+  triggerCooldown(COOLDOWN_MS);
   if (p.qty > 0) {
     await addCount({ sessionId: session.id, barcode: p.code, qty: p.qty, counter: session.counter });
     if (!silent) toast(`Registrado: ${fmtNum(p.qty)} × ${p.product?.description || displayBarcode(p.code)}`, 'ok');
@@ -356,7 +359,6 @@ async function commitPending(silent = false): Promise<void> {
   }
   renderCard();
   await renderRecent();
-  triggerCooldown(COOLDOWN_MS);
 }
 
 const STATUS_TEXT: Record<Pending['status'], string> = {
@@ -430,6 +432,13 @@ function renderCard(): void {
   });
   const counted = h('span', null, '…');
   void alreadyCounted(p.code).then((n) => (counted.textContent = fmtNum(n)));
+  const skuKey = (prod?.sku || '').trim().toUpperCase();
+  const codeKey = p.code.trim().toUpperCase();
+  const idealVal =
+    (skuKey && countIdealLevels[skuKey] !== undefined ? countIdealLevels[skuKey] : undefined) ??
+    (codeKey && countIdealLevels[codeKey] !== undefined ? countIdealLevels[codeKey] : undefined) ??
+    prod?.expectedQty ??
+    prod?.maxQty;
 
   clear(card,
     h('div', { class: 'pc-head' },
@@ -458,7 +467,7 @@ function renderCard(): void {
       : null,
     h('div', { class: 'pc-info' },
       h('span', null, 'Ya contado en sesión: ', h('b', null, counted)),
-      s.showExpected && supervisorUI && prod?.expectedQty !== undefined ? h('span', null, 'Teórico: ', h('b', null, fmtNum(prod.expectedQty))) : null,
+      s.showExpected && idealVal !== undefined ? h('span', { 'data-testid': 'count-ideal-info' }, 'Ideal: ', h('b', null, fmtNum(idealVal))) : null,
     ),
     s.quickMode
       ? h('div', { class: 'row' },
@@ -637,9 +646,10 @@ export const countView: View = {
       return;
     }
     const s = settingsSync();
+    countIdealLevels = await getIdealLevels();
     const supervisorUI = isSupervisorModeEnabled();
     const video = h('video', { playsinline: true, muted: true, autoplay: true }) as HTMLVideoElement;
-    const camMsg = h('div', { class: 'cam-msg' }, 'Cámara apagada');
+    const camMsg = h('div', { class: 'cam-msg' }, 'Escáner físico listo · Cámara apagada');
     const cooldownBadge = h('div', { class: 'cam-cooldown', hidden: true });
     const videoWrap = h('div', { class: 'video-wrap off' }, video, h('div', { class: 'aim' }), cooldownBadge, camMsg);
     const camBtn = h('button', { class: 'btn', onclick: () => (scanner ? stopCamera() : startCamera()) }, icon('camera'), 'Activar cámara') as HTMLButtonElement;
@@ -733,6 +743,10 @@ export const countView: View = {
     if (unsubscribeCountCloud) unsubscribeCountCloud();
     unsubscribeCountCloud = onCloudRoomUpdate(() => {
       if (viewMounted && session && els) {
+        void getIdealLevels().then((lv) => {
+          countIdealLevels = lv;
+          if (pending) renderCard();
+        });
         void renderRecent();
       }
     });

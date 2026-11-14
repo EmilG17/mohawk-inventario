@@ -71,4 +71,50 @@ test.describe('Ergonomía diferenciada Móvil (<900px) vs PC (>=900px)', () => {
       await expect(page.locator('.plist-table-head')).toBeHidden();
     }
   });
+
+  test('Terminal compacta Honeywell CK65 (320×533): barra de cámara compacta y cero desbordamiento', async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 533 });
+
+    // Definir contador y cargar catálogo de ejemplo para validar Inventario Ideal en 320×533
+    await page.goto('/#/');
+    await page.getByRole('button', { name: 'Cambiar' }).click();
+    await page.fill('input.input', 'Operador CK65');
+    await page.getByRole('button', { name: 'Aceptar' }).click();
+
+    await page.goto('/#/ajustes');
+    await page.getByRole('button', { name: 'Cargar catálogo de ejemplo' }).click();
+    await expect(page).toHaveURL(/#\/catalogo/);
+
+    // Activar Modo Supervisor en móvil + Mostrar teórico/ideal para verificar Inventario Ideal en #pcard a 320px
+    await page.goto('/#/ajustes');
+    await page.getByTestId('settings-supervisor-mode-toggle').check();
+    await page.getByRole('checkbox', { name: /Mostrar teórico/i }).check();
+
+    await page.goto('/#/');
+    await page.getByTestId('home-start-session-btn').click();
+    await expect(page.locator('dialog[open] h3')).toHaveText('Nueva sesión de conteo');
+    await page.getByRole('button', { name: 'Aceptar' }).click();
+    await expect(page).toHaveURL(/#\/contar/);
+
+    const videoBox = await page.locator('.video-wrap.off').boundingBox();
+    expect(videoBox).not.toBeNull();
+    expect(videoBox!.height).toBeLessThanOrEqual(56);
+
+    // Escanear producto en 320x533 y confirmar que Inventario Ideal y Registrar caben sin desborde
+    await page.evaluate(() => (window as any).__simulateScan('079567011002'));
+    await expect(page.locator('#pcard')).toBeVisible();
+    await expect(page.locator('#pcard')).toContainText('Ideal: 24');
+    const overflowCountScan = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflowCountScan).toBeLessThanOrEqual(1);
+
+    await page.locator('#pcard').getByRole('button', { name: 'Registrar' }).click();
+    await expect(page.locator('#pcard')).toBeHidden();
+
+    for (const route of ['/', '/#/contar', '/#/catalogo', '/#/movimientos', '/#/reporte', '/#/ajustes']) {
+      await page.goto(route);
+      await page.waitForTimeout(150);
+      const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+      expect(overflow, `Overflow en CK65 320px para ${route}`).toBeLessThanOrEqual(1);
+    }
+  });
 });

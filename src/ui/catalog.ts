@@ -2,6 +2,7 @@ import {
   allProducts, bulkModifyProducts, bulkPutProducts, clearProducts, deleteProducts,
   type MassProductPatch, type Product,
 } from '../db/db';
+import { getIdealLevels, setIdealLevels } from '../db/movements';
 import { buildCatalogFile, buildCatalogWorkbook } from '../io/exportResults';
 import {
   detectHeaderRow, FIELD_LABELS, guessMapping, readWorkbook, rowsToProducts, type Field, type Mapping, type Workbook,
@@ -146,7 +147,7 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
       error ? h('p', { class: 'error-text' }, error) : h('p', null, h('b', null, `${preview.length} productos`), ' listos para importar', skipped ? ` · ${skipped} filas vacías omitidas` : ''),
       preview.length
         ? h('div', { class: 'table-wrap' }, h('table', { class: 'tbl' },
-          h('thead', null, h('tr', null, h('th', null, 'Código'), h('th', null, 'Descripción'), h('th', null, 'Teórico'))),
+          h('thead', null, h('tr', null, h('th', null, 'Código'), h('th', null, 'Descripción'), h('th', null, 'Inventario Ideal'))),
           h('tbody', null, preview.slice(0, 5).map((p) => h('tr', null,
             h('td', null, p.barcode.startsWith('SKU:') ? p.sku : displayBarcode(p.barcode)),
             h('td', null, p.description || '—'),
@@ -272,10 +273,10 @@ export function openMassModifyDialog(barcodes: string[], onDone: () => void): vo
       inputBrand,
     ),
     h('div', { class: 'mass-field-block' },
-      h('label', { class: 'check-inline bold' }, chkExpected, h('span', null, 'Existencia teórica')),
+      h('label', { class: 'check-inline bold' }, chkExpected, h('span', null, 'Inventario Ideal')),
       h('div', { class: 'row' }, h('label', { class: 'radio-inline' }, expValRadio, 'Asignar cantidad:'), inputExpected),
       h('label', { class: 'radio-inline' }, expZeroRadio, 'Poner en 0 (cero)'),
-      h('label', { class: 'radio-inline' }, expClearRadio, 'Quitar existencia teórica (conteo libre)'),
+      h('label', { class: 'radio-inline' }, expClearRadio, 'Quitar inventario ideal (conteo libre)'),
     ),
     h('div', { class: 'mass-field-block' },
       h('label', { class: 'check-inline bold' }, chkCost, h('span', null, 'Costo unitario')),
@@ -309,7 +310,7 @@ export function openMassModifyDialog(barcodes: string[], onDone: () => void): vo
           else if (expClearRadio.checked) patch.expectedQty = null;
           else {
             const n = parseNumber(inputExpected.value);
-            if (n === undefined || n < 0) { toast('Existencia teórica inválida', 'error'); return true; }
+            if (n === undefined || n < 0) { toast('Inventario ideal inválido', 'error'); return true; }
             patch.expectedQty = n;
           }
         }
@@ -330,6 +331,25 @@ export function openMassModifyDialog(barcodes: string[], onDone: () => void): vo
         }
 
         const count = await bulkModifyProducts(barcodes, patch);
+        if (chkExpected.checked) {
+          const updatedProds = await allProducts();
+          const selectedSet = new Set(barcodes);
+          const idealPatch: Record<string, number> = {};
+          const targetVal = patch.expectedQty === null ? -1 : patch.expectedQty;
+          if (targetVal !== undefined) {
+            for (const prod of updatedProds) {
+              if (!selectedSet.has(prod.barcode)) continue;
+              const skuKey = (prod.sku || '').trim().toUpperCase();
+              const codeKey = (prod.barcode || '').trim().toUpperCase();
+              if (skuKey) idealPatch[skuKey] = targetVal;
+              else if (codeKey) idealPatch[codeKey] = targetVal;
+              if (targetVal < 0 && codeKey) idealPatch[codeKey] = -1;
+            }
+            if (Object.keys(idealPatch).length > 0) {
+              await setIdealLevels(idealPatch);
+            }
+          }
+        }
         triggerBackgroundSync();
         toast(`✓ ${count} producto(s) actualizados con éxito`, 'ok');
         onDone();
@@ -594,7 +614,7 @@ export const catalogView: View = {
   title: 'Catálogo',
   async render(root, params = new URLSearchParams()) {
     const readOnlyMobile = isMobileCatalogReadOnly();
-    let products = await allProducts();
+    let [products, idealLevels] = await Promise.all([allProducts(), getIdealLevels()]);
     const selected = new Set<string>();
     const list = h('ul', { class: 'plist' });
     const countEl = h('span', { class: 'muted small' });
@@ -622,7 +642,7 @@ export const catalogView: View = {
 
     const refreshData = async (clearSelection = true) => {
       if (clearSelection) selected.clear();
-      products = await allProducts();
+      [products, idealLevels] = await Promise.all([allProducts(), getIdealLevels()]);
       draw();
     };
 
@@ -722,6 +742,14 @@ export const catalogView: View = {
             },
           }) as HTMLInputElement;
 
+          const skuKey = (p.sku || '').trim().toUpperCase();
+          const codeKey = (p.barcode || '').trim().toUpperCase();
+          const idealVal =
+            (skuKey && idealLevels[skuKey] !== undefined ? idealLevels[skuKey] : undefined) ??
+            (codeKey && idealLevels[codeKey] !== undefined ? idealLevels[codeKey] : undefined) ??
+            p.expectedQty ??
+            p.maxQty;
+
           return h('li', {
             class: isSel ? 'selected' : '',
             onclick: async () => {
@@ -731,6 +759,7 @@ export const catalogView: View = {
                 await refreshData();
               } else if (res) {
                 Object.assign(p, res);
+                idealLevels = await getIdealLevels();
                 draw();
               }
             },
@@ -744,16 +773,16 @@ export const catalogView: View = {
             h('div', { class: 'pc-badges' },
               sourceBadge(p),
               p.uncataloged ? h('span', { class: 'badge warn' }, 'No catalogado') : null,
-              p.minQty !== undefined
+              idealVal !== undefined
                 ? h(
                     'span',
-                    { class: 'badge info', title: 'Punto de reorden / Stock mínimo y máximo' },
-                    `Min: ${fmtNum(p.minQty)}${p.maxQty !== undefined ? ` · Máx: ${fmtNum(p.maxQty)}` : ''}`,
+                    { class: 'badge info', 'data-testid': 'catalog-ideal-badge', title: 'Inventario Ideal' },
+                    `Ideal: ${fmtNum(idealVal)}`,
                   )
                 : null,
             ),
           ),
-          p.expectedQty !== undefined ? h('div', { class: 'rec-qty small' }, fmtNum(p.expectedQty)) : null,
+          idealVal !== undefined ? h('div', { class: 'rec-qty small', title: 'Inventario Ideal' }, fmtNum(idealVal)) : null,
           );
         }),
         items.length > 250 ? h('li', { class: 'empty' }, `Mostrando 250 de ${items.length}. Usa la búsqueda para filtrar.`) : null,
@@ -879,7 +908,7 @@ export const catalogView: View = {
       h('div', { class: 'plist-table-head', 'aria-hidden': 'true' },
         h('span', null),
         h('span', null, 'Producto / Código / SKU'),
-        h('span', null, 'Teórico'),
+        h('span', null, 'Inventario Ideal'),
       ),
       list,
     );

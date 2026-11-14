@@ -5,9 +5,11 @@ import {
   createSession,
   getActiveSession,
   getDB,
+  getProduct,
   putProduct,
   setActiveSession,
 } from '../../src/db/db';
+import { getIdealLevels } from '../../src/db/movements';
 import { loadSettings, saveSettings } from '../../src/settings';
 import {
   _clearMemoryRooms,
@@ -158,7 +160,10 @@ const { body, installMockDom, setMockViewportWidth, resetDom } = vi.hoisted(() =
       this.open = true;
     }
     close(): void {
-      this.open = false;
+      if (this.open) {
+        this.open = false;
+        this.dispatchEvent({ type: 'close', stopPropagation: () => {}, preventDefault: () => {} });
+      }
     }
     click(): void {
       this.dispatchEvent({ type: 'click', stopPropagation: () => {}, preventDefault: () => {} });
@@ -263,6 +268,8 @@ const { body, installMockDom, setMockViewportWidth, resetDom } = vi.hoisted(() =
 
 import { countView, processCode } from '../../src/ui/count';
 import { homeView } from '../../src/ui/home';
+import { editProductDialog } from '../../src/ui/productDialog';
+import { reportView } from '../../src/ui/reportView';
 import { settingsView } from '../../src/ui/settingsView';
 import { teamView } from '../../src/ui/teamView';
 
@@ -490,7 +497,7 @@ describe('Live Scanner Telemetry in Supervisor & Mobile Supervisor Mode Gating',
 
   it('hides unnecessary supervisor options on mobile (<900px) unless supervisorMode is enabled', async () => {
     await putProduct({
-      barcode: '7501055312345',
+      barcode: '07501055312345',
       sku: 'SKU-100',
       description: 'Tornillo hexagonal 1/4',
       unit: 'PZA',
@@ -498,7 +505,7 @@ describe('Live Scanner Telemetry in Supervisor & Mobile Supervisor Mode Gating',
       source: 'catalogo',
       updatedAt: Date.now(),
     });
-    const sess = await createSession({ name: 'Conteo Piso', counter: 'Luis' });
+    const sess = await createSession('Conteo Piso', 'Luis');
     await setActiveSession(sess.id);
 
     // 1. Mobile default (supervisorMode: false)
@@ -533,6 +540,7 @@ describe('Live Scanner Telemetry in Supervisor & Mobile Supervisor Mode Gating',
     const pcard = countRoot.querySelector('#pcard')!;
     expect(pcard.hidden).toBe(false);
     expect(pcard.textContent).not.toContain('Teórico:');
+    expect(pcard.textContent).toContain('Ideal: 50');
     expect(pcard.textContent).not.toContain('Producto');
 
     const plus5 = countRoot.querySelector('[data-testid="count-quick-plus-5"]');
@@ -576,5 +584,63 @@ describe('Live Scanner Telemetry in Supervisor & Mobile Supervisor Mode Gating',
     expect(settingsRoot.textContent).toContain('Moneda (Reporte)');
     expect(settingsRoot.textContent).toContain('Mostrar teórico');
     expect(settingsRoot.querySelector('.settings-advanced')).not.toBeNull();
+  });
+
+  it('unifies Existencia teórica & Min/Max into Inventario Ideal across productDialog, countView, and reportView', async () => {
+    setMockViewportWidth(1280);
+    await loadSettings();
+    await saveSettings({ showExpected: true, supervisorMode: true });
+
+    await putProduct({
+      barcode: '07501055312345',
+      sku: 'SKU-100',
+      description: 'Tornillo hexagonal 1/4',
+      unit: 'PZA',
+      expectedQty: 50,
+      source: 'catalogo',
+      updatedAt: Date.now(),
+    });
+
+    const dlgPromise = editProductDialog('07501055312345');
+    await new Promise((r) => setTimeout(r, 20));
+
+    const dlg = document.body.querySelector('dialog[open]')!;
+    expect(dlg).not.toBeNull();
+    expect(dlg.textContent).toContain('Inventario Ideal');
+    expect(dlg.textContent).not.toContain('Stock mínimo');
+    expect(dlg.textContent).not.toContain('Stock máximo');
+
+    const idealInput = dlg.querySelector('[data-testid="product-ideal-qty-input"]')!;
+    expect(idealInput).not.toBeNull();
+    expect(idealInput.value).toBe('50');
+    idealInput.value = '85';
+
+    const saveBtn = dlg.querySelectorAll('button').find((b) => b.textContent === 'Guardar')!;
+    expect(saveBtn).toBeDefined();
+    saveBtn.click();
+
+    const edited = await dlgPromise;
+    expect(edited && edited !== 'deleted' ? edited.expectedQty : undefined).toBe(85);
+    expect((await getProduct('07501055312345'))?.expectedQty).toBe(85);
+    expect((await getIdealLevels())['SKU-100']).toBe(85);
+
+    const sess = await createSession('Auditoría Ideal', 'Emil');
+    await setActiveSession(sess.id);
+    await addCount({ sessionId: sess.id, barcode: '07501055312345', qty: 60, counter: 'Emil', deviceId: 'dev-1' });
+
+    const countRoot = document.createElement('div');
+    document.body.appendChild(countRoot);
+    await countView.render(countRoot, new URLSearchParams());
+    await processCode('7501055312345', 'teclado');
+    const pcard = countRoot.querySelector('#pcard')!;
+    expect(pcard.textContent).toContain('Ideal: 85');
+    await countView.destroy?.();
+
+    const reportRoot = document.createElement('div');
+    document.body.appendChild(reportRoot);
+    await reportView.render(reportRoot, new URLSearchParams());
+    expect(reportRoot.textContent).toContain('Ideal: 85');
+    expect(reportRoot.textContent).not.toContain('Teórico:');
+    await reportView.destroy?.();
   });
 });

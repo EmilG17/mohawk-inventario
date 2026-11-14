@@ -1,4 +1,5 @@
 import { deleteProduct, getProduct, putProduct, type Product } from '../db/db';
+import { getIdealLevels, setIdealLevels } from '../db/movements';
 import { resolveDescription } from '../lookup/lookup';
 import { displayBarcode, parseNumber } from '../io/normalize';
 import { generateInternalCode, renderCode128Svg } from '../barcode/code128';
@@ -47,6 +48,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       uncataloged: true,
       source: 'pendiente',
     };
+    const idealLevels = await getIdealLevels();
     let result: EditProductResult = null;
 
     const initialCodeVal = code
@@ -86,18 +88,26 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       description: h('textarea', { class: 'input', rows: 2, maxlength: 200, placeholder: 'Ej. Guantes de nitrilo talla M, caja 100 pzas' }),
       sku: h('input', { class: 'input', maxlength: 40 }),
       unit: h('input', { class: 'input', maxlength: 15, placeholder: 'PZA, CJA, LT…' }),
-      expected: h('input', { class: 'input', inputmode: 'decimal', type: 'text' }),
-      minQty: h('input', { class: 'input', inputmode: 'decimal', type: 'text', placeholder: 'Ej. 10 (alerta)' }),
-      maxQty: h('input', { class: 'input', inputmode: 'decimal', type: 'text', placeholder: 'Ej. 50 (objetivo)' }),
+      expected: h('input', {
+        class: 'input',
+        inputmode: 'decimal',
+        type: 'text',
+        'data-testid': 'product-ideal-qty-input',
+        placeholder: 'Ej. 50 (meta ideal)',
+      }),
       cost: h('input', { class: 'input', inputmode: 'decimal', type: 'text' }),
     };
+    const skuKey = (p.sku || '').trim().toUpperCase();
+    const codeKey = (p.barcode || '').trim().toUpperCase();
+    const configuredIdeal =
+      (skuKey && idealLevels[skuKey] !== undefined ? idealLevels[skuKey] : undefined) ??
+      (codeKey && idealLevels[codeKey] !== undefined ? idealLevels[codeKey] : undefined);
+    const initialIdeal = configuredIdeal ?? p.expectedQty ?? p.maxQty;
     const fill = () => {
       f.description.value = p.description;
       f.sku.value = p.sku;
       f.unit.value = p.unit;
-      f.expected.value = p.expectedQty?.toString() ?? '';
-      f.minQty.value = p.minQty?.toString() ?? '';
-      f.maxQty.value = p.maxQty?.toString() ?? '';
+      f.expected.value = initialIdeal?.toString() ?? '';
       f.cost.value = p.unitCost?.toString() ?? '';
     };
     fill();
@@ -341,10 +351,8 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       h('div', { class: 'grid2' },
         h('label', { class: 'field' }, h('span', null, 'No. de parte / SKU'), f.sku),
         h('label', { class: 'field' }, h('span', null, 'Unidad'), f.unit),
-        h('label', { class: 'field' }, h('span', null, 'Existencia teórica'), f.expected),
+        h('label', { class: 'field' }, h('span', null, 'Inventario Ideal'), f.expected),
         h('label', { class: 'field' }, h('span', null, 'Costo unitario'), f.cost),
-        h('label', { class: 'field' }, h('span', null, 'Stock mínimo (Punto de reorden)'), f.minQty),
-        h('label', { class: 'field' }, h('span', null, 'Stock máximo (Nivel objetivo)'), f.maxQty),
       ),
     );
 
@@ -373,15 +381,17 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
             {
               label: 'Guardar', kind: 'primary',
               onClick: async () => {
-                const newBarcode = barcodeInput.value.trim() || code || p.barcode;
+                const rawBarcodeInput = barcodeInput.value.trim();
+                const newBarcode =
+                  rawBarcodeInput && rawBarcodeInput === initialCodeVal && (code || p.barcode)
+                    ? (code || p.barcode)
+                    : (rawBarcodeInput || code || p.barcode);
                 if (!newBarcode) {
                   toast('El producto debe tener un código de barras', 'error');
                   return true;
                 }
                 const desc = f.description.value.trim();
                 const parsedExpected = parseNumber(f.expected.value);
-                const parsedMin = parseNumber(f.minQty.value);
-                const parsedMax = parseNumber(f.maxQty.value);
                 const parsedCost = parseNumber(f.cost.value);
                 const next: Product = {
                   ...p,
@@ -390,14 +400,10 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
                   sku: f.sku.value.trim(),
                   unit: f.unit.value.trim(),
                   expectedQty: parsedExpected,
-                  minQty: parsedMin,
-                  maxQty: parsedMax,
                   unitCost: parsedCost,
                   updatedAt: Date.now(),
                 };
                 if (parsedExpected === undefined) delete next.expectedQty;
-                if (parsedMin === undefined) delete next.minQty;
-                if (parsedMax === undefined) delete next.maxQty;
                 if (parsedCost === undefined) delete next.unitCost;
                 if (desc !== p.description) next.source = desc ? 'manual' : 'pendiente';
                 else if (!desc) next.source = 'pendiente';
@@ -406,6 +412,16 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
                   await deleteProduct(code);
                 }
                 await putProduct(next);
+                const idealPatch: Record<string, number> = {};
+                const nextSku = next.sku.trim().toUpperCase();
+                const nextCode = next.barcode.trim().toUpperCase();
+                const targetVal = parsedExpected !== undefined ? parsedExpected : -1;
+                if (nextSku) idealPatch[nextSku] = targetVal;
+                else if (nextCode) idealPatch[nextCode] = targetVal;
+                if (targetVal < 0 && nextCode) idealPatch[nextCode] = -1;
+                if (Object.keys(idealPatch).length > 0) {
+                  await setIdealLevels(idealPatch);
+                }
                 triggerBackgroundSync();
                 result = next;
                 toast('Producto guardado', 'ok');

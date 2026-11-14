@@ -245,7 +245,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             h(
               'div',
               { class: 'dash-kpi-sub' },
-              `${fmtNum(withExpected)} con stock teórico${uncatalogedCount > 0 ? ` · ${uncatalogedCount} nuevos` : ''}`,
+              `${fmtNum(withExpected)} con inventario ideal${uncatalogedCount > 0 ? ` · ${uncatalogedCount} nuevos` : ''}`,
             ),
           ),
 

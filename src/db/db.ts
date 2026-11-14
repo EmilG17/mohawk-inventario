@@ -79,6 +79,7 @@ export async function _resetDBHandle(): Promise<void> {
     }
   }
   dbPromise = null;
+  deviceIdInflight = null;
 }
 
 export function uid(): string {
@@ -93,13 +94,26 @@ export async function getMeta<T>(key: string): Promise<T | undefined> {
 export async function setMeta(key: string, value: unknown): Promise<void> {
   await (await getDB()).put('meta', value, key);
 }
+
+let deviceIdInflight: Promise<string> | null = null;
+
 export async function getDeviceId(): Promise<string> {
-  let id = await getMeta<string>('deviceId');
-  if (!id) {
-    id = uid();
-    await setMeta('deviceId', id);
+  const existing = await getMeta<string>('deviceId');
+  if (existing) return existing;
+  if (!deviceIdInflight) {
+    deviceIdInflight = (async () => {
+      try {
+        const recheck = await getMeta<string>('deviceId');
+        if (recheck) return recheck;
+        const fresh = uid();
+        await setMeta('deviceId', fresh);
+        return fresh;
+      } finally {
+        deviceIdInflight = null;
+      }
+    })();
   }
-  return id;
+  return deviceIdInflight;
 }
 
 type TombstonesMeta = {

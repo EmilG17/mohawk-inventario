@@ -105,7 +105,9 @@ export const reportView: View = {
         rows.length === 0 ? h('li', { class: 'empty' }, 'No hay productos con este filtro.') : null,
         rows.slice(0, 150).map((r) => {
           const badgeClass = r.status === 'ok' ? 'badge ok' : r.status === 'faltante' ? 'badge error' : r.status === 'sobrante' ? 'badge info' : 'badge warn';
-          const diffText = r.diff === undefined ? '' : r.diff > 0 ? `+${fmtNum(r.diff)}` : fmtNum(r.diff);
+          const idealVal = r.idealQty ?? r.expected;
+          const idealDiff = idealVal !== undefined ? r.counted - idealVal : r.diff;
+          const idealDiffText = idealDiff === undefined ? '' : idealDiff > 0 ? `+${fmtNum(idealDiff)}` : fmtNum(idealDiff);
           return h('li', {
             class: `r-item ${r.status}`,
             onclick: () => rowDetailDialog(r, counts.filter((c) => c.barcode === r.barcode)),
@@ -133,10 +135,9 @@ export const reportView: View = {
             ),
           ),
           h('div', { class: 'r-nums' },
-            h('span', null, 'Teórico: ', h('b', null, fmtNum(r.expected))),
+            h('span', null, 'Ideal: ', h('b', null, fmtNum(idealVal))),
             h('span', null, 'Contado: ', h('b', null, fmtNum(r.counted))),
-            r.minQty !== undefined ? h('span', null, 'Mín: ', h('b', null, fmtNum(r.minQty))) : null,
-            r.diff !== undefined ? h('span', { class: `diff ${r.diff < 0 ? 'neg' : r.diff > 0 ? 'pos' : ''}` }, 'Dif: ', h('b', null, diffText)) : null,
+            idealDiff !== undefined ? h('span', { class: `diff ${idealDiff < 0 ? 'neg' : idealDiff > 0 ? 'pos' : ''}` }, 'Dif: ', h('b', null, idealDiffText)) : null,
             r.diffValue !== undefined && r.diffValue !== 0 ? h('span', { class: 'muted small' }, fmtMoney(r.diffValue)) : null,
           ),
           );
@@ -364,7 +365,7 @@ export const reportView: View = {
       chipsWrap,
       h('div', { class: 'rlist-table-head', 'aria-hidden': 'true' },
         h('span', null, 'Producto / Estado'),
-        h('span', null, 'Teórico · Contado · Diferencia'),
+        h('span', null, 'Ideal · Contado · Diferencia'),
       ),
       list,
     );
@@ -391,7 +392,7 @@ function rowDetailDialog(r: ReportRow, rowCounts: CountEntry[]) {
       r.unit ? ` · Unidad: ${r.unit}` : '',
     ),
     h('div', { class: 'grid2' },
-      infoBox('Existencia teórica', fmtNum(r.expected)),
+      infoBox('Inventario ideal', fmtNum(r.idealQty ?? r.expected)),
       infoBox('Físico contado', fmtNum(r.counted)),
       infoBox('Diferencia', r.diff === undefined ? '—' : (r.diff > 0 ? `+${fmtNum(r.diff)}` : fmtNum(r.diff))),
       infoBox('Valor diferencia', fmtMoney(r.diffValue)),
