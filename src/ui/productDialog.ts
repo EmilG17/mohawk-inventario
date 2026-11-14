@@ -267,7 +267,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         };
         openBarcodeSheetDialog([tempProd], `Hoja de etiquetas`);
       },
-    }, '🏷️ Hoja de etiquetas / Cola');
+    }, icon('tag'), 'Hoja de etiquetas / Cola');
 
     const status = h('div', { class: 'muted small' }, sourceBadge(p), p.brand ? ` · Marca: ${p.brand}` : '');
     const lookupBtn = h('button', {
@@ -317,14 +317,14 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       type: 'button',
       title: 'Cargar archivo BarTender (.btw) para calibrar etiqueta',
       onclick: () => btUploadInput.click(),
-    }, '📂 Cargar .btw', btUploadInput);
+    }, icon('upload'), 'Cargar .btw', btUploadInput);
 
     const body = h('div', { class: 'form' },
       readOnly
         ? h(
             'div',
             { class: 'catalog-readonly-banner', 'data-testid': 'product-dialog-readonly-notice' },
-            '🔒 Modo solo lectura en móvil: puedes consultar o imprimir la etiqueta de este producto, pero la edición del catálogo está restringida a PC.',
+            'Modo solo lectura en móvil: puedes consultar o imprimir la etiqueta de este producto, pero la edición del catálogo está restringida a PC.',
           )
         : null,
       h('label', { class: 'field' },

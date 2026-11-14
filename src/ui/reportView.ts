@@ -128,7 +128,7 @@ export const reportView: View = {
                 ? h(
                     'span',
                     { class: 'badge warn', title: `Bajo stock mínimo (${fmtNum(r.minQty)})` },
-                    `🛒 Pedir +${fmtNum(r.suggestedOrderQty)}`,
+                    `Pedir +${fmtNum(r.suggestedOrderQty)}`,
                   )
                 : null,
               h('span', { class: badgeClass }, STATUS_LABEL[r.status]),
@@ -156,7 +156,7 @@ export const reportView: View = {
     const updateChips = () => {
       clear(chipsWrap,
         chip('todos', 'Todos', allRows.length),
-        chip('por_pedir', '🛒 Por pedir', summary.reorderCount),
+        chip('por_pedir', 'Por pedir', summary.reorderCount),
         chip('faltante', 'Faltantes', summary.short),
         chip('sobrante', 'Sobrantes', summary.over),
         chip('no_contado', 'No contados', summary.notCounted),
@@ -328,7 +328,7 @@ export const reportView: View = {
           return h(
             'details',
             { class: 'help-box', open: techStats.size > 1 },
-            h('summary', null, `👷 Resumen por técnico (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
+            h('summary', null, `Resumen por técnico (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
             h(
               'ul',
               { class: 'contributor-list', style: 'margin-top: 6px;' },

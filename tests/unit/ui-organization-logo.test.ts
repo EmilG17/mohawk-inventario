@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -480,5 +482,29 @@ describe('UI Organization, Unified Logo & Workflow Improvements', () => {
     expect(outControls.some((s) => s.includes('OUT') || s.toLowerCase().includes('salida'))).toBe(true);
     expect(outControls).not.toEqual(inControls);
     outModal.close();
+  });
+
+  it('does not contain unprofessional emojis across src/ source files', () => {
+    const emojiRe = /[\p{Extended_Pictographic}⚠⚡]/gu;
+    const srcDir = path.resolve(process.cwd(), 'src');
+    const offFiles: string[] = [];
+
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (/\.(ts|html|css)$/.test(entry.name)) {
+          const content = fs.readFileSync(full, 'utf8');
+          const matches = content.match(emojiRe);
+          if (matches && matches.length > 0) {
+            offFiles.push(`${path.relative(srcDir, full)}: ${matches.join('')}`);
+          }
+        }
+      }
+    };
+
+    walk(srcDir);
+    expect(offFiles).toEqual([]);
   });
 });

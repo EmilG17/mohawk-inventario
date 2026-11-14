@@ -35,12 +35,12 @@ export function detectPlatformInfo(): PlatformInfo {
     window.matchMedia('(pointer: coarse)').matches;
 
   if (width < 900) {
-    return { platform: 'mobile', isTouch, label: '📱 Terminal Móvil' };
+    return { platform: 'mobile', isTouch, label: 'Terminal Móvil' };
   }
   if (width <= 1024 && isTouch) {
-    return { platform: 'tablet', isTouch, label: '📟 Tableta Industrial' };
+    return { platform: 'tablet', isTouch, label: 'Tableta Industrial' };
   }
-  return { platform: 'desktop', isTouch, label: '🖥️ Estación de Trabajo' };
+  return { platform: 'desktop', isTouch, label: 'Estación de Trabajo' };
 }
 
 const NAV_ITEMS: { path: string; label: string; icon: string; shortcut?: string; testId: string }[] = [
@@ -250,8 +250,8 @@ export async function bootstrapApp(): Promise<void> {
   const syncMobileSupervisorLabel = () => {
     const enabled = Boolean(settingsSync().supervisorMode);
     mobileSupervisorToggleLabel.textContent = enabled
-      ? '👮 Modo Supervisor: ACTIVO (tocar para ocultar opciones)'
-      : '👷 Vista Técnico (tocar para Modo Supervisor)';
+      ? 'Modo Supervisor: ACTIVO (tocar para ocultar opciones)'
+      : 'Vista Técnico (tocar para Modo Supervisor)';
   };
   syncMobileSupervisorLabel();
 
@@ -381,7 +381,7 @@ export async function bootstrapApp(): Promise<void> {
     if (!st.roomCode || st.state === 'disabled') {
       cloudBadge.hidden = true;
       sidebarCloudPill.className = 'sidebar-cloud-pill disabled';
-      sidebarCloudPill.textContent = '⚪ Modo Local (Sin sala)';
+      sidebarCloudPill.textContent = '● Modo Local (Sin sala)';
       return;
     }
     cloudBadge.hidden = false;
@@ -389,22 +389,22 @@ export async function bootstrapApp(): Promise<void> {
       cloudBadge.className = 'top-cloud-pill live';
       cloudBadge.textContent = `● EN VIVO · ${st.roomCode}`;
       sidebarCloudPill.className = 'sidebar-cloud-pill live';
-      sidebarCloudPill.textContent = `🟢 En vivo · ${st.roomCode}`;
+      sidebarCloudPill.textContent = `● En vivo · ${st.roomCode}`;
     } else if (st.state === 'connecting') {
       cloudBadge.className = 'top-cloud-pill connecting';
       cloudBadge.textContent = `◌ Conectando · ${st.roomCode}`;
       sidebarCloudPill.className = 'sidebar-cloud-pill connecting';
-      sidebarCloudPill.textContent = `🟡 Conectando · ${st.roomCode}`;
+      sidebarCloudPill.textContent = `◌ Conectando · ${st.roomCode}`;
     } else if (st.state === 'error') {
       cloudBadge.className = 'top-cloud-pill error';
-      cloudBadge.textContent = `⚠ Error Firebase · ${st.roomCode}`;
+      cloudBadge.textContent = `● Error Firebase · ${st.roomCode}`;
       sidebarCloudPill.className = 'sidebar-cloud-pill error';
-      sidebarCloudPill.textContent = `🔴 Error de red · ${st.roomCode}`;
+      sidebarCloudPill.textContent = `● Error de red · ${st.roomCode}`;
     } else {
       cloudBadge.className = 'top-cloud-pill local';
       cloudBadge.textContent = `● Sala Local · ${st.roomCode}`;
       sidebarCloudPill.className = 'sidebar-cloud-pill local';
-      sidebarCloudPill.textContent = `⚪ Sala Local · ${st.roomCode}`;
+      sidebarCloudPill.textContent = `● Sala Local · ${st.roomCode}`;
     }
   };
 

@@ -108,7 +108,7 @@ export async function openUnifyReportsDialog(
           h(
             'div',
             { class: 'queue-item-meta' },
-            h('div', { class: 'queue-item-title' }, `📄 ${item.fileName}`),
+            h('div', { class: 'queue-item-title' }, item.fileName),
             h(
               'div',
               { class: 'queue-item-sub' },
@@ -191,7 +191,7 @@ export async function openUnifyReportsDialog(
           h(
             'div',
             { class: 'sheet-queue-header' },
-            h('h4', { style: 'margin: 0;' }, '📱 Opcional: Incluir sesiones guardadas en este teléfono'),
+            h('h4', { style: 'margin: 0;' }, 'Opcional: Incluir sesiones guardadas en este teléfono'),
           ),
           h(
             'div',
@@ -274,7 +274,7 @@ export async function openUnifyReportsDialog(
       h(
         'div',
         { class: 'sheet-queue-header' },
-        h('h4', { style: 'margin: 0;' }, '📂 Archivos de reportes de técnicos'),
+        h('h4', { style: 'margin: 0;' }, 'Archivos de reportes de técnicos'),
         h(
           'button',
           {
@@ -292,7 +292,7 @@ export async function openUnifyReportsDialog(
     h(
       'section',
       { class: 'sheet-queue-section', style: 'margin-top: 8px;' },
-      h('h4', { style: 'margin: 0 0 6px 0;' }, '🎯 Destino de la unificación'),
+      h('h4', { style: 'margin: 0 0 6px 0;' }, 'Destino de la unificación'),
       h(
         'label',
         { class: 'check-inline', style: 'margin-bottom: 4px;' },

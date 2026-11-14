@@ -476,14 +476,14 @@ async function renderMainView(): Promise<void> {
         activeSubTab = 'comparative';
         void renderMainView();
       },
-    }, '📊 Conciliación e Ideal'),
+    }, 'Conciliación e Ideal'),
     h('button', {
       class: `chip ${activeSubTab === 'bitacora' ? 'active' : ''}`,
       onclick: () => {
         activeSubTab = 'bitacora';
         void renderMainView();
       },
-    }, `📜 Bitácora de Consumo (${movements.length})`),
+    }, `Bitácora de Consumo (${movements.length})`),
   );
 
   // 3. Contenedor Activo
@@ -528,19 +528,19 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
     h('button', {
       class: `chip ${tableFilter === 'deficit_critical' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'deficit_critical'; updateChips(); updateTableRows(); },
-    }, `⚠️ Déficit / Críticos (${deficitCount})`),
+    }, `Déficit / Críticos (${deficitCount})`),
     h('button', {
       class: `chip ${tableFilter === 'optimal' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'optimal'; updateChips(); updateTableRows(); },
-    }, `✅ Óptimos (${optimalCount})`),
+    }, `Óptimos (${optimalCount})`),
     h('button', {
       class: `chip ${tableFilter === 'excess' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'excess'; updateChips(); updateTableRows(); },
-    }, `🔷 Exceso (${excessCount})`),
+    }, `Exceso (${excessCount})`),
     h('button', {
       class: `chip ${tableFilter === 'with_movements' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'with_movements'; updateChips(); updateTableRows(); },
-    }, `🔄 Con Movimientos (${withMovementsCount})`),
+    }, `Con Movimientos (${withMovementsCount})`),
   );
 
   const updateChips = () => {
@@ -848,11 +848,11 @@ function renderBitacoraSection(
     h('button', {
       class: `chip ${bitacoraType === 'IN' ? 'active' : ''}`,
       onclick: () => { bitacoraType = 'IN'; updateTypeChips(); renderMovementList(); },
-    }, '⬇️ Solo Entradas (IN)'),
+    }, 'Solo Entradas (IN)'),
     h('button', {
       class: `chip ${bitacoraType === 'OUT' ? 'active' : ''}`,
       onclick: () => { bitacoraType = 'OUT'; updateTypeChips(); renderMovementList(); },
-    }, '⬆️ Solo Salidas (OUT)'),
+    }, 'Solo Salidas (OUT)'),
   );
 
   const dateChips = h('div', { class: 'chips' },
@@ -947,7 +947,7 @@ function renderBitacoraSection(
       const itemCard = h('div', { class: `m-item ${isEntry ? 'in' : 'out'}` },
         h('div', { class: 'm-head' },
           h('div', { style: 'display: flex; align-items: center; gap: 8px;' },
-            h('span', { class: `badge ${isEntry ? 'ok' : 'warn'}` }, isEntry ? '⬇️ ENTRADA' : '⬆️ SALIDA'),
+            h('span', { class: `badge ${isEntry ? 'ok' : 'warn'}` }, isEntry ? 'ENTRADA' : 'SALIDA'),
             h('span', { class: `m-qty ${isEntry ? 'in' : 'out'}` },
               `${isEntry ? '+' : '−'}${fmtNum(m.quantity)} ${prod?.unit || 'PZA'}`,
             ),
@@ -1064,7 +1064,7 @@ export async function openMovementRegistrationModal(
         movementType = 'IN';
         updateSegmentedStyles();
       },
-    }, '⬇️ Entrada (IN)');
+    }, 'Entrada (IN)');
 
     const exitBtn = h('button', {
       class: `segmented-btn ${movementType === 'OUT' ? 'active out' : ''}`,
@@ -1074,7 +1074,7 @@ export async function openMovementRegistrationModal(
         movementType = 'OUT';
         updateSegmentedStyles();
       },
-    }, '⬆️ Salida (OUT)');
+    }, 'Salida (OUT)');
 
     const segmentedSwitch = h('div', { class: 'segmented-switch' }, entryBtn, exitBtn);
 

@@ -121,7 +121,7 @@ function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
         }
       },
     },
-    '📋 Copiar enlace para WhatsApp',
+    icon('copy'), 'Copiar enlace para WhatsApp',
   );
 
   const body = h(
@@ -187,7 +187,7 @@ function openShowMyQrDialog(session: Session, counts: CountEntry[]): void {
                 renderSlide();
               },
             },
-            '◀ Anterior',
+            'Anterior',
           ),
           h(
             'button',
@@ -199,7 +199,7 @@ function openShowMyQrDialog(session: Session, counts: CountEntry[]): void {
                 renderSlide();
               },
             },
-            'Siguiente ▶',
+            'Siguiente',
           ),
         )
       : null,
@@ -374,19 +374,19 @@ export const teamView: View = {
       const roomCode = status.roomCode || s.syncRoomCode || 'SIN-SALA';
 
       let pillClass = 'sup-live-pill off';
-      let pillLabel = '⚪ Sin sala activa';
+      let pillLabel = '● Sin sala activa';
       if (status.state === 'connected' && hasFirebase) {
         pillClass = 'sup-live-pill live';
-        pillLabel = `🟢 EN VIVO · Firebase (${status.lastLatencyMs ?? 80} ms)`;
+        pillLabel = `● EN VIVO · Firebase (${status.lastLatencyMs ?? 80} ms)`;
       } else if (status.state === 'connecting') {
         pillClass = 'sup-live-pill connecting';
-        pillLabel = '🟡 Conectando con Firebase...';
+        pillLabel = '◌ Conectando con Firebase...';
       } else if (status.state === 'error') {
         pillClass = 'sup-live-pill error';
-        pillLabel = '🔴 Error de conexión Firebase';
+        pillLabel = '● Error de conexión Firebase';
       } else if (s.syncRoomCode) {
         pillClass = 'sup-live-pill local';
-        pillLabel = '🔵 Sala Local (Mismo dispositivo / sin URL Firebase)';
+        pillLabel = '● Sala Local (Mismo dispositivo / sin URL Firebase)';
       }
 
       clear(
@@ -437,7 +437,7 @@ export const teamView: View = {
                       toast(next ? 'Modo Supervisor activado en móvil' : 'Vista Técnico móvil activada', 'ok');
                     },
                   },
-                  s.supervisorMode ? '👮 Modo Supervisor: ON' : '👷 Vista Técnico (Supervisor OFF)',
+                  s.supervisorMode ? 'Modo Supervisor: ON' : 'Vista Técnico (Supervisor OFF)',
                 )
               : null,
             s.syncRoomCode
@@ -487,7 +487,7 @@ export const teamView: View = {
           h(
             'div',
             { class: 'card sup-error-banner' },
-            h('div', { style: 'font-weight: 700; margin-bottom: 4px;' }, '⚠️ Atención con el enlace de Firebase:'),
+            h('div', { style: 'font-weight: 700; margin-bottom: 4px;' }, 'Atención con el enlace de Firebase:'),
             h('div', { class: 'small' }, status.lastError),
             status.lastError.includes('401') || status.lastError.includes('403')
               ? h(
@@ -506,7 +506,7 @@ export const teamView: View = {
                         } catch {}
                       },
                     },
-                    '📋 Copiar Reglas para Firebase (.read / .write)',
+                    icon('copy'), 'Copiar Reglas para Firebase (.read / .write)',
                   ),
                 )
               : null,
@@ -534,7 +534,7 @@ export const teamView: View = {
             h(
               'div',
               null,
-              h('h3', { style: 'margin: 0;' }, '☁️ Configuración de Sala y Enlace Firebase'),
+              h('h3', { style: 'margin: 0;' }, 'Configuración de Sala y Enlace Firebase'),
               h(
                 'p',
                 { class: 'muted small', style: 'margin: 2px 0 0 0;' },
@@ -581,7 +581,7 @@ export const teamView: View = {
                     type: 'button',
                     onclick: runFirebaseTest,
                   },
-                  '🔌 Probar',
+                  'Probar',
                 ),
               ),
             ),
@@ -615,7 +615,7 @@ export const teamView: View = {
                         void connectAndSync();
                       },
                     },
-                    '⚡ Conectar HHF-1114',
+                    'Conectar HHF-1114',
                   )
                 : null,
               h(
@@ -809,9 +809,9 @@ export const teamView: View = {
         if (sc.updatedAt >= cur.lastSeen) {
           cur.lastSeen = sc.updatedAt;
           if (sc.status === 'pending_confirm' && (sc.sku || sc.barcode)) {
-            cur.lastActionLabel = `⏳ Confirmando ${fmtNum(sc.qty ?? 1)} · ${sc.sku || sc.barcode}`;
+            cur.lastActionLabel = `Confirmando ${fmtNum(sc.qty ?? 1)} · ${sc.sku || sc.barcode}`;
           } else if (sc.status === 'scanning') {
-            cur.lastActionLabel = '📷 Cámara encendida escaneando...';
+            cur.lastActionLabel = 'Cámara encendida escaneando...';
           }
         }
       }
@@ -843,13 +843,13 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, '👨‍🔧 Técnicos Participantes'),
+          h('div', { class: 'sup-kpi-label' }, 'Técnicos Participantes'),
           h('div', { class: 'sup-kpi-value' }, `${techList.length}`),
           h(
             'div',
             { class: 'sup-kpi-sub' },
             activeNowCount > 0
-              ? `🟢 ${activeNowCount} activo(s) en los últimos 5 min`
+              ? `● ${activeNowCount} activo(s) en los últimos 5 min`
               : `${curCounts.length} lecturas acumuladas`,
           ),
         ),
@@ -863,7 +863,7 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, '📦 Avance de Conteo Físico'),
+          h('div', { class: 'sup-kpi-label' }, 'Avance de Conteo Físico'),
           h('div', { class: 'sup-kpi-value' }, `${fmtNum(totalUnitsCounted)} u.`),
           h(
             'div',
@@ -886,7 +886,7 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, '🔄 Flujo Kardex (Entradas / Salidas)'),
+          h('div', { class: 'sup-kpi-label' }, 'Flujo Kardex (Entradas / Salidas)'),
           h(
             'div',
             { class: 'sup-kpi-value', style: 'display: flex; gap: 10px; align-items: baseline;' },
@@ -905,7 +905,7 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, '🚨 Alertas vs. Inventario Ideal'),
+          h('div', { class: 'sup-kpi-label' }, 'Alertas vs. Inventario Ideal'),
           h(
             'div',
             {
@@ -936,10 +936,10 @@ export const teamView: View = {
 
       // 2. Renderizar barra de pestañas limpias del Supervisor
       const tabs: { id: SupervisorTab; label: string }[] = [
-        { id: 'techs', label: `👨‍🔧 Técnicos en Vivo (${techList.length})` },
-        { id: 'feed', label: `📡 Feed en Tiempo Real (${curCounts.length + movements.length})` },
-        { id: 'matrix', label: `📊 Matriz de Avance por SKU (${reportLines.length})` },
-        { id: 'sessions', label: `🗂️ Sesiones y Archivos (${sessions.length})` },
+        { id: 'techs', label: `Técnicos en Vivo (${techList.length})` },
+        { id: 'feed', label: `Feed en Tiempo Real (${curCounts.length + movements.length})` },
+        { id: 'matrix', label: `Matriz de Avance por SKU (${reportLines.length})` },
+        { id: 'sessions', label: `Sesiones y Archivos (${sessions.length})` },
       ];
 
       clear(
@@ -1022,10 +1022,10 @@ export const teamView: View = {
     ): HTMLElement | null => {
       if (scanners.length === 0 && !s.syncRoomCode) return null;
       const statusMeta = (st: LiveScannerState['status']) => {
-        if (st === 'pending_confirm') return { label: '⏳ Confirmando cantidad', cls: 'badge warn' };
-        if (st === 'scanning') return { label: '📷 Cámara buscando código', cls: 'badge info' };
-        if (st === 'registered') return { label: '✅ Recién registrado', cls: 'badge ok' };
-        return { label: '⚪ Escáner en pausa', cls: 'badge' };
+        if (st === 'pending_confirm') return { label: 'Confirmando cantidad', cls: 'badge warn' };
+        if (st === 'scanning') return { label: 'Cámara buscando código', cls: 'badge info' };
+        if (st === 'registered') return { label: 'Recién registrado', cls: 'badge ok' };
+        return { label: 'Escáner en pausa', cls: 'badge' };
       };
       return h(
         'section',
@@ -1040,7 +1040,7 @@ export const teamView: View = {
           h(
             'div',
             null,
-            h('h3', { style: 'margin: 0; font-size: 15px;' }, '📡 Escáneres en Vivo'),
+            h('h3', { style: 'margin: 0; font-size: 15px;' }, 'Escáneres en Vivo'),
             h(
               'div',
               { class: 'muted small' },
@@ -1061,7 +1061,7 @@ export const teamView: View = {
                   (sc.sku ? prodBySku.get(sc.sku.toUpperCase()) : undefined);
                 const skuDisplay = sc.sku || prod?.sku || sc.barcode || '—';
                 const descDisplay = sc.description || prod?.description || '';
-                const originIcon = sc.origin === 'camara' ? '📷 Cámara' : sc.origin === 'teclado' ? '⌨️ USB/BT' : sc.origin === 'manual' ? '✍️ Manual' : '';
+                const originIcon = sc.origin === 'camara' ? 'Cámara' : sc.origin === 'teclado' ? 'USB/BT' : sc.origin === 'manual' ? 'Manual' : '';
                 return h(
                   'div',
                   {
@@ -1075,7 +1075,7 @@ export const teamView: View = {
                     { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
                     h('strong', null, sc.counter),
                     h('span', { class: meta.cls }, meta.label),
-                    sc.cameraOn ? h('span', { class: 'badge info' }, '🎥 Cam ON') : null,
+                    sc.cameraOn ? h('span', { class: 'badge info' }, 'Cam ON') : null,
                     originIcon ? h('span', { class: 'muted small' }, originIcon) : null,
                   ),
                   h(
@@ -1199,7 +1199,7 @@ export const teamView: View = {
                 h(
                   'span',
                   { class: `badge ${isOnline ? 'ok' : 'info'}` },
-                  isOnline ? `🟢 Activo (${fmtRelativeAgo(t.lastSeen)})` : fmtRelativeAgo(t.lastSeen),
+                  isOnline ? `● Activo (${fmtRelativeAgo(t.lastSeen)})` : fmtRelativeAgo(t.lastSeen),
                 ),
               ),
               t.liveScanner && (t.liveScanner.status === 'pending_confirm' || t.liveScanner.status === 'scanning')
@@ -1211,8 +1211,8 @@ export const teamView: View = {
                         'margin: 6px 0; padding: 6px 8px; border-radius: var(--r-sm); background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35);',
                     },
                     t.liveScanner.status === 'pending_confirm'
-                      ? `⏳ En pantalla: ${t.liveScanner.sku || t.liveScanner.barcode || ''} · Cant: ${fmtNum(t.liveScanner.qty ?? 1)}`
-                      : '📷 Cámara encendida buscando código...',
+                      ? `En pantalla: ${t.liveScanner.sku || t.liveScanner.barcode || ''} · Cant: ${fmtNum(t.liveScanner.qty ?? 1)}`
+                      : 'Cámara encendida buscando código...',
                   )
                 : null,
               h(
@@ -1382,7 +1382,7 @@ export const teamView: View = {
                     void refreshDashboard();
                   },
                 },
-                '📦 Solo Conteos',
+                'Solo Conteos',
               ),
               h(
                 'button',
@@ -1394,7 +1394,7 @@ export const teamView: View = {
                     void refreshDashboard();
                   },
                 },
-                '🔄 Solo Entradas / Salidas',
+                'Solo Entradas / Salidas',
               ),
             ),
             selectedTechFilter
@@ -1421,7 +1421,7 @@ export const teamView: View = {
                   const badgeCls =
                     ev.kind === 'count' ? 'badge info' : ev.kind === 'in' ? 'badge ok' : 'badge warn';
                   const badgeText =
-                    ev.kind === 'count' ? '📦 CONTEO' : ev.kind === 'in' ? '⬇️ ENTRADA' : '⬆️ SALIDA';
+                    ev.kind === 'count' ? 'CONTEO' : ev.kind === 'in' ? 'ENTRADA' : 'SALIDA';
                   const sign = ev.kind === 'out' ? '−' : '+';
                   const qtyColor =
                     ev.kind === 'out' ? 'var(--danger)' : ev.kind === 'in' ? 'var(--success)' : 'var(--primary)';
@@ -1595,7 +1595,7 @@ export const teamView: View = {
                     void refreshDashboard();
                   },
                 },
-                '🚨 Críticos / Por Pedir',
+                'Críticos / Por Pedir',
               ),
               h(
                 'button',
@@ -1607,7 +1607,7 @@ export const teamView: View = {
                     void refreshDashboard();
                   },
                 },
-                '⚖️ Con Diferencia',
+                'Con Diferencia',
               ),
               h(
                 'button',
@@ -1619,7 +1619,7 @@ export const teamView: View = {
                     void refreshDashboard();
                   },
                 },
-                '✅ Ya Contados',
+                'Ya Contados',
               ),
               h(
                 'button',
@@ -1631,7 +1631,7 @@ export const teamView: View = {
                     void refreshDashboard();
                   },
                 },
-                '⏳ Pendientes de Contar',
+                'Pendientes de Contar',
               ),
             ),
           ),
@@ -1747,7 +1747,7 @@ export const teamView: View = {
                     onclick: () => openShowMyQrDialog(current, curCounts),
                   },
                   icon('scan'),
-                  '📱 Mostrar QR de mi conteo',
+                  'Mostrar QR de mi conteo',
                 ),
                 h(
                   'button',
@@ -1756,7 +1756,7 @@ export const teamView: View = {
                     onclick: () => openReceiveQrDialog(current, () => void refreshDashboard()),
                   },
                   icon('scan'),
-                  '📷 Recibir por QR',
+                  'Recibir por QR',
                 ),
               ),
             )

@@ -83,7 +83,7 @@ function updateCooldownUi(justFinished = false): void {
     els.cooldownBadge.hidden = false;
     els.cooldownBadge.className = 'cam-cooldown active';
     const sec = (remaining / 1000).toFixed(1);
-    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">⏸️</span> Pausa: <b>${sec}s</b>`;
+    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">II</span> Pausa: <b>${sec}s</b>`;
   } else if (justFinished) {
     els.videoWrap.classList.remove('cooldown');
     els.cooldownBadge.hidden = false;
@@ -99,7 +99,7 @@ function updateCooldownUi(justFinished = false): void {
     els.videoWrap.classList.remove('cooldown');
     els.cooldownBadge.hidden = false;
     els.cooldownBadge.className = 'cam-cooldown locked';
-    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">🔒</span> 1 producto a la vez · Confirma abajo`;
+    els.cooldownBadge.innerHTML = `<span class="cooldown-ico">●</span> 1 producto a la vez · Confirma abajo`;
   } else {
     els.videoWrap.classList.remove('cooldown', 'locked');
     els.cooldownBadge.hidden = true;

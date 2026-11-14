@@ -478,7 +478,7 @@ export function openBarcodeSheetDialog(
   const searchInput = h('input', {
     type: 'search',
     class: 'input',
-    placeholder: '🔍 Buscar y añadir otro producto a esta hoja (nombre, SKU o código)...',
+    placeholder: 'Buscar y añadir otro producto a esta hoja (nombre, SKU o código)...',
   }) as HTMLInputElement;
 
   const searchDropdown = h('div', { class: 'queue-search-dropdown', style: 'display: none;' });
@@ -843,7 +843,7 @@ export function openBarcodeSheetDialog(
         h(
           'div',
           { class: 'row', style: 'gap: 8px; align-items: center;' },
-          h('h4', { style: 'margin: 0;' }, '📋 Productos en esta hoja / cola'),
+          h('h4', { style: 'margin: 0;' }, 'Productos en esta hoja / cola'),
           queueSummaryEl,
         ),
         h(
@@ -959,7 +959,7 @@ export function openBarcodeSheetDialog(
             title: 'Importar archivo de etiqueta BarTender (.btw) o archivo de comandos (.prn, .zpl)',
           },
           icon('upload'),
-          '📂 Cargar formato BarTender (.btw)',
+          'Cargar formato BarTender (.btw)',
           fileInput,
         );
         return uploadBtn;

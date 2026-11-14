@@ -468,7 +468,7 @@ export function openMassDeleteDialog(
           class: 'btn danger sm',
           onclick: async () => {
             dlg.close();
-            if (await confirmDialog('Vaciar catálogo completo', `⚠️ ¿Estás seguro de eliminar TODOS los ${all.length} productos del catálogo?`, 'Vaciar catálogo', true)) {
+            if (await confirmDialog('Vaciar catálogo completo', `¿Estás seguro de eliminar TODOS los ${all.length} productos del catálogo?`, 'Vaciar catálogo', true)) {
               await clearProducts();
               triggerBackgroundSync();
               toast('Catálogo vaciado completamente', 'ok');
@@ -497,10 +497,10 @@ export function openMassActionsDialog(
       ? h(
           'div',
           { class: 'catalog-readonly-banner' },
-          '🔒 Modo solo lectura en móvil: las modificaciones y eliminaciones masivas solo están disponibles en PC.',
+          'Modo solo lectura en móvil: las modificaciones y eliminaciones masivas solo están disponibles en PC.',
         )
       : h('div', { class: 'mass-action-section' },
-          h('h4', null, '✏️ Modificación masiva'),
+          h('h4', null, 'Modificación masiva'),
           h('p', { class: 'muted small' }, 'Actualiza unidades, marcas, existencias teóricas o costos en lote.'),
           h('div', { class: 'row wrap' },
             selectedBarcodes.length > 0
@@ -521,7 +521,7 @@ export function openMassActionsDialog(
     readOnly
       ? null
       : h('div', { class: 'mass-action-section' },
-          h('h4', null, '🗑️ Eliminación masiva'),
+          h('h4', null, 'Eliminación masiva'),
           h('p', { class: 'muted small' }, 'Elimina productos seleccionados, por filtro o vacía el catálogo completo.'),
           h('button', {
             class: 'btn danger ghost sm',
@@ -530,7 +530,7 @@ export function openMassActionsDialog(
         ),
 
     h('div', { class: 'mass-action-section' },
-      h('h4', null, '🏷️ Etiquetas y códigos de barras'),
+      h('h4', null, 'Etiquetas y códigos de barras'),
       h('p', { class: 'muted small' }, 'Genera e imprime etiquetas con códigos de barras uniformes en hojas Avery o rollo continuo.'),
       h('div', { class: 'row wrap' },
         selectedBarcodes.length > 0
@@ -576,12 +576,12 @@ export function openMassActionsDialog(
             dlg.close();
             openBarcodeSheetDialog();
           },
-        }, icon('scan'), '🖨️ Abrir cola de impresión'),
+        }, icon('scan'), 'Abrir cola de impresión'),
       ),
     ),
 
     h('div', { class: 'mass-action-section' },
-      h('h4', null, readOnly ? '📊 Exportación Excel' : '📊 Edición masiva con Excel / CSV'),
+      h('h4', null, readOnly ? 'Exportación Excel' : 'Edición masiva con Excel / CSV'),
       h(
         'p',
         { class: 'muted small' },
@@ -800,7 +800,7 @@ export const catalogView: View = {
         onclick: () => {
           openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
         },
-      }, icon('edit'), '⚡ Acciones masivas'),
+      }, icon('edit'), 'Acciones masivas'),
     );
 
     clear(root,
@@ -817,7 +817,7 @@ export const catalogView: View = {
           ? h(
               'div',
               { class: 'catalog-readonly-banner', 'data-testid': 'catalog-mobile-readonly-badge' },
-              '🔒 Catálogo en solo lectura (móvil): la creación, importación y edición están bloqueadas en móvil para proteger la BD.',
+              'Catálogo en solo lectura (móvil): la creación, importación y edición están bloqueadas en móvil para proteger la BD.',
             )
           : null,
         h('div', { class: 'catalog-toolbar-group' },

@@ -136,10 +136,10 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                   { class: 'dash-tag-row' },
                   h('span', { class: 'badge info' }, platform.label),
                   cloudStatus.roomCode && cloudStatus.state === 'connected'
-                    ? h('span', { class: 'badge ok' }, `🟢 Sala: ${cloudStatus.roomCode}`)
+                    ? h('span', { class: 'badge ok' }, `Sala: ${cloudStatus.roomCode}`)
                     : cloudStatus.roomCode
-                      ? h('span', { class: 'badge warn' }, `🟡 Sala: ${cloudStatus.roomCode}`)
-                      : h('span', { class: 'badge default' }, '⚪ Modo Local'),
+                      ? h('span', { class: 'badge warn' }, `Sala: ${cloudStatus.roomCode}`)
+                      : h('span', { class: 'badge default' }, 'Modo Local'),
                   h(
                     'span',
                     { class: navigator.onLine ? 'badge ok' : 'badge warn' },
@@ -489,7 +489,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               h(
                 'div',
                 { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, '📋 Sesiones de Conteo'),
+                h('h3', { class: 'dash-card-title' }, 'Sesiones de Conteo'),
                 h(
                   'button',
                   {
@@ -590,7 +590,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               h(
                 'div',
                 { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, '🔄 Kardex e Inventario Ideal'),
+                h('h3', { class: 'dash-card-title' }, 'Kardex e Inventario Ideal'),
                 h(
                   'button',
                   { class: 'btn ghost sm', onclick: () => navigate('/movimientos') },
@@ -640,7 +640,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               h(
                 'div',
                 { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, '📚 Catálogo de Consumibles'),
+                h('h3', { class: 'dash-card-title' }, 'Catálogo de Consumibles'),
                 h(
                   'button',
                   { class: 'btn ghost sm', onclick: () => navigate('/catalogo') },
@@ -661,7 +661,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                     ? h(
                       'p',
                       { class: 'muted small warn-text' },
-                      `⚠️ ${pending} producto(s) pendiente(s) de descripción en línea.`,
+                      `${pending} producto(s) pendiente(s) de descripción en línea.`,
                     )
                     : null,
                 )
@@ -677,7 +677,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               ? h(
                 'section',
                 { class: 'card accent dash-section-card' },
-                h('h3', { class: 'dash-card-title' }, '📲 Instalar Aplicación'),
+                h('h3', { class: 'dash-card-title' }, 'Instalar Aplicación'),
                 h(
                   'p',
                   { class: 'small' },
@@ -693,7 +693,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                 ? h(
                   'section',
                   { class: 'card accent dash-section-card' },
-                  h('h3', { class: 'dash-card-title' }, '📲 Instalar en iPhone'),
+                  h('h3', { class: 'dash-card-title' }, 'Instalar en iPhone'),
                   h(
                     'p',
                     { class: 'small' },
@@ -714,8 +714,8 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
           'div',
           { class: 'dash-footer-note muted small center' },
           navigator.onLine
-            ? '🟢 Conectado a la red · Modo PWA activo'
-            : '🟠 Sin conexión a internet · Los escaneos y movimientos se guardan localmente en el dispositivo',
+            ? '● Conectado a la red · Modo PWA activo'
+            : '● Sin conexión a internet · Los escaneos y movimientos se guardan localmente en el dispositivo',
         ),
       ),
     );

@@ -154,7 +154,7 @@ export const settingsView: View = {
         h('section', { class: 'card settings-card' },
           h('div', { class: 'settings-card-head' },
             h('div', null,
-              h('h3', { class: 'settings-card-title' }, '📚 Catálogo y Conciliación'),
+              h('h3', { class: 'settings-card-title' }, 'Catálogo y Conciliación'),
               h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
                 'Importa, comparte o concilia el catálogo maestro con los conteos y lecturas por código o SKU.'),
             ),
@@ -253,7 +253,7 @@ export const settingsView: View = {
             ? h(
                 'div',
                 { class: 'catalog-readonly-banner', 'data-testid': 'settings-catalog-readonly-note' },
-                '🔒 En móvil el catálogo es de solo lectura: puedes sincronizar y conciliar con la BD o exportar archivos; importar o vaciar el catálogo solo está disponible en PC.',
+                'En móvil el catálogo es de solo lectura: puedes sincronizar y conciliar con la BD o exportar archivos; importar o vaciar el catálogo solo está disponible en PC.',
               )
             : null,
 
@@ -293,7 +293,7 @@ export const settingsView: View = {
         h('section', { class: 'card settings-card' },
           h('div', { class: 'settings-card-head' },
             h('div', null,
-              h('h3', { class: 'settings-card-title' }, '👤 Perfil y Escaneo'),
+              h('h3', { class: 'settings-card-title' }, 'Perfil y Escaneo'),
               h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
                 'Identificación del técnico y preferencias al leer códigos.'),
             ),
@@ -314,13 +314,13 @@ export const settingsView: View = {
 
           h('div', { class: 'settings-switch-grid' },
             mobileViewport
-              ? compactToggle('👮 Modo Supervisor en móvil', 'Muestra controles de auditoría y reportes en este teléfono', supervisorCheck)
+              ? compactToggle('Modo Supervisor en móvil', 'Muestra controles de auditoría y reportes en este teléfono', supervisorCheck)
               : null,
-            compactToggle('🔊 Pitido', 'Sonido al escanear', beepCheck),
-            compactToggle('📳 Vibración', 'Respuesta háptica', vibCheck),
-            compactToggle('⚡ Modo rápido (+1)', 'Suma 1 sin preguntar', quickCheck),
-            supervisorUI ? compactToggle('👁️ Mostrar teórico / ideal', 'Ver inventario ideal al contar', showExpCheck) : null,
-            supervisorUI ? compactToggle('🌐 Buscar en internet', 'Autocompletar descripciones', lookupCheck) : null,
+            compactToggle('Pitido', 'Sonido al escanear', beepCheck),
+            compactToggle('Vibración', 'Respuesta háptica', vibCheck),
+            compactToggle('Modo rápido (+1)', 'Suma 1 sin preguntar', quickCheck),
+            supervisorUI ? compactToggle('Mostrar teórico / ideal', 'Ver inventario ideal al contar', showExpCheck) : null,
+            supervisorUI ? compactToggle('Buscar en internet', 'Autocompletar descripciones', lookupCheck) : null,
           ),
         ),
 
@@ -328,13 +328,13 @@ export const settingsView: View = {
         h('section', { class: 'card settings-card settings-card-wide' },
           h('div', { class: 'settings-card-head' },
             h('div', null,
-              h('h3', { class: 'settings-card-title' }, '☁️ Sincronización en Línea (Firebase Realtime DB)'),
+              h('h3', { class: 'settings-card-title' }, 'Sincronización en Línea (Firebase Realtime DB)'),
               h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
                 'Conecta a técnicos y supervisor en tiempo real para unificar conteos, movimientos y catálogo.'),
             ),
             h('span', {
               class: `sup-live-pill ${cloudState.state === 'connected' ? 'live' : cloudState.state === 'error' ? 'error' : 'local'}`,
-            }, cloudState.state === 'connected' ? '🟢 En vivo' : cloudState.state === 'error' ? '⚠️ Error' : '⚪ Local'),
+            }, cloudState.state === 'connected' ? '● En vivo' : cloudState.state === 'error' ? '● Error' : '● Local'),
           ),
 
           h('div', { class: 'settings-switch-grid settings-switch-grid-2' },
@@ -369,7 +369,7 @@ export const settingsView: View = {
                 diagBox.textContent = res.message;
                 syncEndpointInput.value = normalizeEndpointBaseUrl(syncEndpointInput.value);
               },
-            }, '🔌 Probar conexión'),
+            }, icon('refresh'), 'Probar conexión'),
             h('button', {
               class: 'btn ghost small',
               onclick: () => navigate('/equipo'),
@@ -383,7 +383,7 @@ export const settingsView: View = {
       supervisorUI
         ? h('details', { class: 'card settings-advanced' },
             h('summary', { class: 'settings-advanced-summary' },
-              h('span', null, '⚙️ Opciones avanzadas y restablecimiento de fábrica'),
+              h('span', null, 'Opciones avanzadas y restablecimiento de fábrica'),
               h('span', { class: 'muted small' }, 'Proxy UPC · Borrar datos locales'),
             ),
             h('div', { class: 'settings-advanced-body' },
