@@ -16,6 +16,7 @@ import {
   clear, confirmDialog, downloadFile, fmtDateTime, fmtMoney, fmtNum, h, icon, MIME, openDialog, shareOrDownload, toast,
 } from './dom';
 import { editProductDialog } from './productDialog';
+import { isMobileCatalogReadOnly } from './catalogMode';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { createBrandLogo } from './logo';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
@@ -407,7 +408,7 @@ function rowDetailDialog(r: ReportRow, rowCounts: CountEntry[]) {
   openDialog('Detalle del producto', body, [
     { label: 'Cerrar' },
     {
-      label: 'Editar producto',
+      label: isMobileCatalogReadOnly() ? 'Ver etiqueta / Producto' : 'Editar producto',
       onClick: async () => {
         const saved = await editProductDialog(r.barcode);
         if (saved) navigate(selectedSessionId ? `/reporte?session=${selectedSessionId}` : '/reporte');

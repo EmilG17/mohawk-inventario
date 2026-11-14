@@ -105,13 +105,50 @@ test.describe('Flujo completo de inventario en teléfono', () => {
   });
 
   test('gestión masiva del catálogo: selección, modificación masiva y vaciado', async ({ page }) => {
+    const isMobile = (page.viewportSize()?.width ?? 1280) < 900;
+
     // 1. Cargar catálogo de ejemplo
     await page.goto('/#/ajustes');
     await page.getByRole('button', { name: 'Cargar catálogo de ejemplo' }).click();
     await expect(page).toHaveURL(/#\/catalogo/);
     await expect(page.locator('.plist li').first()).toBeVisible();
 
-    // 2. Verificar barra de herramientas de selección
+    if (isMobile) {
+      // En móvil el catálogo es de solo lectura y permite sincronizar con la BD + imprimir etiquetas
+      await expect(page.locator('[data-testid="catalog-mobile-readonly-badge"]')).toBeVisible();
+      await expect(page.locator('[data-testid="catalog-sync-db-btn"]')).toBeVisible();
+      await expect(page.locator('[data-testid="catalog-new-btn"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="catalog-import-btn"]')).toHaveCount(0);
+
+      // Seleccionar visibles permite imprimir etiquetas pero oculta Modificar / Eliminar
+      const selectAll = page.locator('.select-toolbar input[type="checkbox"]');
+      await selectAll.check();
+      const massBar = page.locator('.mass-bar');
+      await expect(massBar).toBeVisible();
+      await expect(massBar.locator('[data-testid="catalog-mass-labels-btn"]')).toBeVisible();
+      await expect(massBar.locator('[data-testid="catalog-mass-edit-btn"]')).toHaveCount(0);
+      await expect(massBar.locator('[data-testid="catalog-mass-delete-btn"]')).toHaveCount(0);
+
+      // Abrir un producto en móvil lo muestra en solo lectura (sin Guardar ni Eliminar)
+      await page.locator('.plist li .grow').first().click();
+      const dlg = page.locator('dialog[open]');
+      await expect(dlg).toBeVisible();
+      await expect(dlg.locator('[data-testid="product-dialog-readonly-notice"]')).toBeVisible();
+      await expect(dlg.locator('#p-barcode')).toBeDisabled();
+      await expect(dlg.getByRole('button', { name: 'Guardar' })).toHaveCount(0);
+      await expect(dlg.getByRole('button', { name: 'Eliminar' })).toHaveCount(0);
+      await dlg.getByRole('button', { name: 'Cancelar' }).click();
+      await expect(dlg).toBeHidden();
+
+      // En Ajustes móvil también se bloquean Importar y Vaciar catálogo
+      await page.goto('/#/ajustes');
+      await expect(page.locator('[data-testid="settings-catalog-readonly-note"]')).toBeVisible();
+      await expect(page.locator('[data-testid="settings-import-catalog-btn"]')).toHaveCount(0);
+      await expect(page.locator('[data-testid="settings-clear-catalog-btn"]')).toHaveCount(0);
+      return;
+    }
+
+    // 2. Verificar barra de herramientas de selección (Desktop)
     const selectAll = page.locator('.select-toolbar input[type="checkbox"]');
     await expect(selectAll).toBeVisible();
 

@@ -9,10 +9,11 @@ import {
 import { importCatalogFile, parseAppFile, reconcileCatalogProducts } from '../io/mergeCounts';
 import { displayBarcode, parseNumber } from '../io/normalize';
 import { processPending } from '../lookup/pendingQueue';
-import { onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
+import { onCloudRoomUpdate, syncCatalogWithDb, triggerBackgroundSync } from '../sync/cloudSync';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
+import { isMobileCatalogReadOnly } from './catalogMode';
 import { editProductDialog, sourceBadge } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
@@ -22,8 +23,33 @@ import { navigate } from './router';
 let filter: 'todos' | 'sin_desc' | 'no_cat' = 'todos';
 let query = '';
 let unsubscribeCatalogCloud: (() => void) | null = null;
+let unsubscribeCatalogResize: (() => void) | null = null;
+
+export async function syncCatalogWithDbFlow(onCompleted?: () => void): Promise<void> {
+  try {
+    toast('Sincronizando catálogo con la BD…', 'info', 2000);
+    const res = await syncCatalogWithDb();
+    toast(
+      `Catálogo sincronizado (${res.totalLocalProducts} productos · ${res.transport === 'remote' ? 'Firebase' : 'Sala local'})`,
+      'ok',
+      3500,
+    );
+    if (onCompleted) onCompleted();
+  } catch (err) {
+    const msg = (err as Error).message || 'No se pudo sincronizar con la BD';
+    if (/Código de Sala/i.test(msg)) {
+      toast('Configura primero un Código de Sala en Ajustes para sincronizar con la BD.', 'warn', 4000);
+    } else {
+      toast(msg, 'error', 4000);
+    }
+  }
+}
 
 export async function importCatalogFlow(onCompleted?: () => void): Promise<void> {
+  if (isMobileCatalogReadOnly()) {
+    toast('La importación o edición del catálogo está restringida a PC. Usa "Sincronizar con BD" en móvil.', 'warn', 4000);
+    return;
+  }
   const [file] = await pickFiles('.xlsx,.xls,.csv,.txt,.json,application/json');
   if (!file) return;
   try {
@@ -36,18 +62,20 @@ export async function importCatalogFlow(onCompleted?: () => void): Promise<void>
       }
       const replace = await confirmDialog('Importar catálogo',
         `El archivo trae ${f.products.length} productos. ¿Reemplazar el catálogo actual? (Cancelar = combinar y conciliar)`, 'Reemplazar');
+      const now = Date.now();
+      const stampedProducts = f.products.map((p) => ({ ...p, updatedAt: now }));
       let n = 0;
       if (replace) {
         const keep = (await allProducts()).filter((p) => p.uncataloged);
-        n = await importCatalogFile(f, 'replace');
+        n = await importCatalogFile({ ...f, products: stampedProducts }, 'replace');
         if (keep.length) await bulkPutProducts(keep, 'merge');
-        await reconcileCatalogProducts(f.products);
+        await reconcileCatalogProducts(stampedProducts);
       } else {
-        const rec = await reconcileCatalogProducts(f.products);
+        const rec = await reconcileCatalogProducts(stampedProducts);
         n = rec.added + rec.updated;
       }
       triggerBackgroundSync();
-      toast(`${n || f.products.length} productos importados y conciliados`, 'ok');
+      toast(`${n || stampedProducts.length} productos importados y conciliados`, 'ok');
       if (onCompleted) onCompleted();
       else navigate('/catalogo');
       return;
@@ -146,16 +174,18 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
         try {
           const r = rowsToProducts(rows, headerRow, mapping);
           if (!r.products.length) { toast('No hay productos para importar', 'warn'); return true; }
+          const now = Date.now();
+          const stampedProducts = r.products.map((p) => ({ ...p, updatedAt: now }));
           if (mode === 'replace') {
             const keep = (await allProducts()).filter((p) => p.uncataloged);
-            await bulkPutProducts(r.products, 'replace');
+            await bulkPutProducts(stampedProducts, 'replace');
             if (keep.length) await bulkPutProducts(keep, 'merge');
-            await reconcileCatalogProducts(r.products);
+            await reconcileCatalogProducts(stampedProducts);
           } else {
-            await reconcileCatalogProducts(r.products);
+            await reconcileCatalogProducts(stampedProducts);
           }
           triggerBackgroundSync();
-          toast(`${r.products.length} productos importados y conciliados`, 'ok');
+          toast(`${stampedProducts.length} productos importados y conciliados`, 'ok');
           void processPending();
           if (onCompleted) onCompleted();
           else navigate('/catalogo');
@@ -169,6 +199,10 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
 }
 
 export function openMassModifyDialog(barcodes: string[], onDone: () => void): void {
+  if (isMobileCatalogReadOnly()) {
+    toast('El catálogo es de solo lectura en la versión móvil. Usa una PC para modificar productos.', 'warn');
+    return;
+  }
   if (!barcodes.length) {
     toast('No hay productos para modificar', 'warn');
     return;
@@ -296,6 +330,7 @@ export function openMassModifyDialog(barcodes: string[], onDone: () => void): vo
         }
 
         const count = await bulkModifyProducts(barcodes, patch);
+        triggerBackgroundSync();
         toast(`✓ ${count} producto(s) actualizados con éxito`, 'ok');
         onDone();
       },
@@ -309,6 +344,10 @@ export function openMassDeleteDialog(
   all: Product[],
   onDone: () => void,
 ): void {
+  if (isMobileCatalogReadOnly()) {
+    toast('El catálogo es de solo lectura en la versión móvil. Usa una PC para eliminar productos.', 'warn');
+    return;
+  }
   const uncataloged = all.filter((p) => p.uncataloged);
   const noDesc = all.filter((p) => !p.description);
 
@@ -327,6 +366,7 @@ export function openMassDeleteDialog(
             dlg.close();
             if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selectedBarcodes.length} productos seleccionados del catálogo?`, 'Eliminar', true)) {
               const n = await deleteProducts(selectedBarcodes);
+              triggerBackgroundSync();
               toast(`${n} productos eliminados del catálogo`, 'ok');
               onDone();
             }
@@ -347,6 +387,7 @@ export function openMassDeleteDialog(
             dlg.close();
             if (await confirmDialog('Eliminar filtrados', `¿Eliminar los ${visibleItems.length} productos filtrados?`, 'Eliminar', true)) {
               const n = await deleteProducts(visibleItems.map((p) => p.barcode));
+              triggerBackgroundSync();
               toast(`${n} productos eliminados del catálogo`, 'ok');
               onDone();
             }
@@ -367,6 +408,7 @@ export function openMassDeleteDialog(
             dlg.close();
             if (await confirmDialog('Eliminar no catalogados', `¿Eliminar los ${uncataloged.length} productos no catalogados?`, 'Eliminar', true)) {
               const n = await deleteProducts(uncataloged.map((p) => p.barcode));
+              triggerBackgroundSync();
               toast(`${n} productos no catalogados eliminados`, 'ok');
               onDone();
             }
@@ -387,6 +429,7 @@ export function openMassDeleteDialog(
             dlg.close();
             if (await confirmDialog('Eliminar sin descripción', `¿Eliminar los ${noDesc.length} productos sin descripción?`, 'Eliminar', true)) {
               const n = await deleteProducts(noDesc.map((p) => p.barcode));
+              triggerBackgroundSync();
               toast(`${n} productos sin descripción eliminados`, 'ok');
               onDone();
             }
@@ -407,6 +450,7 @@ export function openMassDeleteDialog(
             dlg.close();
             if (await confirmDialog('Vaciar catálogo completo', `⚠️ ¿Estás seguro de eliminar TODOS los ${all.length} productos del catálogo?`, 'Vaciar catálogo', true)) {
               await clearProducts();
+              triggerBackgroundSync();
               toast('Catálogo vaciado completamente', 'ok');
               onDone();
             }
@@ -425,36 +469,45 @@ export function openMassActionsDialog(
   all: Product[],
   onDone: () => void,
 ): void {
+  const readOnly = isMobileCatalogReadOnly();
   let dlg: { close(): void };
 
   const content = h('div', { class: 'mass-actions-modal' },
-    h('div', { class: 'mass-action-section' },
-      h('h4', null, '✏️ Modificación masiva'),
-      h('p', { class: 'muted small' }, 'Actualiza unidades, marcas, existencias teóricas o costos en lote.'),
-      h('div', { class: 'row wrap' },
-        selectedBarcodes.length > 0
-          ? h('button', {
-            class: 'btn primary sm',
-            onclick: () => { dlg.close(); openMassModifyDialog(selectedBarcodes, onDone); },
-          }, icon('edit'), `Modificar los ${selectedBarcodes.length} seleccionados`)
-          : null,
-        visibleItems.length > 0
-          ? h('button', {
-            class: 'btn sm',
-            onclick: () => { dlg.close(); openMassModifyDialog(visibleItems.map((p) => p.barcode), onDone); },
-          }, icon('edit'), `Modificar los ${visibleItems.length} visibles`)
-          : null,
-      ),
-    ),
+    readOnly
+      ? h(
+          'div',
+          { class: 'catalog-readonly-banner' },
+          '🔒 Modo solo lectura en móvil: las modificaciones y eliminaciones masivas solo están disponibles en PC.',
+        )
+      : h('div', { class: 'mass-action-section' },
+          h('h4', null, '✏️ Modificación masiva'),
+          h('p', { class: 'muted small' }, 'Actualiza unidades, marcas, existencias teóricas o costos en lote.'),
+          h('div', { class: 'row wrap' },
+            selectedBarcodes.length > 0
+              ? h('button', {
+                class: 'btn primary sm',
+                onclick: () => { dlg.close(); openMassModifyDialog(selectedBarcodes, onDone); },
+              }, icon('edit'), `Modificar los ${selectedBarcodes.length} seleccionados`)
+              : null,
+            visibleItems.length > 0
+              ? h('button', {
+                class: 'btn sm',
+                onclick: () => { dlg.close(); openMassModifyDialog(visibleItems.map((p) => p.barcode), onDone); },
+              }, icon('edit'), `Modificar los ${visibleItems.length} visibles`)
+              : null,
+          ),
+        ),
 
-    h('div', { class: 'mass-action-section' },
-      h('h4', null, '🗑️ Eliminación masiva'),
-      h('p', { class: 'muted small' }, 'Elimina productos seleccionados, por filtro o vacía el catálogo completo.'),
-      h('button', {
-        class: 'btn danger ghost sm',
-        onclick: () => { dlg.close(); openMassDeleteDialog(visibleItems, selectedBarcodes, all, onDone); },
-      }, icon('trash'), 'Opciones de eliminación masiva'),
-    ),
+    readOnly
+      ? null
+      : h('div', { class: 'mass-action-section' },
+          h('h4', null, '🗑️ Eliminación masiva'),
+          h('p', { class: 'muted small' }, 'Elimina productos seleccionados, por filtro o vacía el catálogo completo.'),
+          h('button', {
+            class: 'btn danger ghost sm',
+            onclick: () => { dlg.close(); openMassDeleteDialog(visibleItems, selectedBarcodes, all, onDone); },
+          }, icon('trash'), 'Opciones de eliminación masiva'),
+        ),
 
     h('div', { class: 'mass-action-section' },
       h('h4', null, '🏷️ Etiquetas y códigos de barras'),
@@ -508,19 +561,29 @@ export function openMassActionsDialog(
     ),
 
     h('div', { class: 'mass-action-section' },
-      h('h4', null, '📊 Edición masiva con Excel / CSV'),
-      h('p', { class: 'muted small' }, 'Descarga el catálogo a Excel, edita existencias o descripciones en tu computadora y vuelve a subirlo:'),
+      h('h4', null, readOnly ? '📊 Exportación Excel' : '📊 Edición masiva con Excel / CSV'),
+      h(
+        'p',
+        { class: 'muted small' },
+        readOnly
+          ? 'Descarga una copia del catálogo en formato Excel para consultarlo.'
+          : 'Descarga el catálogo a Excel, edita existencias o descripciones en tu computadora y vuelve a subirlo:',
+      ),
       h('div', { class: 'row wrap' },
         h('button', {
           class: 'btn sm',
           onclick: () => downloadFile(buildCatalogWorkbook(all), 'catalogo_consumibles.xlsx', MIME.xlsx),
-        }, icon('download'), '1. Descargar catálogo Excel'),
-        h('button', {
-          class: 'btn primary sm',
-          onclick: () => { dlg.close(); void importCatalogFlow(); },
-        }, icon('upload'), '2. Subir Excel modificado'),
+        }, icon('download'), readOnly ? 'Descargar catálogo Excel' : '1. Descargar catálogo Excel'),
+        readOnly
+          ? null
+          : h('button', {
+              class: 'btn primary sm',
+              onclick: () => { dlg.close(); void importCatalogFlow(); },
+            }, icon('upload'), '2. Subir Excel modificado'),
       ),
-      h('p', { class: 'muted small' }, 'Tip: Al subirlo, elige "Combinar / actualizar" para preservar los productos existentes.'),
+      readOnly
+        ? null
+        : h('p', { class: 'muted small' }, 'Tip: Al subirlo, elige "Combinar / actualizar" para preservar los productos existentes.'),
     ),
   );
 
@@ -529,7 +592,8 @@ export function openMassActionsDialog(
 
 export const catalogView: View = {
   title: 'Catálogo',
-  async render(root) {
+  async render(root, params = new URLSearchParams()) {
+    const readOnlyMobile = isMobileCatalogReadOnly();
     let products = await allProducts();
     const selected = new Set<string>();
     const list = h('ul', { class: 'plist' });
@@ -613,23 +677,28 @@ export const catalogView: View = {
                 toast(`${sel.length} producto(s) añadidos a la cola (${total} etiquetas totales)`, 'ok');
               },
             }, icon('plus'), 'Añadir a cola'),
-            h('button', {
-              class: 'btn primary sm',
-              'data-testid': 'catalog-mass-edit-btn',
-              onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
-            }, icon('edit'), 'Modificar'),
-            h('button', {
-              class: 'btn danger sm',
-              'data-testid': 'catalog-mass-delete-btn',
-              onclick: async () => {
-                if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selCount} productos seleccionados del catálogo?`, 'Eliminar', true)) {
-                  const n = await deleteProducts(Array.from(selected));
-                  toast(`${n} productos eliminados`, 'ok');
-                  selected.clear();
-                  await refreshData();
-                }
-              },
-            }, icon('trash'), 'Eliminar'),
+            readOnlyMobile
+              ? null
+              : h('button', {
+                  class: 'btn primary sm',
+                  'data-testid': 'catalog-mass-edit-btn',
+                  onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
+                }, icon('edit'), 'Modificar'),
+            readOnlyMobile
+              ? null
+              : h('button', {
+                  class: 'btn danger sm',
+                  'data-testid': 'catalog-mass-delete-btn',
+                  onclick: async () => {
+                    if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selCount} productos seleccionados del catálogo?`, 'Eliminar', true)) {
+                      const n = await deleteProducts(Array.from(selected));
+                      triggerBackgroundSync();
+                      toast(`${n} productos eliminados`, 'ok');
+                      selected.clear();
+                      await refreshData();
+                    }
+                  },
+                }, icon('trash'), 'Eliminar'),
             h('button', { class: 'btn ghost sm', onclick: () => { selected.clear(); draw(); } }, '✕'),
           ),
         );
@@ -708,43 +777,68 @@ export const catalogView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
-        h('p', { class: 'muted small' }, 'Consulta consumibles, importa hojas Excel/CSV, imprime etiquetas de código de barras o aplica modificaciones en lote.'),
+        h(
+          'p',
+          { class: 'muted small' },
+          readOnlyMobile
+            ? 'Consulta existencias, sincroniza con la BD o imprime etiquetas. Para editar productos usa una PC.'
+            : 'Consulta consumibles, importa hojas Excel/CSV, imprime etiquetas de código de barras o aplica modificaciones en lote.',
+        ),
+        readOnlyMobile
+          ? h(
+              'div',
+              { class: 'catalog-readonly-banner', 'data-testid': 'catalog-mobile-readonly-badge' },
+              '🔒 Catálogo en solo lectura (móvil): la creación, importación y edición están bloqueadas en móvil para proteger la BD.',
+            )
+          : null,
         h('div', { class: 'catalog-toolbar-group' },
           h('div', { class: 'catalog-toolbar-row' },
-            h('span', { class: 'catalog-group-label muted xsmall uppercase' }, 'Gestión'),
+            h('span', { class: 'catalog-group-label muted xsmall uppercase' }, readOnlyMobile ? 'Sincronización con BD' : 'Gestión y BD'),
             h('div', { class: 'row wrap' },
+              readOnlyMobile
+                ? null
+                : h('button', {
+                    class: 'btn primary',
+                    'data-testid': 'catalog-new-btn',
+                    onclick: async () => {
+                      const res = await editProductDialog('');
+                      if (res && res !== 'deleted') {
+                        await refreshData();
+                      }
+                    },
+                  }, icon('scan'), 'Nuevo producto'),
+              readOnlyMobile
+                ? null
+                : h('button', {
+                    class: 'btn',
+                    type: 'button',
+                    'data-testid': 'catalog-import-btn',
+                    onclick: () => void importCatalogFlow(() => { void refreshData(); }),
+                  }, icon('upload'), 'Importar Excel / CSV'),
               h('button', {
-                class: 'btn primary',
-                'data-testid': 'catalog-new-btn',
-                onclick: async () => {
-                  const res = await editProductDialog('');
-                  if (res && res !== 'deleted') {
-                    await refreshData();
-                  }
-                },
-              }, icon('scan'), 'Nuevo producto'),
-              h('button', {
-                class: 'btn',
+                class: readOnlyMobile ? 'btn primary' : 'btn',
                 type: 'button',
-                'data-testid': 'catalog-import-btn',
-                onclick: () => void importCatalogFlow(() => { void refreshData(); }),
-              }, icon('upload'), 'Importar Excel / CSV'),
-              h('button', {
-                class: 'btn',
-                onclick: () => {
-                  openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
-                },
-              }, icon('edit'), 'Acciones masivas'),
-              noDesc > 0
+                'data-testid': 'catalog-sync-db-btn',
+                onclick: () => void syncCatalogWithDbFlow(() => { void refreshData(); }),
+              }, icon('refresh'), 'Sincronizar con BD'),
+              readOnlyMobile
+                ? null
+                : h('button', {
+                    class: 'btn',
+                    onclick: () => {
+                      openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
+                    },
+                  }, icon('edit'), 'Acciones masivas'),
+              !readOnlyMobile && noDesc > 0
                 ? h('button', {
-                  class: 'btn sm',
-                  onclick: async () => {
-                    toast('Buscando descripciones…');
-                    const n = await processPending();
-                    toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
-                    await refreshData();
-                  },
-                }, icon('globe'), `Buscar en internet ${noDesc} sin descripción`)
+                    class: 'btn sm',
+                    onclick: async () => {
+                      toast('Buscando descripciones…');
+                      const n = await processPending();
+                      toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
+                      await refreshData();
+                    },
+                  }, icon('globe'), `Buscar en internet ${noDesc} sin descripción`)
                 : null,
             ),
           ),
@@ -770,7 +864,7 @@ export const catalogView: View = {
                 class: 'btn ghost sm',
                 'data-testid': 'catalog-settings-link',
                 onclick: () => navigate('/ajustes'),
-              }, icon('gear'), 'Importar / Compartir en Ajustes'),
+              }, icon('gear'), readOnlyMobile ? 'Ajustes / Sala en la nube' : 'Importar / Compartir en Ajustes'),
             ),
           ),
         ),
@@ -797,11 +891,33 @@ export const catalogView: View = {
         void refreshData(false);
       }
     });
+
+    if (unsubscribeCatalogResize) {
+      unsubscribeCatalogResize();
+      unsubscribeCatalogResize = null;
+    }
+    if (typeof window !== 'undefined') {
+      let lastMobile = readOnlyMobile;
+      const onResize = () => {
+        if (!root.isConnected) return;
+        const nextMobile = isMobileCatalogReadOnly();
+        if (nextMobile !== lastMobile) {
+          lastMobile = nextMobile;
+          void catalogView.render(root, params);
+        }
+      };
+      window.addEventListener('resize', onResize);
+      unsubscribeCatalogResize = () => window.removeEventListener('resize', onResize);
+    }
   },
   destroy() {
     if (unsubscribeCatalogCloud) {
       unsubscribeCatalogCloud();
       unsubscribeCatalogCloud = null;
+    }
+    if (unsubscribeCatalogResize) {
+      unsubscribeCatalogResize();
+      unsubscribeCatalogResize = null;
     }
   },
 };

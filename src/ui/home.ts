@@ -13,7 +13,8 @@ import { loadSettings, saveSettings } from '../settings';
 import { getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
 import { detectPlatformInfo } from './app';
 import { openBarcodeSheetDialog } from './barcodeSheet';
-import { importCatalogFlow } from './catalog';
+import { importCatalogFlow, syncCatalogWithDbFlow } from './catalog';
+import { isMobileCatalogReadOnly } from './catalogMode';
 import {
   clear,
   confirmDialog,
@@ -441,12 +442,20 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                   class: 'btn sm dash-flow-btn',
                   type: 'button',
                   'data-testid': 'home-quick-import',
-                  onclick: () => void importCatalogFlow(() => {
-                    if (currentRoot) void renderHomeContent(currentRoot);
-                  }),
+                  onclick: () => {
+                    if (isMobileCatalogReadOnly()) {
+                      void syncCatalogWithDbFlow(() => {
+                        if (currentRoot) void renderHomeContent(currentRoot);
+                      });
+                    } else {
+                      void importCatalogFlow(() => {
+                        if (currentRoot) void renderHomeContent(currentRoot);
+                      });
+                    }
+                  },
                 },
-                icon('upload'),
-                'Importar Catálogo',
+                icon(isMobileCatalogReadOnly() ? 'refresh' : 'upload'),
+                isMobileCatalogReadOnly() ? 'Sincronizar Catálogo' : 'Importar Catálogo',
               ),
             ),
           ),

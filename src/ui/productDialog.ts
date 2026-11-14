@@ -12,6 +12,7 @@ import { openBarcodeSheetDialog } from './barcodeSheet';
 import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
 import { triggerBackgroundSync } from '../sync/cloudSync';
 import { confirmDialog, h, icon, openDialog, toast } from './dom';
+import { isMobileCatalogReadOnly } from './catalogMode';
 
 export const SOURCE_LABEL: Record<Product['source'], string> = {
   catalogo: 'Catálogo',
@@ -31,6 +32,13 @@ export type EditProductResult = Product | 'deleted' | null;
 /** Abre el editor del producto. Resuelve con el producto guardado, 'deleted' si se eliminó, o null si se canceló. */
 export function editProductDialog(code: string, initial?: Product): Promise<EditProductResult> {
   return new Promise(async (resolve) => {
+    const readOnly = isMobileCatalogReadOnly();
+    if (readOnly && !code && !initial) {
+      toast('El catálogo es de solo lectura en la versión móvil. Usa una PC para crear productos.', 'warn');
+      resolve(null);
+      return;
+    }
+
     let p: Product = initial ?? (code ? await getProduct(code) : undefined) ?? {
       barcode: code || generateInternalCode(),
       sku: '',
@@ -93,6 +101,15 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       f.cost.value = p.unitCost?.toString() ?? '';
     };
     fill();
+
+    if (readOnly) {
+      barcodeInput.readOnly = true;
+      barcodeInput.disabled = true;
+      for (const el of Object.values(f)) {
+        el.readOnly = true;
+        el.disabled = true;
+      }
+    }
 
     const genBtn = h('button', {
       class: 'btn sm',
@@ -293,9 +310,16 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
     }, '📂 Cargar .btw', btUploadInput);
 
     const body = h('div', { class: 'form' },
+      readOnly
+        ? h(
+            'div',
+            { class: 'catalog-readonly-banner', 'data-testid': 'product-dialog-readonly-notice' },
+            '🔒 Modo solo lectura en móvil: puedes consultar o imprimir la etiqueta de este producto, pero la edición del catálogo está restringida a PC.',
+          )
+        : null,
       h('label', { class: 'field' },
         h('span', null, 'Código de barras'),
-        h('div', { class: 'row' }, barcodeInput, genBtn),
+        h('div', { class: 'row' }, barcodeInput, readOnly ? null : genBtn),
       ),
       barcodePreview,
       h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn, btUploadBtn),
@@ -313,7 +337,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       ),
       status,
       h('label', { class: 'field' }, h('span', null, 'Descripción'), f.description),
-      lookupBtn,
+      readOnly ? null : lookupBtn,
       h('div', { class: 'grid2' },
         h('label', { class: 'field' }, h('span', null, 'No. de parte / SKU'), f.sku),
         h('label', { class: 'field' }, h('span', null, 'Unidad'), f.unit),
@@ -324,60 +348,71 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       ),
     );
 
-    const dlg = openDialog('Producto', body, [
-      {
-        label: 'Eliminar', kind: 'danger',
-        onClick: async () => {
-          if (code && await confirmDialog('Eliminar del catálogo', `¿Eliminar "${p.description || code}" del catálogo?`, 'Eliminar', true)) {
-            await deleteProduct(code);
-            triggerBackgroundSync();
-            result = 'deleted';
-            toast('Producto eliminado');
-          } else if (!code) {
-            result = 'deleted';
-          } else {
-            return true;
-          }
-        },
-      },
-      { label: 'Cancelar' },
-      {
-        label: 'Guardar', kind: 'primary',
-        onClick: async () => {
-          const newBarcode = barcodeInput.value.trim() || code || p.barcode;
-          if (!newBarcode) {
-            toast('El producto debe tener un código de barras', 'error');
-            return true;
-          }
-          const desc = f.description.value.trim();
-          const parsedMin = parseNumber(f.minQty.value);
-          const parsedMax = parseNumber(f.maxQty.value);
-          const next: Product = {
-            ...p,
-            barcode: newBarcode,
-            description: desc,
-            sku: f.sku.value.trim(),
-            unit: f.unit.value.trim(),
-            expectedQty: parseNumber(f.expected.value),
-            minQty: parsedMin,
-            maxQty: parsedMax,
-            unitCost: parseNumber(f.cost.value),
-          };
-          if (parsedMin === undefined) delete next.minQty;
-          if (parsedMax === undefined) delete next.maxQty;
-          if (desc !== p.description) next.source = desc ? 'manual' : 'pendiente';
-          else if (!desc) next.source = 'pendiente';
+    const dlg = openDialog(
+      readOnly ? 'Detalle de producto (Solo lectura)' : 'Producto',
+      body,
+      readOnly
+        ? [{ label: 'Cancelar' }]
+        : [
+            {
+              label: 'Eliminar', kind: 'danger',
+              onClick: async () => {
+                if (code && await confirmDialog('Eliminar del catálogo', `¿Eliminar "${p.description || code}" del catálogo?`, 'Eliminar', true)) {
+                  await deleteProduct(code);
+                  triggerBackgroundSync();
+                  result = 'deleted';
+                  toast('Producto eliminado');
+                } else if (!code) {
+                  result = 'deleted';
+                } else {
+                  return true;
+                }
+              },
+            },
+            { label: 'Cancelar' },
+            {
+              label: 'Guardar', kind: 'primary',
+              onClick: async () => {
+                const newBarcode = barcodeInput.value.trim() || code || p.barcode;
+                if (!newBarcode) {
+                  toast('El producto debe tener un código de barras', 'error');
+                  return true;
+                }
+                const desc = f.description.value.trim();
+                const parsedExpected = parseNumber(f.expected.value);
+                const parsedMin = parseNumber(f.minQty.value);
+                const parsedMax = parseNumber(f.maxQty.value);
+                const parsedCost = parseNumber(f.cost.value);
+                const next: Product = {
+                  ...p,
+                  barcode: newBarcode,
+                  description: desc,
+                  sku: f.sku.value.trim(),
+                  unit: f.unit.value.trim(),
+                  expectedQty: parsedExpected,
+                  minQty: parsedMin,
+                  maxQty: parsedMax,
+                  unitCost: parsedCost,
+                  updatedAt: Date.now(),
+                };
+                if (parsedExpected === undefined) delete next.expectedQty;
+                if (parsedMin === undefined) delete next.minQty;
+                if (parsedMax === undefined) delete next.maxQty;
+                if (parsedCost === undefined) delete next.unitCost;
+                if (desc !== p.description) next.source = desc ? 'manual' : 'pendiente';
+                else if (!desc) next.source = 'pendiente';
 
-          if (code && newBarcode !== code) {
-            await deleteProduct(code);
-          }
-          await putProduct(next);
-          triggerBackgroundSync();
-          result = next;
-          toast('Producto guardado', 'ok');
-        },
-      },
-    ]);
+                if (code && newBarcode !== code) {
+                  await deleteProduct(code);
+                }
+                await putProduct(next);
+                triggerBackgroundSync();
+                result = next;
+                toast('Producto guardado', 'ok');
+              },
+            },
+          ],
+    );
     dlg.addEventListener('close', () => resolve(result));
   });
 }

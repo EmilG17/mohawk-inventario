@@ -10,6 +10,7 @@ import { createWedgeController } from '../scanner/wedge';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
 import { decodeCompactCountQr, isCompactCountQr, onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
 import { clear, confirmDialog, fmtNum, fmtTime, h, icon, openDialog, toast } from './dom';
+import { isMobileCatalogReadOnly } from './catalogMode';
 import { newSessionFlow } from './home';
 import { editProductDialog, sourceBadge } from './productDialog';
 import { navigate, type View } from './router';
@@ -308,6 +309,7 @@ function renderCard(): void {
 
   const descInput = h('input', { class: 'input', placeholder: 'Descripción del producto', maxlength: 200 });
   const saveDesc = async () => {
+    if (isMobileCatalogReadOnly()) return;
     const v = descInput.value.trim();
     if (!v) return;
     const saved = await setManualDescription(p.code, v);
@@ -347,7 +349,7 @@ function renderCard(): void {
         ),
       ),
     ),
-    !desc && p.status !== 'buscando'
+    !desc && p.status !== 'buscando' && !isMobileCatalogReadOnly()
       ? h('div', { class: 'pc-manual' },
         h('p', { class: 'small warn-text' }, STATUS_TEXT[p.status]),
         h('form', { class: 'row', onsubmit: (e: Event) => { e.preventDefault(); void saveDesc(); } },

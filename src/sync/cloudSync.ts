@@ -1,6 +1,5 @@
 import {
   allProducts,
-  bulkPutProducts,
   countsForSession,
   createSession,
   getActiveSession,
@@ -25,6 +24,7 @@ import { APP_ID, type CountFile } from '../io/exportResults';
 import { mergeCountFiles, reconcileCatalogProducts } from '../io/mergeCounts';
 import { normalizeBarcode } from '../io/normalize';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
+import { isMobileCatalogReadOnly } from '../ui/catalogMode';
 
 export interface CloudParticipant {
   counter: string;
@@ -40,6 +40,7 @@ export interface CloudParticipant {
 export interface TombstoneState {
   counts?: Record<string, number>;
   movements?: Record<string, number>;
+  products?: Record<string, number>;
 }
 
 export interface CloudRoomState {
@@ -56,6 +57,7 @@ export interface CloudRoomState {
   tombstones?: {
     counts?: Record<string, number>;
     movements?: Record<string, number>;
+    products?: Record<string, number>;
   };
 }
 
@@ -348,6 +350,7 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
     tombstones = {
       counts: rawTomb.counts && typeof rawTomb.counts === 'object' ? rawTomb.counts : {},
       movements: rawTomb.movements && typeof rawTomb.movements === 'object' ? rawTomb.movements : {},
+      products: rawTomb.products && typeof rawTomb.products === 'object' ? rawTomb.products : {},
     };
   }
 
@@ -487,7 +490,7 @@ export async function saveLocalTombstones(tombstones: TombstoneState): Promise<v
 }
 
 export async function recordTombstone(
-  type: 'counts' | 'movements',
+  type: 'counts' | 'movements' | 'products',
   id: string,
   timestamp = Date.now(),
 ): Promise<void> {
@@ -514,6 +517,7 @@ export function mergeRoomStates(
     tombstones?: {
       counts?: Record<string, number>;
       movements?: Record<string, number>;
+      products?: Record<string, number>;
     };
   },
 ): CloudRoomState {
@@ -522,9 +526,11 @@ export function mergeRoomStates(
   const mergedTombstones: {
     counts: Record<string, number>;
     movements: Record<string, number>;
+    products: Record<string, number>;
   } = {
     counts: { ...(base?.tombstones?.counts || {}) },
     movements: { ...(base?.tombstones?.movements || {}) },
+    products: { ...(base?.tombstones?.products || {}) },
   };
 
   if (incoming.tombstones?.counts) {
@@ -539,6 +545,13 @@ export function mergeRoomStates(
     for (const [id, ts] of Object.entries(incoming.tombstones.movements)) {
       if (typeof ts === 'number') {
         mergedTombstones.movements[id] = Math.max(mergedTombstones.movements[id] || 0, ts);
+      }
+    }
+  }
+  if (incoming.tombstones?.products) {
+    for (const [bc, ts] of Object.entries(incoming.tombstones.products)) {
+      if (typeof ts === 'number') {
+        mergedTombstones.products[bc] = Math.max(mergedTombstones.products[bc] || 0, ts);
       }
     }
   }
@@ -571,6 +584,9 @@ export function mergeRoomStates(
 
   const upsertProdInRoom = (p: Product) => {
     if (!p || !p.barcode) return;
+    const prodTombTs = mergedTombstones.products[p.barcode];
+    if (prodTombTs !== undefined && prodTombTs >= (p.updatedAt || 0)) return;
+
     const skuUpper = (p.sku || '').trim().toUpperCase();
     let existingKey = prodMap.has(p.barcode) ? p.barcode : undefined;
     if (!existingKey && skuUpper && skuToBarcode.has(skuUpper)) {
@@ -599,39 +615,93 @@ export function mergeRoomStates(
       prodMap.delete(existingKey);
     }
 
-    const pIsOfficial = !p.uncataloged && (p.source === 'catalogo' || p.source === 'manual');
-    const prevIsPending = prev.source === 'pendiente' || Boolean(prev.uncataloged);
-    const nextDesc =
-      p.description && (prevIsPending || pIsOfficial || !prev.description)
-        ? p.description
-        : prev.description || p.description;
-    const nextSource: Product['source'] =
-      p.source === 'catalogo' || prev.source === 'catalogo'
-        ? 'catalogo'
-        : prev.source === 'pendiente' && p.source !== 'pendiente'
-          ? p.source
-          : prev.source;
-    const nextUncataloged =
-      p.uncataloged === false || prev.uncataloged === false || nextSource === 'catalogo'
-        ? false
-        : Boolean(prev.uncataloged && p.uncataloged);
+    const pTs = p.updatedAt ?? 0;
+    const prevTs = prev.updatedAt ?? 0;
+    let mergedProd: Product;
 
-    const mergedProd: Product = {
-      ...prev,
-      ...p,
-      barcode: targetBarcode,
-      description: nextDesc,
-      sku: p.sku || prev.sku,
-      unit: p.unit || prev.unit,
-      expectedQty: p.expectedQty !== undefined ? p.expectedQty : prev.expectedQty,
-      minQty: p.minQty !== undefined ? p.minQty : prev.minQty,
-      maxQty: p.maxQty !== undefined ? p.maxQty : prev.maxQty,
-      unitCost: p.unitCost !== undefined ? p.unitCost : prev.unitCost,
-      brand: p.brand || prev.brand,
-      imageUrl: p.imageUrl || prev.imageUrl,
-      uncataloged: nextUncataloged,
-      source: nextSource,
-    };
+    if (pTs > prevTs) {
+      mergedProd = {
+        ...prev,
+        ...p,
+        barcode: targetBarcode,
+        description: p.description || prev.description,
+        sku: p.sku || prev.sku,
+        unit: p.unit || prev.unit,
+        expectedQty: p.expectedQty,
+        minQty: p.minQty,
+        maxQty: p.maxQty,
+        unitCost: p.unitCost,
+        brand: p.brand ?? prev.brand,
+        imageUrl: p.imageUrl ?? prev.imageUrl,
+        uncataloged: p.uncataloged !== undefined ? p.uncataloged : prev.uncataloged,
+        source:
+          p.source === 'pendiente' && prev.source !== 'pendiente' && !p.description
+            ? prev.source
+            : p.source,
+        updatedAt: pTs,
+      };
+      if (mergedProd.expectedQty === undefined) delete mergedProd.expectedQty;
+      if (mergedProd.minQty === undefined) delete mergedProd.minQty;
+      if (mergedProd.maxQty === undefined) delete mergedProd.maxQty;
+      if (mergedProd.unitCost === undefined) delete mergedProd.unitCost;
+    } else if (prevTs > pTs) {
+      const pIsOfficial = !p.uncataloged && (p.source === 'catalogo' || p.source === 'manual');
+      const prevIsPending = prev.source === 'pendiente' || Boolean(prev.uncataloged);
+      const promotePrev = prevIsPending && pIsOfficial;
+      mergedProd = {
+        ...prev,
+        barcode: targetBarcode,
+        description: prev.description || p.description,
+        sku: prev.sku || p.sku,
+        unit: prev.unit || p.unit,
+        expectedQty: prev.expectedQty !== undefined ? prev.expectedQty : p.expectedQty,
+        minQty: prev.minQty !== undefined ? prev.minQty : p.minQty,
+        maxQty: prev.maxQty !== undefined ? prev.maxQty : p.maxQty,
+        unitCost: prev.unitCost !== undefined ? prev.unitCost : p.unitCost,
+        brand: prev.brand || p.brand,
+        imageUrl: prev.imageUrl || p.imageUrl,
+        uncataloged: promotePrev ? false : prev.uncataloged,
+        source: promotePrev ? p.source : prev.source,
+        updatedAt: prevTs,
+      };
+    } else {
+      const pIsOfficial = !p.uncataloged && (p.source === 'catalogo' || p.source === 'manual');
+      const prevIsPending = prev.source === 'pendiente' || Boolean(prev.uncataloged);
+      const nextDesc =
+        p.description && (prevIsPending || pIsOfficial || !prev.description)
+          ? p.description
+          : prev.description || p.description;
+      const nextSource: Product['source'] =
+        p.source === 'catalogo' || prev.source === 'catalogo'
+          ? 'catalogo'
+          : prev.source === 'pendiente' && p.source !== 'pendiente'
+            ? p.source
+            : prev.source;
+      const nextUncataloged =
+        p.uncataloged === false || prev.uncataloged === false || nextSource === 'catalogo'
+          ? false
+          : Boolean(prev.uncataloged && p.uncataloged);
+
+      mergedProd = {
+        ...prev,
+        ...p,
+        barcode: targetBarcode,
+        description: nextDesc,
+        sku: p.sku || prev.sku,
+        unit: p.unit || prev.unit,
+        expectedQty: p.expectedQty !== undefined ? p.expectedQty : prev.expectedQty,
+        minQty: p.minQty !== undefined ? p.minQty : prev.minQty,
+        maxQty: p.maxQty !== undefined ? p.maxQty : prev.maxQty,
+        unitCost: p.unitCost !== undefined ? p.unitCost : prev.unitCost,
+        brand: p.brand || prev.brand,
+        imageUrl: p.imageUrl || prev.imageUrl,
+        uncataloged: nextUncataloged,
+        source: nextSource,
+      };
+      const sameTs = pTs || prevTs;
+      if (sameTs) mergedProd.updatedAt = sameTs;
+    }
+
     prodMap.set(targetBarcode, mergedProd);
     if (mergedProd.sku) skuToBarcode.set(mergedProd.sku.trim().toUpperCase(), targetBarcode);
   };
@@ -759,12 +829,15 @@ export function computeStateFingerprint(state: CloudRoomState | null): string {
 
   const idealKeys = state.idealLevels ? Object.entries(state.idealLevels).map(([k, v]) => `${k}:${v}`).sort().join(',') : '';
   const prodSig = state.products
-    .map((p) => `${p.barcode}:${p.sku}:${p.description}:${p.expectedQty ?? ''}:${p.minQty ?? ''}:${p.maxQty ?? ''}`)
+    .map(
+      (p) =>
+        `${p.barcode}:${p.sku}:${p.description}:${p.expectedQty ?? ''}:${p.minQty ?? ''}:${p.maxQty ?? ''}:${p.unitCost ?? ''}:${p.updatedAt ?? ''}`,
+    )
     .sort()
     .join(';');
 
   const tombSig = state.tombstones
-    ? `${Object.entries(state.tombstones.counts || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}|${Object.entries(state.tombstones.movements || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}`
+    ? `${Object.entries(state.tombstones.counts || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}|${Object.entries(state.tombstones.movements || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}|${Object.entries(state.tombstones.products || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}`
     : '';
 
   return `${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}`;
@@ -787,13 +860,14 @@ export async function applyIncomingRoomStateToLocal(
   let hasNewChanges = prevFp !== nextFp;
 
   // Prune tombstoned items locally and sync local tombstones
+  const localTombstones = await getLocalTombstones();
+  const mergedTomb: TombstoneState = {
+    counts: { ...(localTombstones.counts || {}) },
+    movements: { ...(localTombstones.movements || {}) },
+    products: { ...(localTombstones.products || {}) },
+  };
   if (incomingState.tombstones) {
-    const localTombstones = await getLocalTombstones();
     let tombChanged = false;
-    const mergedTomb: TombstoneState = {
-      counts: { ...(localTombstones.counts || {}) },
-      movements: { ...(localTombstones.movements || {}) },
-    };
 
     if (incomingState.tombstones.counts) {
       for (const [id, ts] of Object.entries(incomingState.tombstones.counts)) {
@@ -813,6 +887,17 @@ export async function applyIncomingRoomStateToLocal(
           const prevTs = mergedTomb.movements?.[id] || 0;
           if (ts > prevTs) {
             mergedTomb.movements![id] = ts;
+            tombChanged = true;
+          }
+        }
+      }
+    }
+    if (incomingState.tombstones.products) {
+      for (const [bc, ts] of Object.entries(incomingState.tombstones.products)) {
+        if (typeof ts === 'number') {
+          const prevTs = mergedTomb.products?.[bc] || 0;
+          if (ts > prevTs) {
+            mergedTomb.products![bc] = ts;
             tombChanged = true;
           }
         }
@@ -851,10 +936,33 @@ export async function applyIncomingRoomStateToLocal(
         hasNewChanges = true;
       }
     }
+
+    // Delete any local product that has been tombstoned
+    if (mergedTomb.products && Object.keys(mergedTomb.products).length > 0) {
+      const localProds = await allProducts();
+      const db = await getDB();
+      for (const p of localProds) {
+        const tombTs = mergedTomb.products[p.barcode];
+        if (tombTs !== undefined && tombTs >= (p.updatedAt || 0)) {
+          await db.delete('products', p.barcode);
+          hasNewChanges = true;
+        }
+      }
+    }
   }
 
-  if (incomingState.products && incomingState.products.length > 0) {
-    const recRes = await reconcileCatalogProducts(incomingState.products);
+  const incomingProducts = (incomingState.products || []).filter((p) => {
+    const tombTs = mergedTomb.products?.[p.barcode];
+    return !(tombTs !== undefined && tombTs >= (p.updatedAt || 0));
+  });
+  const incomingCounts = (incomingState.counts || []).filter((c) => {
+    const cid = canonicalCountId(c.id);
+    const tombTs = mergedTomb.counts?.[cid];
+    return !(tombTs !== undefined && tombTs >= c.timestamp);
+  });
+
+  if (incomingProducts.length > 0) {
+    const recRes = await reconcileCatalogProducts(incomingProducts);
     if (recRes.added > 0 || recRes.updated > 0) {
       hasNewChanges = true;
     }
@@ -862,7 +970,7 @@ export async function applyIncomingRoomStateToLocal(
 
   // Si no hay sesión activa, NO creamos una sesión automáticamente (evita sesion fantasma)
   const session = await getActiveSession();
-  if (session && (incomingState.counts.length > 0 || incomingState.products.length > 0)) {
+  if (session && (incomingCounts.length > 0 || incomingProducts.length > 0)) {
     const remoteFile: CountFile = {
       app: APP_ID,
       version: 1,
@@ -876,8 +984,8 @@ export async function applyIncomingRoomStateToLocal(
         createdAt: session.createdAt,
         closed: false,
       },
-      counts: incomingState.counts,
-      products: incomingState.products,
+      counts: incomingCounts,
+      products: incomingProducts,
     };
     const mergeRes = await mergeCountFiles(session.id, [remoteFile]);
     if (mergeRes.added > 0 || (mergeRes.updated || 0) > 0 || mergeRes.productsAdded > 0) {
@@ -1022,20 +1130,36 @@ async function doSyncNow(opts?: {
     getLocalTombstones(),
   ]);
 
+  const mobileReadOnly = isMobileCatalogReadOnly();
+  const remoteBarcodeSet = new Set((remoteState?.products || []).map((p) => p.barcode));
   const touchedBarcodes = new Set(localCounts.map((c) => c.barcode));
   const touchedSkus = new Set(localMovements.map((m) => m.sku.toUpperCase()));
   // Sincronizar el catálogo completo (hasta 5000 productos) para garantizar conciliación total entre dispositivos
   const includeFullCatalog =
     localProducts.length <= 5000 || !remoteState || (remoteState.products?.length ?? 0) === 0;
-  const changedProducts = includeFullCatalog
-    ? localProducts
-    : localProducts.filter(
-        (p) =>
-          touchedBarcodes.has(p.barcode) ||
-          touchedSkus.has(p.sku.toUpperCase()) ||
-          p.uncataloged ||
-          p.source !== 'catalogo',
-      );
+  let changedProducts: Product[];
+  if (mobileReadOnly) {
+    // En móvil el catálogo es de solo lectura: nunca sobrescribir ni borrar productos maestros en la BD.
+    // Solo compartir artículos no catalogados escaneados en campo que aún no existan en la sala.
+    changedProducts = localProducts.filter((p) => p.uncataloged && !remoteBarcodeSet.has(p.barcode));
+  } else if (includeFullCatalog) {
+    changedProducts = localProducts;
+  } else {
+    changedProducts = localProducts.filter(
+      (p) =>
+        touchedBarcodes.has(p.barcode) ||
+        touchedSkus.has(p.sku.toUpperCase()) ||
+        p.uncataloged ||
+        p.source !== 'catalogo',
+    );
+  }
+
+  const outgoingTombstones: TombstoneState = mobileReadOnly
+    ? {
+        counts: localTombstones.counts,
+        movements: localTombstones.movements,
+      }
+    : localTombstones;
 
   // 2. Fusionar conteos locales + remotos incluyendo lápidas (tombstones)
   const mergedRoom = mergeRoomStates(remoteState, {
@@ -1045,7 +1169,7 @@ async function doSyncNow(opts?: {
     products: changedProducts,
     movements: localMovements,
     idealLevels: localIdealLevels,
-    tombstones: localTombstones,
+    tombstones: outgoingTombstones,
   });
 
   // Persistir tombstones consolidados
@@ -1053,10 +1177,15 @@ async function doSyncNow(opts?: {
     await saveLocalTombstones(mergedRoom.tombstones);
   }
 
-  // 3. Importar a la sesión local los conteos que venían de otros dispositivos/técnicos
+  // 3. Conciliar catálogo en IndexedDB local (incluso sin sesión activa) e importar conteos a la sesión
   let addedCounts = 0;
   let duplicateCounts = 0;
   let productsAdded = 0;
+
+  if (mergedRoom.products && mergedRoom.products.length > 0) {
+    const recRes = await reconcileCatalogProducts(mergedRoom.products);
+    productsAdded += recRes.added;
+  }
 
   if (session && (mergedRoom.counts.length > 0 || mergedRoom.products.length > 0)) {
     const remoteFile: CountFile = {
@@ -1078,7 +1207,9 @@ async function doSyncNow(opts?: {
     const mergeRes = await mergeCountFiles(session.id, [remoteFile]);
     addedCounts = mergeRes.added;
     duplicateCounts = mergeRes.duplicates;
-    productsAdded = mergeRes.productsAdded;
+    if (mergeRes.productsAdded > productsAdded) {
+      productsAdded = mergeRes.productsAdded;
+    }
   }
 
   // Eliminar localmente registros que hayan sido eliminados mediante tombstones
@@ -1102,6 +1233,16 @@ async function doSyncNow(opts?: {
       });
       if (filtered.length !== curMovs.length) {
         await saveAllMovements(filtered);
+      }
+    }
+    if (mergedRoom.tombstones.products && Object.keys(mergedRoom.tombstones.products).length > 0) {
+      const curProds = await allProducts();
+      const db = await getDB();
+      for (const p of curProds) {
+        const tombTs = mergedRoom.tombstones.products[p.barcode];
+        if (tombTs !== undefined && tombTs >= (p.updatedAt || 0)) {
+          await db.delete('products', p.barcode);
+        }
       }
     }
   }
@@ -1548,6 +1689,23 @@ export function decodeCompactCountQr(payload: string): CountFile {
     counts,
     products: [],
   };
+}
+
+/**
+ * Sincroniza explícitamente el catálogo de productos con la Base de Datos en la nube / sala local,
+ * funcionando incluso cuando no hay una sesión de conteo activa.
+ * En móvil de solo lectura descarga e incorpora los cambios remotos sin sobrescribir la BD.
+ */
+export async function syncCatalogWithDb(opts?: {
+  roomCode?: string;
+  endpointUrl?: string;
+}): Promise<SyncResult & { totalLocalProducts: number }> {
+  const res = await syncNow({
+    roomCode: opts?.roomCode,
+    endpointUrl: opts?.endpointUrl,
+  });
+  const totalLocalProducts = (await allProducts()).length;
+  return { ...res, totalLocalProducts };
 }
 
 /** Solo para pruebas */

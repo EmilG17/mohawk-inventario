@@ -9,11 +9,13 @@ import {
   normalizeRoomCode,
   startLiveCloudSync,
   stopLiveCloudSync,
+  syncCatalogWithDb,
   syncNow,
   testFirebaseConnection,
   triggerBackgroundSync,
 } from '../sync/cloudSync';
 import { importCatalogFlow } from './catalog';
+import { isMobileCatalogReadOnly } from './catalogMode';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, shareOrDownload, toast,
 } from './dom';
@@ -22,6 +24,7 @@ import { navigate, type View } from './router';
 export const settingsView: View = {
   title: 'Ajustes',
   async render(root, params) {
+    const readOnlyMobile = isMobileCatalogReadOnly();
     const [s, products] = await Promise.all([loadSettings(), allProducts()]);
     const totalProds = products.length;
     const uncatalogedCount = products.filter((p) => p.uncataloged).length;
@@ -156,13 +159,17 @@ export const settingsView: View = {
           ),
 
           h('div', { class: 'settings-action-grid' },
-            h('button', {
-              class: 'btn primary small',
-              onclick: () => importCatalogFlow(rerender),
-            }, icon('upload'), 'Importar Excel / CSV / JSON'),
+            readOnlyMobile
+              ? null
+              : h('button', {
+                  class: 'btn primary small',
+                  'data-testid': 'settings-import-catalog-btn',
+                  onclick: () => importCatalogFlow(rerender),
+                }, icon('upload'), 'Importar Excel / CSV / JSON'),
 
             h('button', {
-              class: 'btn small',
+              class: readOnlyMobile ? 'btn primary small' : 'btn small',
+              'data-testid': 'settings-sync-catalog-btn',
               onclick: async () => {
                 try {
                   toast('Conciliando catálogo y lecturas…', 'info', 1800);
@@ -172,13 +179,16 @@ export const settingsView: View = {
                   let cloudSynced = false;
                   const cleanRoom = normalizeRoomCode(syncRoomInput.value);
                   const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
-                  if (syncEnabledCheck.checked && cleanRoom) {
+                  if (readOnlyMobile && cleanRoom) {
+                    await syncCatalogWithDb({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
+                    cloudSynced = true;
+                  } else if (syncEnabledCheck.checked && cleanRoom) {
                     await syncNow({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
                     cloudSynced = true;
                   }
                   const afterProds = await allProducts();
                   toast(
-                    `Catálogo conciliado (${afterProds.length} productos, ${localRec.updated} actualizados${cloudSynced ? ' · sincronizado con Firebase' : ''})`,
+                    `Catálogo conciliado (${afterProds.length} productos, ${localRec.updated} actualizados${cloudSynced ? ' · sincronizado con BD' : ''})`,
                     'ok',
                     3500,
                   );
@@ -187,7 +197,7 @@ export const settingsView: View = {
                   toast('Error al conciliar: ' + (e as Error).message, 'error', 4000);
                 }
               },
-            }, icon('refresh'), 'Conciliar catálogo ahora'),
+            }, icon('refresh'), readOnlyMobile ? 'Sincronizar / Conciliar con BD' : 'Conciliar catálogo ahora'),
 
             h('button', {
               class: 'btn small',
@@ -216,19 +226,28 @@ export const settingsView: View = {
             }, icon('download'), 'Exportar (.xlsx)'),
           ),
 
+          readOnlyMobile
+            ? h(
+                'div',
+                { class: 'catalog-readonly-banner', 'data-testid': 'settings-catalog-readonly-note' },
+                '🔒 En móvil el catálogo es de solo lectura: puedes sincronizar y conciliar con la BD o exportar archivos; importar o vaciar el catálogo solo está disponible en PC.',
+              )
+            : null,
+
           h('div', { class: 'settings-subactions' },
             h('button', {
               class: 'btn ghost small',
               onclick: async () => {
                 const count = await loadSampleCatalog();
-                triggerBackgroundSync();
+                if (!readOnlyMobile) triggerBackgroundSync();
                 toast(`${count} consumibles de ejemplo cargados`, 'ok');
                 navigate('/catalogo');
               },
             }, 'Cargar catálogo de ejemplo'),
-            totalProds > 0
+            !readOnlyMobile && totalProds > 0
               ? h('button', {
                 class: 'btn ghost danger small',
+                'data-testid': 'settings-clear-catalog-btn',
                 onclick: async () => {
                   if (await confirmDialog(
                     'Vaciar catálogo',
@@ -237,6 +256,7 @@ export const settingsView: View = {
                     true,
                   )) {
                     await clearProducts();
+                    triggerBackgroundSync();
                     toast('Catálogo vaciado', 'info');
                     rerender();
                   }

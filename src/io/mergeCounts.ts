@@ -352,39 +352,98 @@ export async function reconcileCatalogProducts(
       barcodeRemap.set(p.barcode, targetBarcode);
     }
 
-    const nextDesc =
-      p.description && (localIsPending || incomingIsOfficial || !local.description)
-        ? p.description
-        : local.description || p.description;
+    const incTs = p.updatedAt ?? 0;
+    const locTs = local.updatedAt ?? 0;
+    let merged: Product;
 
-    const nextSource: Product['source'] =
-      p.source === 'catalogo' || local.source === 'catalogo'
-        ? 'catalogo'
+    if (incTs > locTs) {
+      merged = {
+        ...local,
+        ...p,
+        barcode: targetBarcode,
+        description: p.description || local.description,
+        sku: p.sku || local.sku,
+        unit: p.unit || local.unit,
+        expectedQty: p.expectedQty,
+        minQty: p.minQty,
+        maxQty: p.maxQty,
+        unitCost: p.unitCost,
+        brand: p.brand ?? local.brand,
+        imageUrl: p.imageUrl ?? local.imageUrl,
+        uncataloged: p.uncataloged !== undefined ? p.uncataloged : local.uncataloged,
+        source:
+          p.source === 'pendiente' && local.source !== 'pendiente' && !p.description
+            ? local.source
+            : p.source,
+        updatedAt: incTs,
+      };
+      if (merged.expectedQty === undefined) delete merged.expectedQty;
+      if (merged.minQty === undefined) delete merged.minQty;
+      if (merged.maxQty === undefined) delete merged.maxQty;
+      if (merged.unitCost === undefined) delete merged.unitCost;
+      if (merged.brand === undefined) delete merged.brand;
+      if (merged.imageUrl === undefined) delete merged.imageUrl;
+    } else if (locTs > incTs) {
+      const promoteUncataloged = localIsPending && incomingIsOfficial;
+      const nextDesc = local.description || p.description;
+      const nextSource: Product['source'] = promoteUncataloged
+        ? p.source
         : local.source === 'pendiente' && p.source !== 'pendiente'
           ? p.source
           : local.source;
+      merged = {
+        ...local,
+        barcode: targetBarcode,
+        description: nextDesc,
+        sku: local.sku || p.sku,
+        unit: local.unit || p.unit,
+        expectedQty: local.expectedQty !== undefined ? local.expectedQty : p.expectedQty,
+        minQty: local.minQty !== undefined ? local.minQty : p.minQty,
+        maxQty: local.maxQty !== undefined ? local.maxQty : p.maxQty,
+        unitCost: local.unitCost !== undefined ? local.unitCost : p.unitCost,
+        brand: local.brand || p.brand,
+        imageUrl: local.imageUrl || p.imageUrl,
+        uncataloged: promoteUncataloged ? false : local.uncataloged,
+        source: nextSource,
+        updatedAt: locTs,
+      };
+    } else {
+      const nextDesc =
+        p.description && (localIsPending || incomingIsOfficial || !local.description)
+          ? p.description
+          : local.description || p.description;
 
-    const nextUncataloged =
-      p.uncataloged === false || local.uncataloged === false || nextSource === 'catalogo'
-        ? false
-        : Boolean(local.uncataloged && p.uncataloged);
+      const nextSource: Product['source'] =
+        p.source === 'catalogo' || local.source === 'catalogo'
+          ? 'catalogo'
+          : local.source === 'pendiente' && p.source !== 'pendiente'
+            ? p.source
+            : local.source;
 
-    const merged: Product = {
-      ...local,
-      ...p,
-      barcode: targetBarcode,
-      description: nextDesc,
-      sku: p.sku || local.sku,
-      unit: p.unit || local.unit,
-      expectedQty: p.expectedQty !== undefined ? p.expectedQty : local.expectedQty,
-      minQty: p.minQty !== undefined ? p.minQty : local.minQty,
-      maxQty: p.maxQty !== undefined ? p.maxQty : local.maxQty,
-      unitCost: p.unitCost !== undefined ? p.unitCost : local.unitCost,
-      brand: p.brand || local.brand,
-      imageUrl: p.imageUrl || local.imageUrl,
-      uncataloged: nextUncataloged,
-      source: nextSource,
-    };
+      const nextUncataloged =
+        p.uncataloged === false || local.uncataloged === false || nextSource === 'catalogo'
+          ? false
+          : Boolean(local.uncataloged && p.uncataloged);
+
+      merged = {
+        ...local,
+        ...p,
+        barcode: targetBarcode,
+        description: nextDesc,
+        sku: p.sku || local.sku,
+        unit: p.unit || local.unit,
+        expectedQty: p.expectedQty !== undefined ? p.expectedQty : local.expectedQty,
+        minQty: p.minQty !== undefined ? p.minQty : local.minQty,
+        maxQty: p.maxQty !== undefined ? p.maxQty : local.maxQty,
+        unitCost: p.unitCost !== undefined ? p.unitCost : local.unitCost,
+        brand: p.brand || local.brand,
+        imageUrl: p.imageUrl || local.imageUrl,
+        uncataloged: nextUncataloged,
+        source: nextSource,
+      };
+      const sameTs = incTs || locTs;
+      if (sameTs) merged.updatedAt = sameTs;
+    }
 
     if (JSON.stringify(merged) !== JSON.stringify(local)) {
       toPut.push(merged);
@@ -403,7 +462,11 @@ export async function reconcileCatalogProducts(
   }
 
   if (toPut.length > 0) {
-    await bulkPutProducts(toPut, 'merge');
+    const txPut = db.transaction('products', 'readwrite');
+    for (const item of toPut) {
+      await txPut.store.put(item);
+    }
+    await txPut.done;
   }
 
   // Si algún código temporal SKU:... se remapeó a su código de barras oficial, actualizar conteos y movimientos locales

@@ -19,6 +19,8 @@ export interface Product {
   lookedUpAt?: number;
   /** Se buscó en línea y ninguna base lo tiene (no se reintenta automáticamente) */
   notFoundOnline?: boolean;
+  /** Marca temporal de la última modificación del producto para sincronización con DB */
+  updatedAt?: number;
 }
 
 export interface CountEntry {
@@ -100,12 +102,58 @@ export async function getDeviceId(): Promise<string> {
   return id;
 }
 
+type TombstonesMeta = {
+  counts?: Record<string, number>;
+  movements?: Record<string, number>;
+  products?: Record<string, number>;
+};
+
+async function recordProductTombstones(barcodes: string[], ts = Date.now()): Promise<void> {
+  if (!barcodes.length) return;
+  try {
+    const current = (await getMeta<TombstonesMeta>('cloud_sync_tombstones_v1')) || {};
+    const productsMap = { ...(current.products || {}) };
+    for (const bc of barcodes) {
+      if (!bc) continue;
+      productsMap[bc] = Math.max(productsMap[bc] || 0, ts);
+    }
+    await setMeta('cloud_sync_tombstones_v1', { ...current, products: productsMap });
+  } catch {}
+}
+
+async function clearProductTombstones(
+  entries: Array<string | { barcode: string; updatedAt: number }>,
+  defaultUpdatedAt = Date.now(),
+): Promise<void> {
+  if (!entries.length) return;
+  try {
+    const current = (await getMeta<TombstonesMeta>('cloud_sync_tombstones_v1')) || {};
+    if (!current.products || Object.keys(current.products).length === 0) return;
+    const productsMap = { ...current.products };
+    let changed = false;
+    for (const item of entries) {
+      const bc = typeof item === 'string' ? item : item.barcode;
+      const ts = typeof item === 'string' ? defaultUpdatedAt : item.updatedAt;
+      const tombTs = productsMap[bc];
+      if (tombTs !== undefined && ts >= tombTs) {
+        delete productsMap[bc];
+        changed = true;
+      }
+    }
+    if (changed) {
+      await setMeta('cloud_sync_tombstones_v1', { ...current, products: productsMap });
+    }
+  } catch {}
+}
+
 // ---------- productos ----------
 export async function getProduct(barcode: string): Promise<Product | undefined> {
   return (await getDB()).get('products', barcode);
 }
 export async function putProduct(p: Product): Promise<void> {
-  await (await getDB()).put('products', p);
+  const item: Product = { ...p, updatedAt: p.updatedAt ?? Date.now() };
+  await (await getDB()).put('products', item);
+  await clearProductTombstones([{ barcode: item.barcode, updatedAt: item.updatedAt! }]);
 }
 export async function allProducts(): Promise<Product[]> {
   return (await getDB()).getAll('products');
@@ -116,46 +164,87 @@ export async function findBySku(sku: string): Promise<Product | undefined> {
 /** Inserta/actualiza en bloque. mode 'replace' borra primero los productos del catálogo previo. */
 export async function bulkPutProducts(items: Product[], mode: 'merge' | 'replace' = 'merge'): Promise<void> {
   const db = await getDB();
+  const now = Date.now();
+  const stamped = items.map((it) => ({ ...it, updatedAt: it.updatedAt ?? now }));
+  const incomingSet = new Set(stamped.map((it) => it.barcode));
+  let removedBarcodes: string[] = [];
+
   const tx = db.transaction('products', 'readwrite');
-  if (mode === 'replace') await tx.store.clear();
-  for (const it of items) {
+  if (mode === 'replace') {
+    const existingKeys = (await tx.store.getAllKeys()) as string[];
+    removedBarcodes = existingKeys.filter((k) => !incomingSet.has(k));
+    await tx.store.clear();
+  }
+  for (const it of stamped) {
     const prev = mode === 'merge' ? await tx.store.get(it.barcode) : undefined;
     await tx.store.put(prev ? mergeProduct(prev, it) : it);
   }
   await tx.done;
+
+  if (removedBarcodes.length > 0) {
+    await recordProductTombstones(removedBarcodes, now);
+  }
+  if (stamped.length > 0) {
+    await clearProductTombstones(stamped.map((it) => ({ barcode: it.barcode, updatedAt: it.updatedAt! })));
+  }
 }
 
 /** Combina sin perder información: los campos vacíos/indefinidos del nuevo no sobrescriben al anterior. */
 export function mergeProduct(prev: Product, next: Product): Product {
+  const prevTs = prev.updatedAt ?? 0;
+  const nextTs = next.updatedAt ?? 0;
+  if (prevTs > nextTs) {
+    const out: Product = { ...prev, updatedAt: prevTs };
+    for (const [k, v] of Object.entries(next) as [keyof Product, unknown][]) {
+      if (k === 'updatedAt' || v === undefined || v === '') continue;
+      if ((out as any)[k] === undefined || (out as any)[k] === '') {
+        (out as any)[k] = v;
+      }
+    }
+    if (!prev.description && next.description) out.source = next.source;
+    return out;
+  }
+
   const out: Product = { ...prev };
   for (const [k, v] of Object.entries(next) as [keyof Product, unknown][]) {
     if (v === undefined || v === '') continue;
     (out as any)[k] = v;
   }
   if (!next.description && prev.description) out.source = prev.source;
+  const resolvedTs = Math.max(prevTs, nextTs);
+  if (resolvedTs > 0) out.updatedAt = resolvedTs;
   return out;
 }
 export async function clearProducts(): Promise<void> {
-  await (await getDB()).clear('products');
+  const db = await getDB();
+  const existingKeys = (await db.getAllKeys('products')) as string[];
+  await db.clear('products');
+  if (existingKeys.length > 0) {
+    await recordProductTombstones(existingKeys, Date.now());
+  }
 }
 
 export async function deleteProduct(barcode: string): Promise<void> {
   await (await getDB()).delete('products', barcode);
+  await recordProductTombstones([barcode], Date.now());
 }
 
 export async function deleteProducts(barcodes: string[]): Promise<number> {
   const db = await getDB();
   const tx = db.transaction('products', 'readwrite');
-  let count = 0;
+  const deleted: string[] = [];
   for (const b of barcodes) {
     const existing = await tx.store.get(b);
     if (existing) {
       await tx.store.delete(b);
-      count++;
+      deleted.push(b);
     }
   }
   await tx.done;
-  return count;
+  if (deleted.length > 0) {
+    await recordProductTombstones(deleted, Date.now());
+  }
+  return deleted.length;
 }
 
 export interface MassProductPatch {
@@ -205,6 +294,7 @@ export async function bulkModifyProducts(barcodes: string[], patch: MassProductP
     if (patch.source !== undefined) p.source = patch.source;
     if (patch.descriptionPrefix && p.description) p.description = `${patch.descriptionPrefix.trim()} ${p.description}`;
     if (patch.descriptionSuffix && p.description) p.description = `${p.description} ${patch.descriptionSuffix.trim()}`;
+    p.updatedAt = Math.max(Date.now(), (p.updatedAt ?? 0) + 1);
     await tx.store.put(p);
     count++;
   }
