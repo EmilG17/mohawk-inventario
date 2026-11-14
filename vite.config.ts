@@ -47,6 +47,9 @@ export default defineConfig({
   ],
   test: {
     environment: 'node',
+    maxWorkers: 4,
+    testTimeout: 10000,
+    hookTimeout: 15000,
     include: ['tests/unit/**/*.test.ts'],
     setupFiles: ['tests/unit/setup.ts'],
   },

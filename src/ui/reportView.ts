@@ -19,15 +19,27 @@ import { editProductDialog } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
 import { navigate, type View } from './router';
+import { onCloudRoomUpdate } from '../sync/cloudSync';
 
 let selectedSessionId: string | null = null;
 let filter: 'todos' | 'por_pedir' | RowStatus = 'todos';
 let query = '';
 let includeNotCounted = true;
+let unbindCloudSync: (() => void) | null = null;
 
 export const reportView: View = {
   title: 'Reporte',
   async render(root, params) {
+    if (unbindCloudSync) {
+      unbindCloudSync();
+      unbindCloudSync = null;
+    }
+    unbindCloudSync = onCloudRoomUpdate(() => {
+      if (root.isConnected) {
+        void reportView.render(root, params);
+      }
+    });
+
     if (params?.get('session')) {
       selectedSessionId = params.get('session');
     }
@@ -354,6 +366,12 @@ export const reportView: View = {
       list,
     );
     drawList();
+  },
+  destroy() {
+    if (unbindCloudSync) {
+      unbindCloudSync();
+      unbindCloudSync = null;
+    }
   },
 };
 

@@ -203,6 +203,15 @@ export async function deleteMovement(id: string): Promise<boolean> {
     if (idx === -1) return false;
     all.splice(idx, 1);
     await saveAllMovements(all);
+    try {
+      const tombstones =
+        (await getMeta<{ counts?: Record<string, number>; movements?: Record<string, number> }>(
+          'cloud_sync_tombstones_v1',
+        )) || {};
+      tombstones.movements = tombstones.movements || {};
+      tombstones.movements[id] = Date.now();
+      await setMeta('cloud_sync_tombstones_v1', tombstones);
+    } catch {}
     return true;
   });
 }

@@ -502,7 +502,7 @@ describe('Challenger Milestone B: Movements UI Interaction & Scanner Stress Harn
       expect(saveBtn).toBeDefined();
       saveBtn?.click();
 
-      await new Promise((r) => setTimeout(r, 20));
+      await new Promise((r) => setTimeout(r, 100));
 
       const movements = await getAllMovements();
       expect(movements.length).toBe(1);

@@ -360,7 +360,15 @@ function renderCard(): void {
         h('div', { class: 'quick-ok' }, '+1 registrado'),
         h('button', {
           class: 'btn', onclick: async () => {
-            if (lastQuick) { await deleteCount(lastQuick.id); lastQuick = null; pending = null; toast('Escaneo deshecho'); renderCard(); await renderRecent(); }
+            if (lastQuick) {
+              await deleteCount(lastQuick.id);
+              triggerBackgroundSync(session?.id);
+              lastQuick = null;
+              pending = null;
+              toast('Escaneo deshecho');
+              renderCard();
+              await renderRecent();
+            }
           },
         }, 'Deshacer'),
         h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), 'Producto'),
@@ -429,6 +437,7 @@ function editEntry(c: CountEntry, p?: Product) {
       label: 'Eliminar', kind: 'danger', onClick: async () => {
         if (await confirmDialog('Eliminar escaneo', '¿Eliminar este registro?', 'Eliminar', true)) {
           await deleteCount(c.id);
+          triggerBackgroundSync(session?.id);
           await renderRecent();
           toast('Registro eliminado');
         } else return true;
@@ -439,7 +448,8 @@ function editEntry(c: CountEntry, p?: Product) {
       label: 'Guardar', kind: 'primary', onClick: async () => {
         const n = parseNumber(qty.value);
         if (n === undefined || n < 0) { toast('Cantidad inválida', 'error'); return true; }
-        await putCount({ ...c, qty: n });
+        await putCount({ ...c, qty: n, timestamp: Date.now() });
+        triggerBackgroundSync(session?.id);
         await renderRecent();
         toast('Cantidad actualizada', 'ok');
       },

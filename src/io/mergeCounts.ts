@@ -11,6 +11,7 @@ import {
   type Product,
   type Session,
 } from '../db/db';
+import { getAllMovements, saveAllMovements } from '../db/movements';
 import { APP_ID, type CatalogFile, type CountFile } from './exportResults';
 import { normalizeBarcode, parseNumber } from './normalize';
 
@@ -271,6 +272,7 @@ export async function parseTechnicianReportFile(file: File): Promise<CountFile> 
 export interface MergeResult {
   added: number;
   duplicates: number;
+  updated?: number;
   productsAdded: number;
   counters: string[];
 }
@@ -416,7 +418,6 @@ export async function reconcileCatalogProducts(
     }
     await txCounts.done;
 
-    const { getAllMovements, saveAllMovements } = await import('../db/movements');
     const allMovs = await getAllMovements();
     let movChanged = false;
     const nextMovs = allMovs.map((m) => {
@@ -464,11 +465,21 @@ export async function mergeCountFiles(targetSessionId: string, files: CountFile[
       const scopedId = `${targetSessionId}__${c.id}`;
       const existingScoped = await tx.store.get(scopedId);
 
-      if (
-        (existingDirect && existingDirect.sessionId === targetSessionId) ||
-        existingScoped
-      ) {
-        res.duplicates++;
+      const existingRecord =
+        existingDirect && existingDirect.sessionId === targetSessionId
+          ? existingDirect
+          : existingScoped;
+
+      if (existingRecord) {
+        if (c.timestamp > existingRecord.timestamp && c.qty !== existingRecord.qty) {
+          existingRecord.qty = c.qty;
+          existingRecord.timestamp = c.timestamp;
+          if (c.counter?.trim()) existingRecord.counter = c.counter.trim();
+          await tx.store.put(existingRecord);
+          res.updated = (res.updated || 0) + 1;
+        } else {
+          res.duplicates++;
+        }
         continue;
       }
 

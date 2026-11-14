@@ -4,6 +4,7 @@ import {
   countsForSession,
   createSession,
   getActiveSession,
+  getDB,
   getDeviceId,
   getMeta,
   getSession,
@@ -36,6 +37,11 @@ export interface CloudParticipant {
   lastQty?: number;
 }
 
+export interface TombstoneState {
+  counts?: Record<string, number>;
+  movements?: Record<string, number>;
+}
+
 export interface CloudRoomState {
   app: typeof APP_ID;
   version: 1;
@@ -47,6 +53,10 @@ export interface CloudRoomState {
   participants: Record<string, CloudParticipant>;
   movements?: Movement[];
   idealLevels?: Record<string, number>;
+  tombstones?: {
+    counts?: Record<string, number>;
+    movements?: Record<string, number>;
+  };
 }
 
 export interface SyncResult {
@@ -332,6 +342,15 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
       ? (obj.idealLevels as Record<string, number>)
       : {};
 
+  let tombstones: CloudRoomState['tombstones'] = undefined;
+  if (obj.tombstones && typeof obj.tombstones === 'object' && !Array.isArray(obj.tombstones)) {
+    const rawTomb = obj.tombstones as Record<string, any>;
+    tombstones = {
+      counts: rawTomb.counts && typeof rawTomb.counts === 'object' ? rawTomb.counts : {},
+      movements: rawTomb.movements && typeof rawTomb.movements === 'object' ? rawTomb.movements : {},
+    };
+  }
+
   return {
     app: APP_ID,
     version: 1,
@@ -343,7 +362,15 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
     participants,
     movements,
     idealLevels,
+    tombstones,
   };
+}
+
+function getFetchTimeoutSignal(timeoutMs = 10000): AbortSignal | undefined {
+  if (typeof AbortSignal !== 'undefined' && typeof (AbortSignal as any).timeout === 'function') {
+    return (AbortSignal as any).timeout(timeoutMs);
+  }
+  return undefined;
 }
 
 function formatRemoteHttpError(status: number, roomCode: string): string {
@@ -365,6 +392,7 @@ async function fetchRemoteRoom(endpointUrl: string, roomCode: string): Promise<C
     method: 'GET',
     headers: { Accept: 'application/json' },
     cache: 'no-store',
+    signal: getFetchTimeoutSignal(10000),
   });
   if (res.status === 404) return null;
   if (!res.ok) {
@@ -382,6 +410,7 @@ async function putRemoteRoom(endpointUrl: string, roomCode: string, state: Cloud
     method: 'PUT',
     headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
     body: JSON.stringify(state),
+    signal: getFetchTimeoutSignal(10000),
   });
   if (!res.ok) {
     throw new Error(formatRemoteHttpError(res.status, roomCode));
@@ -449,6 +478,27 @@ export function canonicalCountId(id: string): string {
   return parts[parts.length - 1] || id;
 }
 
+export async function getLocalTombstones(): Promise<TombstoneState> {
+  return (await getMeta<TombstoneState>('cloud_sync_tombstones_v1')) || {};
+}
+
+export async function saveLocalTombstones(tombstones: TombstoneState): Promise<void> {
+  await setMeta('cloud_sync_tombstones_v1', tombstones);
+}
+
+export async function recordTombstone(
+  type: 'counts' | 'movements',
+  id: string,
+  timestamp = Date.now(),
+): Promise<void> {
+  const normId = type === 'counts' ? canonicalCountId(id) : id;
+  const current = (await getLocalTombstones()) || {};
+  const currentMap = { ...(current[type] || {}) };
+  currentMap[normId] = Math.max(currentMap[normId] || 0, timestamp);
+  current[type] = currentMap;
+  await saveLocalTombstones(current);
+}
+
 /**
  * Combina dos estados de sala sin perder ni duplicar conteos, productos ni movimientos.
  */
@@ -461,14 +511,45 @@ export function mergeRoomStates(
     products: Product[];
     movements?: Movement[];
     idealLevels?: Record<string, number>;
+    tombstones?: {
+      counts?: Record<string, number>;
+      movements?: Record<string, number>;
+    };
   },
 ): CloudRoomState {
   const roomCode = normalizeRoomCode(incoming.roomCode);
+
+  const mergedTombstones: {
+    counts: Record<string, number>;
+    movements: Record<string, number>;
+  } = {
+    counts: { ...(base?.tombstones?.counts || {}) },
+    movements: { ...(base?.tombstones?.movements || {}) },
+  };
+
+  if (incoming.tombstones?.counts) {
+    for (const [id, ts] of Object.entries(incoming.tombstones.counts)) {
+      if (typeof ts === 'number') {
+        const cid = canonicalCountId(id);
+        mergedTombstones.counts[cid] = Math.max(mergedTombstones.counts[cid] || 0, ts);
+      }
+    }
+  }
+  if (incoming.tombstones?.movements) {
+    for (const [id, ts] of Object.entries(incoming.tombstones.movements)) {
+      if (typeof ts === 'number') {
+        mergedTombstones.movements[id] = Math.max(mergedTombstones.movements[id] || 0, ts);
+      }
+    }
+  }
+
   const countMap = new Map<string, CountEntry>();
   if (base?.counts) {
     for (const c of base.counts) {
       if (c && c.id) {
         const cid = canonicalCountId(c.id);
+        const tombTs = mergedTombstones.counts[cid];
+        if (tombTs !== undefined && tombTs >= c.timestamp) continue;
         countMap.set(cid, { ...c, id: cid });
       }
     }
@@ -476,6 +557,8 @@ export function mergeRoomStates(
   for (const c of incoming.counts) {
     if (c && c.id) {
       const cid = canonicalCountId(c.id);
+      const tombTs = mergedTombstones.counts[cid];
+      if (tombTs !== undefined && tombTs >= c.timestamp) continue;
       const prev = countMap.get(cid);
       if (!prev || c.timestamp >= prev.timestamp) {
         countMap.set(cid, { ...c, id: cid });
@@ -583,16 +666,22 @@ export function mergeRoomStates(
     participants[key] = cur;
   }
 
-  // Movements: deduplicar por UUID (m.id), tomando la marca de tiempo más reciente en colisión
+  // Movements: deduplicar por UUID (m.id), tomando la marca de tiempo más reciente en colisión, respetando tombstones
   const movMap = new Map<string, Movement>();
   if (base?.movements && Array.isArray(base.movements)) {
     for (const m of base.movements) {
-      if (m && m.id) movMap.set(m.id, m);
+      if (m && m.id) {
+        const tombTs = mergedTombstones.movements[m.id];
+        if (tombTs !== undefined && tombTs >= m.timestamp) continue;
+        movMap.set(m.id, m);
+      }
     }
   }
   if (incoming.movements && Array.isArray(incoming.movements)) {
     for (const m of incoming.movements) {
       if (m && m.id) {
+        const tombTs = mergedTombstones.movements[m.id];
+        if (tombTs !== undefined && tombTs >= m.timestamp) continue;
         const prev = movMap.get(m.id);
         if (!prev || m.timestamp >= (prev.timestamp || 0)) {
           movMap.set(m.id, m);
@@ -648,26 +737,44 @@ export function mergeRoomStates(
     participants,
     movements: mergedMovements,
     idealLevels: mergedIdealLevels,
+    tombstones: mergedTombstones,
   };
 }
 
-function computeStateFingerprint(state: CloudRoomState | null): string {
+export function computeStateFingerprint(state: CloudRoomState | null): string {
   if (!state) return '';
   const lastCountTs = state.counts.length ? state.counts[state.counts.length - 1].timestamp : 0;
+  const countQtySum = state.counts.reduce((sum, c) => sum + (c.qty || 0), 0);
+  const countSig = state.counts
+    .map((c) => `${canonicalCountId(c.id)}:${c.qty}:${c.timestamp}`)
+    .sort()
+    .join(';');
+
   const lastMovTs = state.movements?.length ? state.movements[state.movements.length - 1].timestamp : 0;
+  const movQtySum = (state.movements || []).reduce((sum, m) => sum + (m.quantity || 0), 0);
+  const movSig = (state.movements || [])
+    .map((m) => `${m.id}:${m.quantity}:${m.timestamp}:${m.type}`)
+    .sort()
+    .join(';');
+
   const idealKeys = state.idealLevels ? Object.entries(state.idealLevels).map(([k, v]) => `${k}:${v}`).sort().join(',') : '';
   const prodSig = state.products
     .map((p) => `${p.barcode}:${p.sku}:${p.description}:${p.expectedQty ?? ''}:${p.minQty ?? ''}:${p.maxQty ?? ''}`)
     .sort()
     .join(';');
-  return `${state.counts.length}|${lastCountTs}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${idealKeys}`;
+
+  const tombSig = state.tombstones
+    ? `${Object.entries(state.tombstones.counts || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}|${Object.entries(state.tombstones.movements || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}`
+    : '';
+
+  return `${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}`;
 }
 
 /**
  * Aplica en la base de datos local (IndexedDB) un estado recibido en tiempo real desde Firebase o BroadcastChannel
  * sin sobrescribir ni perder datos locales.
  */
-async function applyIncomingRoomStateToLocal(
+export async function applyIncomingRoomStateToLocal(
   incomingState: CloudRoomState,
   sourceTransport: 'remote' | 'local',
 ): Promise<boolean> {
@@ -677,16 +784,74 @@ async function applyIncomingRoomStateToLocal(
 
   saveLocalRoomMirror(incomingState.roomCode, incomingState);
 
-  let session = await getActiveSession();
-  if (!session) {
-    const s = await loadSettings();
-    session = await createSession(
-      incomingState.sessionName || `Inventario Sala ${incomingState.roomCode}`,
-      s.counterName || 'Supervisor',
-    );
-  }
-
   let hasNewChanges = prevFp !== nextFp;
+
+  // Prune tombstoned items locally and sync local tombstones
+  if (incomingState.tombstones) {
+    const localTombstones = await getLocalTombstones();
+    let tombChanged = false;
+    const mergedTomb: TombstoneState = {
+      counts: { ...(localTombstones.counts || {}) },
+      movements: { ...(localTombstones.movements || {}) },
+    };
+
+    if (incomingState.tombstones.counts) {
+      for (const [id, ts] of Object.entries(incomingState.tombstones.counts)) {
+        if (typeof ts === 'number') {
+          const cid = canonicalCountId(id);
+          const prevTs = mergedTomb.counts?.[cid] || 0;
+          if (ts > prevTs) {
+            mergedTomb.counts![cid] = ts;
+            tombChanged = true;
+          }
+        }
+      }
+    }
+    if (incomingState.tombstones.movements) {
+      for (const [id, ts] of Object.entries(incomingState.tombstones.movements)) {
+        if (typeof ts === 'number') {
+          const prevTs = mergedTomb.movements?.[id] || 0;
+          if (ts > prevTs) {
+            mergedTomb.movements![id] = ts;
+            tombChanged = true;
+          }
+        }
+      }
+    }
+    if (tombChanged) {
+      await saveLocalTombstones(mergedTomb);
+    }
+
+    // Delete any local count that has been tombstoned
+    if (mergedTomb.counts && Object.keys(mergedTomb.counts).length > 0) {
+      const activeSession = await getActiveSession();
+      if (activeSession) {
+        const localCounts = await countsForSession(activeSession.id);
+        const db = await getDB();
+        for (const c of localCounts) {
+          const cid = canonicalCountId(c.id);
+          const tombTs = mergedTomb.counts[cid];
+          if (tombTs !== undefined && tombTs >= c.timestamp) {
+            await db.delete('counts', c.id);
+            hasNewChanges = true;
+          }
+        }
+      }
+    }
+
+    // Delete any local movement that has been tombstoned
+    if (mergedTomb.movements && Object.keys(mergedTomb.movements).length > 0) {
+      const localMovs = await listMovements();
+      const filteredMovs = localMovs.filter((m) => {
+        const tombTs = mergedTomb.movements![m.id];
+        return !(tombTs !== undefined && tombTs >= m.timestamp);
+      });
+      if (filteredMovs.length !== localMovs.length) {
+        await saveAllMovements(filteredMovs);
+        hasNewChanges = true;
+      }
+    }
+  }
 
   if (incomingState.products && incomingState.products.length > 0) {
     const recRes = await reconcileCatalogProducts(incomingState.products);
@@ -695,7 +860,9 @@ async function applyIncomingRoomStateToLocal(
     }
   }
 
-  if (incomingState.counts.length > 0 || incomingState.products.length > 0) {
+  // Si no hay sesión activa, NO creamos una sesión automáticamente (evita sesion fantasma)
+  const session = await getActiveSession();
+  if (session && (incomingState.counts.length > 0 || incomingState.products.length > 0)) {
     const remoteFile: CountFile = {
       app: APP_ID,
       version: 1,
@@ -713,26 +880,34 @@ async function applyIncomingRoomStateToLocal(
       products: incomingState.products,
     };
     const mergeRes = await mergeCountFiles(session.id, [remoteFile]);
-    if (mergeRes.added > 0 || mergeRes.productsAdded > 0) {
+    if (mergeRes.added > 0 || (mergeRes.updated || 0) > 0 || mergeRes.productsAdded > 0) {
       hasNewChanges = true;
     }
   }
 
   if (incomingState.movements && Array.isArray(incomingState.movements)) {
     const localMovs = await listMovements();
-    if (incomingState.movements.length !== localMovs.length) {
-      hasNewChanges = true;
-    }
     const movMap = new Map<string, Movement>();
     for (const m of localMovs) movMap.set(m.id, m);
+
+    let movsModified = false;
     for (const m of incomingState.movements) {
       const prev = movMap.get(m.id);
-      if (!prev || m.timestamp >= prev.timestamp) {
-        if (!prev) hasNewChanges = true;
+      if (!prev) {
         movMap.set(m.id, m);
+        movsModified = true;
+        hasNewChanges = true;
+      } else if (
+        m.timestamp > (prev.timestamp || 0) ||
+        (m.timestamp === (prev.timestamp || 0) &&
+          (m.quantity !== prev.quantity || m.type !== prev.type || m.sku !== prev.sku))
+      ) {
+        movMap.set(m.id, m);
+        movsModified = true;
+        hasNewChanges = true;
       }
     }
-    if (hasNewChanges) {
+    if (movsModified) {
       await saveAllMovements([...movMap.values()]);
     }
   }
@@ -766,10 +941,37 @@ async function applyIncomingRoomStateToLocal(
   return hasNewChanges;
 }
 
+let syncMutexTail: Promise<any> = Promise.resolve();
+
 /**
  * Sincroniza bidireccionalmente (Push + Pull) la sesión local con la Sala en Línea.
+ * Protegido contra reentrancia mediante un mutex en memoria para evitar colisiones concurrentes.
  */
 export async function syncNow(opts?: {
+  sessionId?: string;
+  roomCode?: string;
+  endpointUrl?: string;
+}): Promise<SyncResult> {
+  const previous = syncMutexTail;
+  let release: () => void = () => {};
+  syncMutexTail = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+
+  try {
+    await previous;
+  } catch {
+    // Continuar con la siguiente sincronización aunque la anterior haya fallado
+  }
+
+  try {
+    return await doSyncNow(opts);
+  } finally {
+    release();
+  }
+}
+
+async function doSyncNow(opts?: {
   sessionId?: string;
   roomCode?: string;
   endpointUrl?: string;
@@ -810,18 +1012,14 @@ export async function syncNow(opts?: {
     remoteState = getLocalRoomMirror(roomCode);
   }
 
-  // Si no hay sesión local activa, crear una automáticamente para esta sala
-  if (!session) {
-    const sessName = remoteState?.sessionName || `Inventario Sala ${roomCode}`;
-    const counter = s.counterName || 'Supervisor';
-    session = await createSession(sessName, counter);
-  }
-
-  const [localCounts, localProducts, localMovements, localIdealLevels] = await Promise.all([
-    countsForSession(session.id),
+  // Si no hay sesión activa, no creamos automáticamente una sesión local.
+  // Procedemos con la sincronización de catálogo, movimientos y niveles ideales.
+  const localCounts = session ? await countsForSession(session.id) : [];
+  const [localProducts, localMovements, localIdealLevels, localTombstones] = await Promise.all([
     allProducts(),
     listMovements(),
     getIdealLevels(),
+    getLocalTombstones(),
   ]);
 
   const touchedBarcodes = new Set(localCounts.map((c) => c.barcode));
@@ -839,22 +1037,28 @@ export async function syncNow(opts?: {
           p.source !== 'catalogo',
       );
 
-  // 2. Fusionar conteos locales + remotos
+  // 2. Fusionar conteos locales + remotos incluyendo lápidas (tombstones)
   const mergedRoom = mergeRoomStates(remoteState, {
     roomCode,
-    sessionName: session.name,
+    sessionName: session?.name || remoteState?.sessionName || `Sala ${roomCode}`,
     counts: localCounts,
     products: changedProducts,
     movements: localMovements,
     idealLevels: localIdealLevels,
+    tombstones: localTombstones,
   });
+
+  // Persistir tombstones consolidados
+  if (mergedRoom.tombstones) {
+    await saveLocalTombstones(mergedRoom.tombstones);
+  }
 
   // 3. Importar a la sesión local los conteos que venían de otros dispositivos/técnicos
   let addedCounts = 0;
   let duplicateCounts = 0;
   let productsAdded = 0;
 
-  if (mergedRoom.counts.length > 0 || mergedRoom.products.length > 0) {
+  if (session && (mergedRoom.counts.length > 0 || mergedRoom.products.length > 0)) {
     const remoteFile: CountFile = {
       app: APP_ID,
       version: 1,
@@ -875,6 +1079,31 @@ export async function syncNow(opts?: {
     addedCounts = mergeRes.added;
     duplicateCounts = mergeRes.duplicates;
     productsAdded = mergeRes.productsAdded;
+  }
+
+  // Eliminar localmente registros que hayan sido eliminados mediante tombstones
+  if (mergedRoom.tombstones) {
+    if (session && mergedRoom.tombstones.counts && Object.keys(mergedRoom.tombstones.counts).length > 0) {
+      const curCounts = await countsForSession(session.id);
+      const db = await getDB();
+      for (const c of curCounts) {
+        const cid = canonicalCountId(c.id);
+        const tombTs = mergedRoom.tombstones.counts[cid];
+        if (tombTs !== undefined && tombTs >= c.timestamp) {
+          await db.delete('counts', c.id);
+        }
+      }
+    }
+    if (mergedRoom.tombstones.movements && Object.keys(mergedRoom.tombstones.movements).length > 0) {
+      const curMovs = await listMovements();
+      const filtered = curMovs.filter((m) => {
+        const tombTs = mergedRoom.tombstones!.movements![m.id];
+        return !(tombTs !== undefined && tombTs >= m.timestamp);
+      });
+      if (filtered.length !== curMovs.length) {
+        await saveAllMovements(filtered);
+      }
+    }
   }
 
   // Persistir movimientos y niveles ideales fusionados en IndexedDB local
@@ -927,7 +1156,7 @@ export async function syncNow(opts?: {
 
   return {
     roomCode,
-    sessionId: session.id,
+    sessionId: session?.id || '',
     addedCounts,
     duplicateCounts,
     productsAdded,
@@ -950,6 +1179,28 @@ let liveSseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
 let liveSseRetries = 0;
 let liveSubscribedKey = '';
 let isPollingNow = false;
+let currentPollMs = 3000;
+let isSseConnected = false;
+
+function pauseLivePolling(): void {
+  if (livePollTimer) {
+    clearInterval(livePollTimer);
+    livePollTimer = null;
+  }
+}
+
+function resumeLivePolling(endpointUrl: string, roomCode: string): void {
+  if (isSseConnected) return; // Si SSE está activo, suspendemos el polling para no agotar la cuota de Firebase
+  if (livePollTimer !== null || !endpointUrl || !roomCode) return;
+  void pullRemoteRoomQuietly(endpointUrl, roomCode);
+  if (typeof setInterval !== 'undefined') {
+    livePollTimer = setInterval(() => {
+      if (!isSseConnected) {
+        void pullRemoteRoomQuietly(endpointUrl, roomCode);
+      }
+    }, currentPollMs);
+  }
+}
 
 function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): void {
   if (typeof EventSource === 'undefined' || liveSubscribedKey !== subKey) return;
@@ -960,14 +1211,22 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
     const es = new EventSource(roomUrl);
     liveEventSource = es;
 
-    const handleSsePayload = (ev: MessageEvent) => {
+    const onConnected = () => {
+      isSseConnected = true;
       liveSseRetries = 0;
+      pauseLivePolling();
+      emitStatus({ liveStream: 'sse', state: 'connected', lastError: null });
+    };
+
+    es.addEventListener('open', onConnected);
+
+    const handleSsePayload = (ev: MessageEvent) => {
+      onConnected();
       try {
         const parsed = JSON.parse(ev.data);
         const payload = parsed && typeof parsed === 'object' && 'data' in parsed ? parsed.data : parsed;
         const coerced = coerceRemoteRoomState(payload, roomCode);
         if (coerced) {
-          emitStatus({ liveStream: 'sse', state: 'connected', lastError: null });
           void applyIncomingRoomStateToLocal(coerced, 'remote');
         }
       } catch {}
@@ -975,17 +1234,19 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
 
     es.addEventListener('put', handleSsePayload as EventListener);
     es.addEventListener('patch', () => {
-      liveSseRetries = 0;
+      onConnected();
       void pullRemoteRoomQuietly(endpointUrl, roomCode);
     });
     es.onmessage = handleSsePayload;
     es.onerror = () => {
+      isSseConnected = false;
       try {
         es.close();
       } catch {}
       if (liveEventSource === es) {
         liveEventSource = null;
         emitStatus({ liveStream: 'polling' });
+        resumeLivePolling(endpointUrl, roomCode);
         if (liveSubscribedKey === subKey && typeof setTimeout !== 'undefined') {
           const delayMs = Math.min(30000, 1500 * Math.pow(2, liveSseRetries));
           liveSseRetries = Math.min(liveSseRetries + 1, 6);
@@ -1004,7 +1265,8 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
 
 /**
  * Inicia la suscripción en tiempo real a la sala configurada (vía Firebase Server-Sent Events
- * + Polling rápido cada 3 segundos) para que el supervisor y los técnicos vean los cambios al instante.
+ * con fallback inteligente a Polling cada 3 segundos solo cuando SSE no está disponible)
+ * para que el supervisor y los técnicos vean los cambios al instante sin quemar cuota de peticiones.
  */
 export function startLiveCloudSync(opts?: {
   roomCode?: string;
@@ -1029,6 +1291,7 @@ export function startLiveCloudSync(opts?: {
   stopLiveCloudSync();
   liveSubscribedKey = subKey;
   liveSseRetries = 0;
+  currentPollMs = pollMs;
 
   if (!endpointUrl) {
     const cached = getLocalRoomMirror(roomCode);
@@ -1056,16 +1319,12 @@ export function startLiveCloudSync(opts?: {
   // 1. Conexión SSE en tiempo real con reconexión exponencial
   connectLiveSse(endpointUrl, roomCode, subKey);
 
-  // 2. Polling periódico ligero (cada 3s) para garantizar tiempo real 100% confiable
-  void pullRemoteRoomQuietly(endpointUrl, roomCode);
-  if (typeof setInterval !== 'undefined') {
-    livePollTimer = setInterval(() => {
-      void pullRemoteRoomQuietly(endpointUrl, roomCode);
-    }, pollMs);
-  }
+  // 2. Polling de respaldo (solo si SSE no está conectado)
+  resumeLivePolling(endpointUrl, roomCode);
 }
 
 export function stopLiveCloudSync(): void {
+  isSseConnected = false;
   liveSubscribedKey = '';
   liveSseRetries = 0;
   if (liveSseReconnectTimer) {
@@ -1295,4 +1554,5 @@ export function decodeCompactCountQr(payload: string): CountFile {
 export function _clearMemoryRooms(): void {
   stopLiveCloudSync();
   memoryRooms.clear();
+  syncMutexTail = Promise.resolve();
 }

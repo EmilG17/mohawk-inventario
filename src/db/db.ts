@@ -263,8 +263,11 @@ export async function deleteSession(id: string): Promise<void> {
   const db = await getDB();
   const tx = db.transaction(['sessions', 'counts'], 'readwrite');
   await tx.objectStore('sessions').delete(id);
-  const idx = tx.objectStore('counts').index('sessionId');
-  for (let cur = await idx.openCursor(id); cur; cur = await cur.continue()) await cur.delete();
+  const countStore = tx.objectStore('counts');
+  const countKeys = await countStore.index('sessionId').getAllKeys(id);
+  for (const k of countKeys) {
+    await countStore.delete(k);
+  }
   await tx.done;
   const activeId = await getMeta<string>('activeSession');
   if (activeId === id) {
@@ -292,6 +295,13 @@ export async function putCount(e: CountEntry): Promise<void> {
 }
 export async function deleteCount(id: string): Promise<void> {
   await (await getDB()).delete('counts', id);
+  try {
+    const cid = id.includes('__') ? id.split('__').pop() || id : id;
+    const tombstones = (await getMeta<{ counts?: Record<string, number> }>('cloud_sync_tombstones_v1')) || {};
+    tombstones.counts = tombstones.counts || {};
+    tombstones.counts[cid] = Date.now();
+    await setMeta('cloud_sync_tombstones_v1', tombstones);
+  } catch {}
 }
 export async function getCount(id: string): Promise<CountEntry | undefined> {
   return (await getDB()).get('counts', id);
