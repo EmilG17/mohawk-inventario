@@ -13,7 +13,7 @@ test.describe('Impresión de etiquetas de distintos productos en la misma cola u
     await page.waitForSelector('.plist li');
 
     // 1. Abrir el modal de hoja de etiquetas desde la barra de herramientas del catálogo
-    const queueBtn = page.getByRole('button', { name: /Cola de etiquetas/i });
+    const queueBtn = page.getByTestId('catalog-queue-btn');
     await expect(queueBtn).toBeVisible();
     await queueBtn.click();
 

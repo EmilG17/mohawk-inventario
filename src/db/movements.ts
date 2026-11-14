@@ -46,6 +46,16 @@ export interface MovementSummary {
   lastMovementTimestamp?: number;
 }
 
+// ----------------- WRITE MUTEX (Concurrencia) -----------------
+
+let movementWriteQueue: Promise<unknown> = Promise.resolve();
+
+function withMovementMutex<T>(fn: () => Promise<T>): Promise<T> {
+  const next = movementWriteQueue.then(fn, fn);
+  movementWriteQueue = next.catch(() => {});
+  return next;
+}
+
 // ----------------- CRUD & LEDGER -----------------
 
 export async function getAllMovements(): Promise<Movement[]> {
@@ -58,7 +68,7 @@ export async function saveAllMovements(movements: Movement[]): Promise<void> {
 }
 
 export async function recordMovement(data: NewMovement): Promise<Movement> {
-  if (typeof data.quantity !== 'number' || isNaN(data.quantity) || data.quantity <= 0) {
+  if (typeof data.quantity !== 'number' || !Number.isFinite(data.quantity) || data.quantity <= 0) {
     throw new Error('La cantidad del movimiento debe ser un número positivo mayor a 0');
   }
   const sku = (data.sku || '').trim().toUpperCase();
@@ -81,14 +91,16 @@ export async function recordMovement(data: NewMovement): Promise<Movement> {
     machineOrArea: (data.machineOrArea || '').trim(),
     folio: (data.folio || '').trim(),
     notes: data.notes?.trim() || undefined,
-    cost: typeof data.cost === 'number' && !isNaN(data.cost) ? Math.round(data.cost * 1000) / 1000 : undefined,
+    cost: typeof data.cost === 'number' && Number.isFinite(data.cost) && data.cost >= 0 ? Math.round(data.cost * 1000) / 1000 : undefined,
     deviceId,
   };
 
-  const current = await getAllMovements();
-  current.push(movement);
-  await saveAllMovements(current);
-  return movement;
+  return withMovementMutex(async () => {
+    const current = await getAllMovements();
+    current.push(movement);
+    await saveAllMovements(current);
+    return movement;
+  });
 }
 
 export async function recordEntry(params: {
@@ -185,45 +197,53 @@ export async function getMovement(id: string): Promise<Movement | undefined> {
 }
 
 export async function deleteMovement(id: string): Promise<boolean> {
-  const all = await getAllMovements();
-  const idx = all.findIndex((m) => m.id === id);
-  if (idx === -1) return false;
-  all.splice(idx, 1);
-  await saveAllMovements(all);
-  return true;
+  return withMovementMutex(async () => {
+    const all = await getAllMovements();
+    const idx = all.findIndex((m) => m.id === id);
+    if (idx === -1) return false;
+    all.splice(idx, 1);
+    await saveAllMovements(all);
+    return true;
+  });
 }
 
 export async function clearMovements(): Promise<void> {
-  await setMeta(MOVEMENTS_META_KEY, []);
+  return withMovementMutex(async () => {
+    await setMeta(MOVEMENTS_META_KEY, []);
+  });
 }
 
 export async function importMovements(
   incoming: Movement[],
   mode: 'append' | 'replace' = 'append',
 ): Promise<{ added: number; duplicates: number }> {
-  if (mode === 'replace') {
-    const valid = incoming.filter((m) => m.id && m.sku && typeof m.quantity === 'number' && m.quantity > 0);
-    await saveAllMovements(valid);
-    return { added: valid.length, duplicates: 0 };
-  }
-
-  const current = await getAllMovements();
-  const map = new Map<string, Movement>(current.map((m) => [m.id, m]));
-  let added = 0;
-  let duplicates = 0;
-
-  for (const m of incoming) {
-    if (!m.id || !m.sku || typeof m.quantity !== 'number' || m.quantity <= 0) continue;
-    if (map.has(m.id)) {
-      duplicates++;
-    } else {
-      map.set(m.id, m);
-      added++;
+  return withMovementMutex(async () => {
+    if (mode === 'replace') {
+      const valid = incoming.filter(
+        (m) => m.id && m.sku && typeof m.quantity === 'number' && Number.isFinite(m.quantity) && m.quantity > 0,
+      );
+      await saveAllMovements(valid);
+      return { added: valid.length, duplicates: 0 };
     }
-  }
 
-  await saveAllMovements([...map.values()]);
-  return { added, duplicates };
+    const current = await getAllMovements();
+    const map = new Map<string, Movement>(current.map((m) => [m.id, m]));
+    let added = 0;
+    let duplicates = 0;
+
+    for (const m of incoming) {
+      if (!m.id || !m.sku || typeof m.quantity !== 'number' || !Number.isFinite(m.quantity) || m.quantity <= 0) continue;
+      if (map.has(m.id)) {
+        duplicates++;
+      } else {
+        map.set(m.id, m);
+        added++;
+      }
+    }
+
+    await saveAllMovements([...map.values()]);
+    return { added, duplicates };
+  });
 }
 
 // ----------------- SUMMARIES & AGGREGATIONS -----------------
@@ -316,35 +336,41 @@ export async function getIdealLevels(): Promise<Record<string, number>> {
 export async function getIdealQtyForSku(sku: string): Promise<number | undefined> {
   const levels = await getIdealLevels();
   const val = levels[sku.trim().toUpperCase()];
-  return typeof val === 'number' && !isNaN(val) ? val : undefined;
+  return typeof val === 'number' && Number.isFinite(val) ? val : undefined;
 }
 
 export async function setIdealLevel(sku: string, idealQty: number): Promise<void> {
   const cleanSku = sku.trim().toUpperCase();
   if (!cleanSku) throw new Error('SKU requerido');
-  const levels = await getIdealLevels();
-  if (idealQty < 0 || isNaN(idealQty)) {
-    delete levels[cleanSku];
-  } else {
-    levels[cleanSku] = Math.round(idealQty * 1000) / 1000;
-  }
-  await setMeta(IDEAL_LEVELS_META_KEY, levels);
+  return withMovementMutex(async () => {
+    const levels = await getIdealLevels();
+    if (!Number.isFinite(idealQty) || idealQty < 0) {
+      delete levels[cleanSku];
+    } else {
+      levels[cleanSku] = Math.round(idealQty * 1000) / 1000;
+    }
+    await setMeta(IDEAL_LEVELS_META_KEY, levels);
+  });
 }
 
 export async function setIdealLevels(levels: Record<string, number>): Promise<void> {
-  const current = await getIdealLevels();
-  for (const [k, v] of Object.entries(levels)) {
-    const sku = k.trim().toUpperCase();
-    if (!sku) continue;
-    if (typeof v === 'number' && !isNaN(v) && v >= 0) {
-      current[sku] = Math.round(v * 1000) / 1000;
-    } else if (v < 0 || isNaN(v)) {
-      delete current[sku];
+  return withMovementMutex(async () => {
+    const current = await getIdealLevels();
+    for (const [k, v] of Object.entries(levels)) {
+      const sku = k.trim().toUpperCase();
+      if (!sku) continue;
+      if (typeof v === 'number' && Number.isFinite(v) && v >= 0) {
+        current[sku] = Math.round(v * 1000) / 1000;
+      } else if (!Number.isFinite(v) || v < 0) {
+        delete current[sku];
+      }
     }
-  }
-  await setMeta(IDEAL_LEVELS_META_KEY, current);
+    await setMeta(IDEAL_LEVELS_META_KEY, current);
+  });
 }
 
 export async function clearIdealLevels(): Promise<void> {
-  await setMeta(IDEAL_LEVELS_META_KEY, {});
+  return withMovementMutex(async () => {
+    await setMeta(IDEAL_LEVELS_META_KEY, {});
+  });
 }

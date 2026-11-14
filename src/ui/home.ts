@@ -1,9 +1,27 @@
 import {
-  allProducts, allSessions, closeSession, countsForSession, createSession, getActiveSession, reopenSession,
+  allProducts,
+  allSessions,
+  closeSession,
+  countsForSession,
+  createSession,
+  getActiveSession,
+  reopenSession,
 } from '../db/db';
+import { getAllMovements } from '../db/movements';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
-import { clear, confirmDialog, fmtDateTime, h, icon, promptDialog, toast } from './dom';
+import { getCloudConnectionStatus } from '../sync/cloudSync';
+import { detectPlatformInfo } from './app';
+import {
+  clear,
+  confirmDialog,
+  fmtDateTime,
+  fmtNum,
+  h,
+  icon,
+  promptDialog,
+  toast,
+} from './dom';
 import { installState, promptInstall } from './install';
 import type { View } from './router';
 import { navigate } from './router';
@@ -13,7 +31,9 @@ export async function askCounterName(force = false): Promise<string | null> {
   const s = await loadSettings();
   if (s.counterName && !force) return s.counterName;
   const name = await promptDialog('¿Quién está contando?', 'Tu nombre', s.counterName, {
-    autocomplete: 'name', maxlength: 40, placeholder: 'Ej. Juan Pérez',
+    autocomplete: 'name',
+    maxlength: 40,
+    placeholder: 'Ej. Juan Pérez',
   });
   if (name && name.trim()) {
     await saveSettings({ counterName: name.trim() });
@@ -30,7 +50,9 @@ export async function newSessionFlow(): Promise<boolean> {
   }
   const d = new Date();
   const def = `Inventario ${d.toLocaleDateString('es-MX')} ${counter.split(' ')[0]}`;
-  const name = await promptDialog('Nueva sesión de conteo', 'Nombre de la sesión', def, { maxlength: 60 });
+  const name = await promptDialog('Nueva sesión de conteo', 'Nombre de la sesión', def, {
+    maxlength: 60,
+  });
   if (!name) return false;
   await createSession(name.trim() || def, counter);
   toast('Sesión creada', 'ok');
@@ -40,163 +62,630 @@ export async function newSessionFlow(): Promise<boolean> {
 export const homeView: View = {
   title: 'Inicio',
   async render(root) {
-    const [s, session, products, pending, sessions] = await Promise.all([
-      loadSettings(), getActiveSession(), allProducts(), pendingCount(), allSessions(),
+    const [s, session, products, pending, sessions, movements] = await Promise.all([
+      loadSettings(),
+      getActiveSession(),
+      allProducts(),
+      pendingCount(),
+      allSessions(),
+      getAllMovements(),
     ]);
+
     const counts = session ? await countsForSession(session.id) : [];
     const catalogCount = products.filter((p) => !p.uncataloged).length;
     const withExpected = products.filter((p) => p.expectedQty !== undefined).length;
+    const uncatalogedCount = products.filter((p) => p.uncataloged).length;
     const distinct = new Set(counts.map((c) => c.barcode)).size;
     const units = counts.reduce((a, c) => a + c.qty, 0);
-    const pastSessions = sessions.slice(0, 3);
+    const pastSessions = sessions.slice(0, 4);
 
+    const totalMovements = movements.length;
+    const totalIn = movements
+      .filter((m) => m.type === 'IN')
+      .reduce((acc, m) => acc + m.quantity, 0);
+    const totalOut = movements
+      .filter((m) => m.type === 'OUT')
+      .reduce((acc, m) => acc + m.quantity, 0);
+    const recentMovements = [...movements].sort((a, b) => b.timestamp - a.timestamp).slice(0, 3);
+
+    const cloudStatus = getCloudConnectionStatus();
+    const platform = detectPlatformInfo();
     const install = installState();
 
-    clear(root,
-      h('section', { class: 'card hello' },
-        h('div', null,
-          h('div', { class: 'muted small' }, 'Contador'),
-          h('div', { class: 'big' }, s.counterName || 'Sin nombre'),
-        ),
-        h('button', { class: 'btn ghost sm', onclick: async () => { await askCounterName(true); navigate('/'); } }, 'Cambiar'),
-      ),
+    const todayStr = new Intl.DateTimeFormat('es-MX', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric',
+    }).format(new Date());
 
-      session
-        ? h('section', { class: 'card' },
-          h('div', { class: 'muted small' }, 'Sesión activa'),
-          h('h2', null, session.name),
-          h('div', { class: 'muted small' }, `Iniciada ${fmtDateTime(session.createdAt)} · ${session.counter}`),
-          h('div', { class: 'stats' },
-            stat(distinct, 'productos'),
-            stat(Math.round(units * 100) / 100, 'unidades'),
-            stat(counts.length, 'escaneos'),
-          ),
-          h('button', { class: 'btn primary xl', onclick: () => navigate('/contar') }, icon('scan'), 'Continuar conteo'),
-          h('div', { class: 'row wrap' },
-            h('button', { class: 'btn', onclick: () => navigate('/reporte') }, icon('chart'), 'Ver reporte'),
-            h('button', { class: 'btn', onclick: () => navigate('/movimientos') }, icon('swap'), 'Kardex / Movimientos'),
-            h('button', {
-              class: 'btn',
-              onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
-            }, icon('users'), 'Unificar reportes de técnicos'),
-            h('button', { class: 'btn', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } }, 'Nueva sesión'),
-            h('button', {
-              class: 'btn danger ghost',
-              onclick: async () => {
-                const ok = await confirmDialog(
-                  'Finalizar sesión de conteo',
-                  `¿Deseas finalizar la sesión "${session.name}"? Los datos quedarán guardados y listos para consulta o reporte.`,
-                  'Finalizar sesión',
-                  true,
-                );
-                if (ok) {
-                  await closeSession(session.id);
-                  toast('Sesión finalizada con éxito', 'ok');
-                  navigate('/');
-                }
-              },
-            }, 'Finalizar sesión'),
-          ),
-        )
-        : h('section', { class: 'card' },
-          h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
-          h('h2', null, 'Sin sesión activa'),
-          h('p', { class: 'muted' }, 'No hay ninguna sesión de conteo en curso. Puedes iniciar una nueva sesión para escanear consumibles, unificar reportes de técnicos o revisar sesiones anteriores.'),
-          h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
-            icon('scan'), 'Iniciar nueva sesión'),
-          h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
-            h('button', { class: 'btn', onclick: () => navigate('/movimientos') }, icon('swap'), 'Kardex / Movimientos'),
-            h('button', {
-              class: 'btn',
-              onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
-            }, icon('users'), 'Unificar reportes de técnicos'),
-            h('button', { class: 'btn', onclick: () => navigate('/catalogo') }, icon('list'), 'Ver catálogo de productos'),
-            h('button', { class: 'btn ghost', onclick: () => navigate('/equipo') }, icon('users'), 'Ver todas las sesiones'),
-          ),
-          pastSessions.length > 0
-            ? [
-              h('h3', { class: 'section-title', style: 'margin-top: 20px;' }, 'Sesiones recientes'),
-              h('ul', { class: 'session-list' },
-                pastSessions.map((ps) =>
-                  h('li', { class: 's-item', style: 'cursor: default;' },
-                    h('div', { class: 'grow' },
-                      h('div', { class: 's-name' },
-                        ps.name,
-                        ' ',
-                        ps.closed
-                          ? h('span', { class: 'badge info' }, 'Cerrada')
-                          : h('span', { class: 'badge warn' }, 'Abierta'),
-                      ),
-                      h('div', { class: 'muted small' },
-                        `${ps.counter} · ${fmtDateTime(ps.createdAt)}`,
-                        ps.closed && ps.closedAt ? ` · Cerrada ${fmtDateTime(ps.closedAt)}` : '',
-                      ),
-                    ),
-                    h('div', { class: 'row', style: 'gap: 6px;' },
-                      h('button', {
-                        class: 'btn sm',
-                        onclick: () => navigate(`/reporte?session=${ps.id}`),
-                      }, icon('chart'), 'Ver reporte'),
-                      ps.closed
-                        ? h('button', {
-                          class: 'btn sm ghost',
-                          onclick: async () => {
-                            await reopenSession(ps.id);
-                            toast('Sesión reabierta y activada', 'ok');
-                            navigate('/contar');
-                          },
-                        }, 'Reabrir')
-                        : h('button', {
-                          class: 'btn sm primary',
-                          onclick: async () => {
-                            await reopenSession(ps.id);
-                            toast(`Sesión activa: ${ps.name}`, 'ok');
-                            navigate('/contar');
-                          },
-                        }, 'Continuar'),
-                    ),
+    clear(
+      root,
+      h(
+        'div',
+        { class: 'dash-wrap' },
+
+        /* 1. HERO Y PERFIL RESPONSIVO */
+        h(
+          'section',
+          { class: 'card dash-hero-card' },
+          h(
+            'div',
+            { class: 'dash-hero-inner' },
+            h(
+              'div',
+              { class: 'dash-hero-left' },
+              h(
+                'div',
+                { class: 'dash-user-avatar' },
+                (s.counterName || 'T').trim().slice(0, 2).toUpperCase(),
+              ),
+              h(
+                'div',
+                { class: 'dash-user-meta' },
+                h(
+                  'div',
+                  { class: 'dash-tag-row' },
+                  h('span', { class: 'badge info' }, platform.label),
+                  cloudStatus.roomCode && cloudStatus.state === 'connected'
+                    ? h('span', { class: 'badge ok' }, `🟢 Sala: ${cloudStatus.roomCode}`)
+                    : cloudStatus.roomCode
+                      ? h('span', { class: 'badge warn' }, `🟡 Sala: ${cloudStatus.roomCode}`)
+                      : h('span', { class: 'badge default' }, '⚪ Modo Local'),
+                  h(
+                    'span',
+                    { class: navigator.onLine ? 'badge ok' : 'badge warn' },
+                    navigator.onLine ? 'En línea' : 'Sin conexión',
                   ),
                 ),
+                h(
+                  'div',
+                  { class: 'hello' },
+                  h(
+                    'div',
+                    null,
+                    h('div', { class: 'muted xsmall' }, 'Operador / Contador asignado'),
+                    h('div', { class: 'big' }, s.counterName || 'Sin asignar'),
+                  ),
+                  h(
+                    'button',
+                    {
+                      class: 'btn ghost sm',
+                      onclick: async () => {
+                        await askCounterName(true);
+                        navigate('/');
+                      },
+                    },
+                    icon('gear'),
+                    'Cambiar',
+                  ),
+                ),
+                h('div', { class: 'muted small dash-date-text' }, todayStr),
               ),
-            ]
-            : null,
+            ),
+            h(
+              'div',
+              { class: 'dash-hero-right' },
+              session
+                ? h(
+                  'div',
+                  { class: 'dash-quick-session-badge' },
+                  h('span', { class: 'muted xsmall' }, 'SESIÓN ACTIVA'),
+                  h('b', { class: 'dash-quick-session-title' }, session.name),
+                  h(
+                    'span',
+                    { class: 'muted small' },
+                    `${distinct} productos · ${fmtNum(units)} unidades`,
+                  ),
+                )
+                : h(
+                  'div',
+                  { class: 'dash-quick-session-badge empty', 'data-testid': 'home-idle-badge' },
+                  h('span', { class: 'muted xsmall' }, 'ESTADO DE CONTEO'),
+                  h('h2', { class: 'dash-quick-session-title', style: 'margin:0; font-weight:700;' }, 'Sin sesión activa'),
+                  h('span', { class: 'muted small' }, 'Inicia una sesión para comenzar'),
+                ),
+            ),
+          ),
         ),
 
-      h('section', { class: 'card' },
-        h('div', { class: 'card-head' },
-          h('h3', null, 'Catálogo'),
-          h('button', { class: 'btn ghost sm', onclick: () => navigate('/catalogo') }, 'Abrir'),
+        /* 2. CUADRÍCULA DE KPIS METRICAS (4 columnas en desktop, 2 en móvil) */
+        h(
+          'section',
+          { class: 'dash-kpi-grid' },
+          // KPI 1: Sesión
+          h(
+            'div',
+            {
+              class: 'dash-kpi-card clickable',
+              'data-testid': 'home-kpi-session',
+              onclick: () => (session ? navigate('/contar') : void (newSessionFlow().then((ok) => ok && navigate('/contar')))),
+            },
+            h(
+              'div',
+              { class: 'dash-kpi-header' },
+              h('span', { class: 'dash-kpi-label' }, 'Sesión de Conteo'),
+              session
+                ? h('span', { class: 'badge ok' }, 'Activa')
+                : h('span', { class: 'badge default' }, 'Inactiva'),
+            ),
+            h(
+              'div',
+              { class: 'dash-kpi-value' },
+              session ? fmtNum(distinct) : '0',
+            ),
+            h(
+              'div',
+              { class: 'dash-kpi-sub' },
+              session
+                ? `${fmtNum(units)} pzas · ${counts.length} escaneos`
+                : 'Clic para iniciar sesión',
+            ),
+          ),
+
+          // KPI 2: Catálogo
+          h(
+            'div',
+            { class: 'dash-kpi-card clickable', 'data-testid': 'home-kpi-catalog', onclick: () => navigate('/catalogo') },
+            h(
+              'div',
+              { class: 'dash-kpi-header' },
+              h('span', { class: 'dash-kpi-label' }, 'Catálogo Maestro'),
+              h('span', { class: 'badge info' }, `${fmtNum(catalogCount)} SKUs`),
+            ),
+            h('div', { class: 'dash-kpi-value' }, fmtNum(catalogCount)),
+            h(
+              'div',
+              { class: 'dash-kpi-sub' },
+              `${fmtNum(withExpected)} con stock teórico${uncatalogedCount > 0 ? ` · ${uncatalogedCount} nuevos` : ''}`,
+            ),
+          ),
+
+          // KPI 3: Kardex
+          h(
+            'div',
+            { class: 'dash-kpi-card clickable', 'data-testid': 'home-kpi-kardex', onclick: () => navigate('/movimientos') },
+            h(
+              'div',
+              { class: 'dash-kpi-header' },
+              h('span', { class: 'dash-kpi-label' }, 'Kardex (Flujo)'),
+              h('span', { class: 'badge ok' }, `${totalMovements} movs`),
+            ),
+            h(
+              'div',
+              { class: 'dash-kpi-value flow' },
+              h('span', { class: 'in-text' }, `+${fmtNum(Math.round(totalIn))}`),
+              ' / ',
+              h('span', { class: 'out-text' }, `-${fmtNum(Math.round(totalOut))}`),
+            ),
+            h('div', { class: 'dash-kpi-sub' }, 'Entradas vs Salidas acumuladas'),
+          ),
+
+          // KPI 4: Equipo y Nube
+          h(
+            'div',
+            { class: 'dash-kpi-card clickable', 'data-testid': 'home-kpi-team', onclick: () => navigate('/equipo') },
+            h(
+              'div',
+              { class: 'dash-kpi-header' },
+              h('span', { class: 'dash-kpi-label' }, 'Monitor Equipo'),
+              h(
+                'span',
+                { class: cloudStatus.state === 'connected' ? 'badge ok' : 'badge default' },
+                cloudStatus.state === 'connected' ? 'Conectado' : 'Local',
+              ),
+            ),
+            h(
+              'div',
+              { class: 'dash-kpi-value' },
+              cloudStatus.state === 'connected' ? 'En Vivo' : 'Modo Local',
+            ),
+            h(
+              'div',
+              { class: 'dash-kpi-sub' },
+              cloudStatus.roomCode ? `Sala: ${cloudStatus.roomCode}` : 'Sin sala compartida',
+            ),
+          ),
         ),
-        catalogCount
-          ? h('p', null, `${catalogCount} productos`, withExpected ? ` · ${withExpected} con existencia teórica` : '')
-          : h('p', { class: 'warn-text' }, 'No hay catálogo cargado. Puedes contar igual: la descripción se buscará en internet o se capturará a mano. Para comparar contra existencias, importa tu Excel.'),
-        pending ? h('p', { class: 'muted small' }, `${pending} código(s) pendiente(s) de descripción`) : null,
+
+        /* 3. BARRA DE ACCIÓN Y HERRAMIENTAS RÁPIDAS */
+        h(
+          'section',
+          { class: 'card dash-action-card' },
+          session
+            ? h(
+              'div',
+              { class: 'dash-cta-box' },
+              h(
+                'button',
+                {
+                  class: 'btn primary xl dash-hero-btn',
+                  'data-testid': 'home-resume-count-btn',
+                  onclick: () => navigate('/contar'),
+                },
+                icon('scan'),
+                'Continuar conteo físico',
+              ),
+              h(
+                'div',
+                { class: 'dash-cta-subrow' },
+                h(
+                  'button',
+                  {
+                    class: 'btn sm',
+                    onclick: () => navigate('/reporte'),
+                  },
+                  icon('chart'),
+                  'Ver reporte de diferencias',
+                ),
+                h(
+                  'button',
+                  {
+                    class: 'btn sm',
+                    'data-testid': 'home-create-session-btn',
+                    onclick: async () => {
+                      if (await newSessionFlow()) navigate('/contar');
+                    },
+                  },
+                  'Crear sesión',
+                ),
+                h(
+                  'button',
+                  {
+                    class: 'btn sm danger ghost',
+                    'data-testid': 'home-close-session-btn',
+                    onclick: async () => {
+                      const ok = await confirmDialog(
+                        'Finalizar sesión de conteo',
+                        `¿Deseas finalizar la sesión "${session.name}"? Los datos quedarán guardados y listos para consulta o reporte.`,
+                        'Finalizar sesión',
+                        true,
+                      );
+                      if (ok) {
+                        await closeSession(session.id);
+                        toast('Sesión finalizada con éxito', 'ok');
+                        navigate('/');
+                      }
+                    },
+                  },
+                  icon('check'),
+                  'Finalizar sesión',
+                ),
+              ),
+            )
+            : h(
+              'div',
+              { class: 'dash-cta-box' },
+              h(
+                'button',
+                {
+                  class: 'btn primary xl dash-hero-btn',
+                  'data-testid': 'home-start-session-btn',
+                  onclick: async () => {
+                    if (await newSessionFlow()) navigate('/contar');
+                  },
+                },
+                icon('scan'),
+                'Iniciar nueva sesión de conteo',
+              ),
+              h(
+                'p',
+                { class: 'muted small center', style: 'margin: 6px 0 0 0;' },
+                'Comienza a escanear productos con la cámara de tu teléfono o con lector de código de barras USB/Bluetooth.',
+              ),
+            ),
+
+          h('div', { class: 'dash-divider' }),
+
+          // Accesos a Herramientas
+          h(
+            'div',
+            { class: 'dash-tools-grid' },
+            h(
+              'button',
+              { class: 'dash-tool-tile', onclick: () => navigate('/movimientos') },
+              h('div', { class: 'dash-tool-icon-wrap' }, icon('swap')),
+              h('div', { class: 'dash-tool-text' },
+                h('b', null, 'Kardex (IN/OUT)'),
+                h('span', { class: 'muted xsmall' }, 'Entradas y salidas'),
+              ),
+            ),
+            h(
+              'button',
+              { class: 'dash-tool-tile', onclick: () => navigate('/reporte') },
+              h('div', { class: 'dash-tool-icon-wrap' }, icon('chart')),
+              h('div', { class: 'dash-tool-text' },
+                h('b', null, 'Reportes & Faltantes'),
+                h('span', { class: 'muted xsmall' }, 'Diferencias y costos'),
+              ),
+            ),
+            h(
+              'button',
+              {
+                class: 'dash-tool-tile',
+                onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+              },
+              h('div', { class: 'dash-tool-icon-wrap' }, icon('users')),
+              h('div', { class: 'dash-tool-text' },
+                h('b', null, 'Unificar Reportes'),
+                h('span', { class: 'muted xsmall' }, 'Consolidar técnicos'),
+              ),
+            ),
+            h(
+              'button',
+              { class: 'dash-tool-tile', onclick: () => navigate('/catalogo') },
+              h('div', { class: 'dash-tool-icon-wrap' }, icon('list')),
+              h('div', { class: 'dash-tool-text' },
+                h('b', null, 'Catálogo & Rótulos'),
+                h('span', { class: 'muted xsmall' }, 'Consumibles y códigos'),
+              ),
+            ),
+            h(
+              'button',
+              { class: 'dash-tool-tile', onclick: () => navigate('/equipo') },
+              h('div', { class: 'dash-tool-icon-wrap' }, icon('users')),
+              h('div', { class: 'dash-tool-text' },
+                h('b', null, 'Monitor Supervisor'),
+                h('span', { class: 'muted xsmall' }, 'Tablero en tiempo real'),
+              ),
+            ),
+            h(
+              'button',
+              { class: 'dash-tool-tile', onclick: () => navigate('/ajustes') },
+              h('div', { class: 'dash-tool-icon-wrap' }, icon('gear')),
+              h('div', { class: 'dash-tool-text' },
+                h('b', null, 'Ajustes & Nube'),
+                h('span', { class: 'muted xsmall' }, 'Configuración general'),
+              ),
+            ),
+          ),
+        ),
+
+        /* 4. SECCIÓN EN 2 COLUMNAS (DESKTOP/TABLET) / 1 COLUMNA (MÓVIL) */
+        h(
+          'div',
+          { class: 'dash-cols-layout' },
+
+          // COLUMNA IZQUIERDA: Sesión y Sesiones Anteriores
+          h(
+            'div',
+            { class: 'dash-col' },
+
+            // Tarjeta de Sesiones Recientes
+            h(
+              'section',
+              { class: 'card dash-section-card' },
+              h(
+                'div',
+                { class: 'card-head' },
+                h('h3', { class: 'dash-card-title' }, '📋 Sesiones de Conteo'),
+                h(
+                  'button',
+                  {
+                    class: 'btn ghost sm',
+                    'data-testid': 'home-list-create-session-btn',
+                    onclick: async () => {
+                      if (await newSessionFlow()) navigate('/contar');
+                    },
+                  },
+                  icon('plus'),
+                  'Crear sesión',
+                ),
+              ),
+              pastSessions.length > 0
+                ? h(
+                  'ul',
+                  { class: 'session-list dash-session-list' },
+                  pastSessions.map((ps) =>
+                    h(
+                      'li',
+                      { class: 's-item dash-session-item' },
+                      h(
+                        'div',
+                        { class: 'grow' },
+                        h(
+                          'div',
+                          { class: 's-name dash-session-name' },
+                          ps.name,
+                          ' ',
+                          ps.closed
+                            ? h('span', { class: 'badge info' }, 'Cerrada')
+                            : h('span', { class: 'badge ok' }, 'Abierta'),
+                        ),
+                        h(
+                          'div',
+                          { class: 'muted small' },
+                          `${ps.counter} · ${fmtDateTime(ps.createdAt)}`,
+                        ),
+                      ),
+                      h(
+                        'div',
+                        { class: 'row', style: 'gap: 6px;' },
+                        h(
+                          'button',
+                          {
+                            class: 'btn sm',
+                            onclick: () => navigate(`/reporte?session=${ps.id}`),
+                          },
+                          icon('chart'),
+                          'Reporte',
+                        ),
+                        ps.closed
+                          ? h(
+                            'button',
+                            {
+                              class: 'btn sm ghost',
+                              onclick: async () => {
+                                await reopenSession(ps.id);
+                                toast('Sesión reabierta y activada', 'ok');
+                                navigate('/contar');
+                              },
+                            },
+                            'Reabrir',
+                          )
+                          : h(
+                            'button',
+                            {
+                              class: 'btn sm primary',
+                              onclick: async () => {
+                                await reopenSession(ps.id);
+                                toast(`Sesión activa: ${ps.name}`, 'ok');
+                                navigate('/contar');
+                              },
+                            },
+                            'Continuar',
+                          ),
+                      ),
+                    ),
+                  ),
+                )
+                : h(
+                  'p',
+                  { class: 'muted small' },
+                  'Aún no hay sesiones previas registradas en este equipo.',
+                ),
+            ),
+          ),
+
+          // COLUMNA DERECHA: Kardex y Catálogo
+          h(
+            'div',
+            { class: 'dash-col' },
+
+            // Tarjeta de Kardex
+            h(
+              'section',
+              { class: 'card dash-section-card' },
+              h(
+                'div',
+                { class: 'card-head' },
+                h('h3', { class: 'dash-card-title' }, '🔄 Kardex e Inventario Ideal'),
+                h(
+                  'button',
+                  { class: 'btn ghost sm', onclick: () => navigate('/movimientos') },
+                  'Abrir Kardex →',
+                ),
+              ),
+              h(
+                'p',
+                { class: 'muted small' },
+                'Registro en tiempo real de entradas de proveedores y entregas a técnicos/máquinas con balance dinámico de existencias.',
+              ),
+              recentMovements.length > 0
+                ? h(
+                  'div',
+                  { class: 'dash-mini-movs-list' },
+                  h('div', { class: 'muted xsmall uppercase bold' }, 'Últimos movimientos registrados:'),
+                  recentMovements.map((m) =>
+                    h(
+                      'div',
+                      { class: `dash-mini-mov-row ${m.type === 'IN' ? 'in' : 'out'}` },
+                      h(
+                        'span',
+                        { class: `dash-mini-badge ${m.type === 'IN' ? 'in' : 'out'}` },
+                        m.type === 'IN' ? 'Entrada' : 'Salida',
+                      ),
+                      h('b', { class: 'dash-mini-sku' }, m.sku),
+                      h(
+                        'span',
+                        { class: `dash-mini-qty ${m.type === 'IN' ? 'in' : 'out'}` },
+                        `${m.type === 'IN' ? '+' : '-'}${fmtNum(m.quantity)}`,
+                      ),
+                      h(
+                        'span',
+                        { class: 'muted xsmall dash-mini-dest' },
+                        m.technicianOrSupplier || m.machineOrArea || '-',
+                      ),
+                    ),
+                  ),
+                )
+                : h('p', { class: 'muted xsmall' }, 'Sin movimientos de entradas/salidas aún.'),
+            ),
+
+            // Tarjeta de Catálogo
+            h(
+              'section',
+              { class: 'card dash-section-card' },
+              h(
+                'div',
+                { class: 'card-head' },
+                h('h3', { class: 'dash-card-title' }, '📚 Catálogo de Consumibles'),
+                h(
+                  'button',
+                  { class: 'btn ghost sm', onclick: () => navigate('/catalogo') },
+                  'Ver Catálogo →',
+                ),
+              ),
+              catalogCount
+                ? h(
+                  'div',
+                  null,
+                  h(
+                    'p',
+                    { class: 'small' },
+                    h('b', null, `${fmtNum(catalogCount)} consumibles registrados`),
+                    withExpected ? ` · ${fmtNum(withExpected)} con existencia teórica` : '',
+                  ),
+                  pending
+                    ? h(
+                      'p',
+                      { class: 'muted small warn-text' },
+                      `⚠️ ${pending} producto(s) pendiente(s) de descripción en línea.`,
+                    )
+                    : null,
+                )
+                : h(
+                  'p',
+                  { class: 'warn-text small' },
+                  'No hay catálogo cargado. Puedes cargar el catálogo de ejemplo desde Ajustes o importar tu archivo Excel/CSV.',
+                ),
+            ),
+
+            // Tarjeta PWA (solo cuando aplica)
+            install.canPrompt
+              ? h(
+                'section',
+                { class: 'card accent dash-section-card' },
+                h('h3', { class: 'dash-card-title' }, '📲 Instalar Aplicación'),
+                h(
+                  'p',
+                  { class: 'small' },
+                  'Instala Inventario de Consumibles como app nativa en tu dispositivo para acceso instantáneo y funcionamiento 100% sin internet.',
+                ),
+                h(
+                  'button',
+                  { class: 'btn primary sm', onclick: promptInstall },
+                  'Instalar PWA',
+                ),
+              )
+              : install.iosHint
+                ? h(
+                  'section',
+                  { class: 'card accent dash-section-card' },
+                  h('h3', { class: 'dash-card-title' }, '📲 Instalar en iPhone'),
+                  h(
+                    'p',
+                    { class: 'small' },
+                    'En Safari toca ',
+                    h('b', null, 'Compartir'),
+                    ' y luego ',
+                    h('b', null, '“Agregar a pantalla de inicio”'),
+                    '.',
+                  ),
+                )
+                : null,
+          ),
+        ),
+
+        // Pie del Dashboard
+        h(
+          'div',
+          { class: 'dash-footer-note muted small center' },
+          navigator.onLine
+            ? '🟢 Conectado a la red · Modo PWA activo'
+            : '🟠 Sin conexión a internet · Los escaneos y movimientos se guardan localmente en el dispositivo',
+        ),
       ),
-
-      h('section', { class: 'card' },
-        h('div', { class: 'card-head' },
-          h('h3', null, 'Kardex e Inventario Ideal'),
-          h('button', { class: 'btn ghost sm', onclick: () => navigate('/movimientos') }, 'Abrir'),
-        ),
-        h('p', { class: 'muted small' }, 'Registro de entradas y salidas, trazabilidad por técnico/máquina y monitoreo del inventario ideal vs. stock dinámico.'),
-      ),
-
-      install.canPrompt
-        ? h('section', { class: 'card accent' },
-          h('h3', null, 'Instalar en el teléfono'),
-          h('p', { class: 'small' }, 'Agrega la app a tu pantalla de inicio para usarla sin internet.'),
-          h('button', { class: 'btn primary', onclick: promptInstall }, 'Instalar app'))
-        : install.iosHint
-          ? h('section', { class: 'card accent' },
-            h('h3', null, 'Instalar en iPhone'),
-            h('p', { class: 'small' }, 'En Safari toca ', h('b', null, 'Compartir'), ' y luego ', h('b', null, '“Agregar a pantalla de inicio”'), '.'))
-          : null,
-
-      h('p', { class: 'center muted small' }, navigator.onLine ? 'En línea' : 'Sin conexión – los datos se guardan en el teléfono'),
     );
   },
 };
-
-function stat(value: number, label: string) {
-  return h('div', { class: 'stat' }, h('b', null, String(value)), h('span', null, label));
-}

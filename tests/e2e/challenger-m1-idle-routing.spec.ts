@@ -29,9 +29,9 @@ test.describe('Challenger M1: UI State Consistency, Routing & Idle Hardware Wedg
     await page.goto('/#/');
     await expect(page.locator('.top-session')).toHaveText('Sin sesión');
     await expect(page.getByRole('heading', { level: 2, name: 'Sin sesión activa' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Iniciar nueva sesión' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ver catálogo de productos' })).toBeVisible();
-    await expect(page.getByRole('button', { name: 'Ver todas las sesiones' })).toBeVisible();
+    await expect(page.getByTestId('home-start-session-btn')).toBeVisible();
+    await expect(page.getByTestId('home-kpi-catalog')).toBeVisible();
+    await expect(page.getByTestId('home-kpi-team')).toBeVisible();
 
     // 1.2 Route /contar
     await page.goto('/#/contar');
@@ -55,16 +55,29 @@ test.describe('Challenger M1: UI State Consistency, Routing & Idle Hardware Wedg
     await expect(page.locator('.session-list')).toBeVisible();
     await expect(page.locator('.session-list li.empty')).toHaveText('No hay sesiones registradas.');
 
-    // 1.5 Smooth navigation between tabs via nav bar
-    await page.click('button[data-path="/"]');
+    // 1.5 Smooth navigation between tabs via responsive nav bar (desktop sidebar vs mobile 4 + Más)
+    const clickNav = async (key: 'home' | 'count' | 'team') => {
+      const sidebarBtn = page.getByTestId(`sidebar-nav-${key}`);
+      if (await sidebarBtn.isVisible()) {
+        await sidebarBtn.click();
+        return;
+      }
+      const mobileBtn = page.getByTestId(`mobile-nav-${key}`);
+      if (!(await mobileBtn.isVisible())) {
+        await page.getByTestId('nav-more').click();
+      }
+      await mobileBtn.click();
+    };
+
+    await clickNav('home');
     await expect(page).toHaveURL(/#\//);
     await expect(page.getByRole('heading', { level: 2, name: 'Sin sesión activa' })).toBeVisible();
 
-    await page.click('button[data-path="/contar"]');
+    await clickNav('count');
     await expect(page).toHaveURL(/#\/contar/);
     await expect(page.getByRole('heading', { level: 2, name: 'No hay sesión activa' })).toBeVisible();
 
-    await page.click('button[data-path="/equipo"]');
+    await clickNav('team');
     await expect(page).toHaveURL(/#\/equipo/);
     await expect(page.getByRole('heading', { level: 2, name: 'Sin sesión activa' })).toBeVisible();
 

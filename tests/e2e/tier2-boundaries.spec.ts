@@ -123,7 +123,7 @@ test.describe('Tier 2: Boundary & Corner Cases (F1 to F10)', () => {
     await page.goto('/#/reporte');
     await expect(page).toHaveURL(/#\/reporte/);
     // Page must not crash or show uncaught errors
-    await expect(page.locator('h1, h2, .report-view, .kpis, .card').first()).toBeVisible();
+    await expect(page.locator('#view-root h1, #view-root h2, #view-root .report-view, #view-root .kpis, #view-root .card').first()).toBeVisible();
   });
 
   // =========================================================================

@@ -99,7 +99,7 @@ test.describe('Impresión de código de barras y etiquetas térmicas 4x2', () =>
     });
 
     // Abrir el modal de hoja de etiquetas
-    const queueBtn = page.getByRole('button', { name: /Cola de etiquetas/i });
+    const queueBtn = page.getByTestId('catalog-queue-btn');
     await queueBtn.click();
 
     const modal = page.locator('.barcode-sheet-modal');

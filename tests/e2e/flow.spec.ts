@@ -122,7 +122,7 @@ test.describe('Flujo completo de inventario en teléfono', () => {
     await expect(massBar.locator('.mass-info')).toContainText('seleccionado');
 
     // 4. Modificación masiva: cambiar unidad a PAQ
-    await massBar.getByRole('button', { name: 'Modificar' }).click();
+    await page.locator('.mass-bar button:has-text("Modificar")').click();
     await expect(page.locator('dialog[open] h3')).toContainText('Modificación masiva');
 
     // Activar casilla de unidad y escribir PAQ

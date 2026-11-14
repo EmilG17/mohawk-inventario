@@ -412,13 +412,13 @@ export function openBarcodeSheetDialog(
 
   const PREF_KEY = 'mohawk_preferred_label_template';
   const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem(PREF_KEY) : null) as LabelTemplate | null;
-  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'intermec_composite';
+  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'avery5160';
   let startingOffset = 0;
   let showSku = true;
   let showUnit = true;
   let showBorder = true;
 
-  const previewWrap = h('div', { class: 'sheet-preview-wrap' });
+  const previewWrap = h('div', { class: 'sheet-preview-wrap', 'data-testid': 'sheet-preview' });
   const countSummary = h('span', { class: 'muted small' });
   const queueSummaryEl = h('span', { class: 'badge info' });
   const queueListContainer = h('div', { class: 'queue-items-list' });
@@ -434,6 +434,7 @@ export function openBarcodeSheetDialog(
     {
       class: 'input template-picker',
       id: 'sheet-template',
+      'data-testid': 'sheet-template-select',
       onchange: (e: Event) => {
         selectedTemplate = (e.target as HTMLSelectElement).value as LabelTemplate;
         if (typeof localStorage !== 'undefined') {
@@ -453,6 +454,7 @@ export function openBarcodeSheetDialog(
     type: 'number',
     name: 'offset',
     id: 'sheet-offset',
+    'data-testid': 'sheet-offset-input',
     min: '0',
     max: '29',
     value: '0',

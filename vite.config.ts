@@ -4,7 +4,18 @@ import { VitePWA } from 'vite-plugin-pwa';
 export default defineConfig({
   // Rutas relativas: permite publicar en cualquier subcarpeta (GitHub Pages, servidor interno, etc.)
   base: './',
-  build: { target: 'es2020', chunkSizeWarningLimit: 1500 },
+  build: {
+    target: 'es2020',
+    chunkSizeWarningLimit: 700,
+    rollupOptions: {
+      output: {
+        manualChunks(id: string) {
+          if (id.includes('node_modules/xlsx')) return 'vendor-xlsx';
+          if (id.includes('node_modules/@zxing')) return 'vendor-zxing';
+        },
+      },
+    },
+  },
   plugins: [
     VitePWA({
       registerType: 'autoUpdate',

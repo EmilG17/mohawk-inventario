@@ -3,8 +3,10 @@ import { bootstrapApp } from './ui/app';
 
 if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   let reloading = false;
+  const hadController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.addEventListener('controllerchange', () => {
-    if (reloading) return;
+    if (!hadController || reloading) return;
+    if (document.querySelector('dialog[open]')) return;
     reloading = true;
     window.location.reload();
   });

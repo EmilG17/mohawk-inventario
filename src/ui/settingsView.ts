@@ -223,7 +223,7 @@ export const settingsView: View = {
                 const count = await loadSampleCatalog();
                 triggerBackgroundSync();
                 toast(`${count} consumibles de ejemplo cargados`, 'ok');
-                rerender();
+                navigate('/catalogo');
               },
             }, 'Cargar catálogo de ejemplo'),
             totalProds > 0

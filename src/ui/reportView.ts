@@ -182,6 +182,7 @@ export const reportView: View = {
 
     const sessionSelect = h('select', {
       id: 'session-select',
+      'data-testid': 'report-session-select',
       class: 'input sm session-picker',
       style: 'max-width: 260px; font-weight: normal;',
       onchange: (e: Event) => {
@@ -240,11 +241,12 @@ export const reportView: View = {
           )
           : null,
         h('div', { class: 'row wrap' },
-          h('button', { class: 'btn primary', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
-          h('button', { class: 'btn', onclick: doExportCsv }, icon('download'), 'CSV'),
-          h('button', { class: 'btn', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
+          h('button', { class: 'btn primary', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
+          h('button', { class: 'btn', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
+          h('button', { class: 'btn', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
           h('button', {
             class: 'btn',
+            'data-testid': 'report-unify-btn',
             onclick: () => void openUnifyReportsDialog((sid) => {
               selectedSessionId = sid;
               navigate(`/reporte?session=${sid}`);
@@ -252,6 +254,7 @@ export const reportView: View = {
           }, icon('users'), 'Unificar reportes de técnicos'),
           h('button', {
             class: 'btn',
+            'data-testid': 'report-print-labels',
             onclick: () => {
               const sessionProducts = products.filter((p) => counts.some((c) => c.barcode === p.barcode));
               const initialQuantities: Record<string, number> = {};
@@ -344,6 +347,10 @@ export const reportView: View = {
         oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; drawList(); },
       }),
       chipsWrap,
+      h('div', { class: 'rlist-table-head', 'aria-hidden': 'true' },
+        h('span', null, 'Producto / Estado'),
+        h('span', null, 'Teórico · Contado · Diferencia'),
+      ),
       list,
     );
     drawList();

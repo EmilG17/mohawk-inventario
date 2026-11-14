@@ -946,8 +946,61 @@ export async function syncNow(opts?: {
 
 let livePollTimer: ReturnType<typeof setInterval> | null = null;
 let liveEventSource: EventSource | null = null;
+let liveSseReconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let liveSseRetries = 0;
 let liveSubscribedKey = '';
 let isPollingNow = false;
+
+function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): void {
+  if (typeof EventSource === 'undefined' || liveSubscribedKey !== subKey) return;
+  const roomUrl = buildRoomEndpointUrl(endpointUrl, roomCode);
+  if (!roomUrl) return;
+
+  try {
+    const es = new EventSource(roomUrl);
+    liveEventSource = es;
+
+    const handleSsePayload = (ev: MessageEvent) => {
+      liveSseRetries = 0;
+      try {
+        const parsed = JSON.parse(ev.data);
+        const payload = parsed && typeof parsed === 'object' && 'data' in parsed ? parsed.data : parsed;
+        const coerced = coerceRemoteRoomState(payload, roomCode);
+        if (coerced) {
+          emitStatus({ liveStream: 'sse', state: 'connected', lastError: null });
+          void applyIncomingRoomStateToLocal(coerced, 'remote');
+        }
+      } catch {}
+    };
+
+    es.addEventListener('put', handleSsePayload as EventListener);
+    es.addEventListener('patch', () => {
+      liveSseRetries = 0;
+      void pullRemoteRoomQuietly(endpointUrl, roomCode);
+    });
+    es.onmessage = handleSsePayload;
+    es.onerror = () => {
+      try {
+        es.close();
+      } catch {}
+      if (liveEventSource === es) {
+        liveEventSource = null;
+        emitStatus({ liveStream: 'polling' });
+        if (liveSubscribedKey === subKey && typeof setTimeout !== 'undefined') {
+          const delayMs = Math.min(30000, 1500 * Math.pow(2, liveSseRetries));
+          liveSseRetries = Math.min(liveSseRetries + 1, 6);
+          if (liveSseReconnectTimer) clearTimeout(liveSseReconnectTimer);
+          liveSseReconnectTimer = setTimeout(() => {
+            liveSseReconnectTimer = null;
+            connectLiveSse(endpointUrl, roomCode, subKey);
+          }, delayMs);
+        }
+      }
+    };
+  } catch {
+    liveEventSource = null;
+  }
+}
 
 /**
  * Inicia la suscripción en tiempo real a la sala configurada (vía Firebase Server-Sent Events
@@ -975,6 +1028,7 @@ export function startLiveCloudSync(opts?: {
 
   stopLiveCloudSync();
   liveSubscribedKey = subKey;
+  liveSseRetries = 0;
 
   if (!endpointUrl) {
     const cached = getLocalRoomMirror(roomCode);
@@ -999,46 +1053,8 @@ export function startLiveCloudSync(opts?: {
     liveStream: 'polling',
   });
 
-  const roomUrl = buildRoomEndpointUrl(endpointUrl, roomCode);
-
-  // 1. Intentar conexión SSE en tiempo real (soportada nativamente por Firebase Realtime Database)
-  if (typeof EventSource !== 'undefined' && roomUrl) {
-    try {
-      const es = new EventSource(roomUrl);
-      liveEventSource = es;
-
-      const handleSsePayload = (ev: MessageEvent) => {
-        try {
-          const parsed = JSON.parse(ev.data);
-          const payload = parsed && typeof parsed === 'object' && 'data' in parsed ? parsed.data : parsed;
-          const coerced = coerceRemoteRoomState(payload, roomCode);
-          if (coerced) {
-            emitStatus({ liveStream: 'sse', state: 'connected', lastError: null });
-            void applyIncomingRoomStateToLocal(coerced, 'remote');
-          }
-        } catch {}
-      };
-
-      es.addEventListener('put', handleSsePayload as EventListener);
-      es.addEventListener('patch', () => {
-        // En patch parcial, hacer un pull rápido completo
-        void pullRemoteRoomQuietly(endpointUrl, roomCode);
-      });
-      es.onmessage = handleSsePayload;
-      es.onerror = () => {
-        // Si SSE falla o es bloqueado por firewall, el polling de respaldo sigue activo
-        try {
-          es.close();
-        } catch {}
-        if (liveEventSource === es) {
-          liveEventSource = null;
-          emitStatus({ liveStream: 'polling' });
-        }
-      };
-    } catch {
-      liveEventSource = null;
-    }
-  }
+  // 1. Conexión SSE en tiempo real con reconexión exponencial
+  connectLiveSse(endpointUrl, roomCode, subKey);
 
   // 2. Polling periódico ligero (cada 3s) para garantizar tiempo real 100% confiable
   void pullRemoteRoomQuietly(endpointUrl, roomCode);
@@ -1051,6 +1067,11 @@ export function startLiveCloudSync(opts?: {
 
 export function stopLiveCloudSync(): void {
   liveSubscribedKey = '';
+  liveSseRetries = 0;
+  if (liveSseReconnectTimer) {
+    clearTimeout(liveSseReconnectTimer);
+    liveSseReconnectTimer = null;
+  }
   if (livePollTimer) {
     clearInterval(livePollTimer);
     livePollTimer = null;

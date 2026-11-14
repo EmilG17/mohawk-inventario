@@ -578,11 +578,13 @@ export const catalogView: View = {
 
       if (selCount > 0) {
         massBar.hidden = false;
+        massBar.setAttribute('data-testid', 'catalog-mass-bar');
         clear(massBar,
           h('div', { class: 'mass-info' }, icon('check'), `${selCount} seleccionado(s)`),
-          h('div', { class: 'row' },
+          h('div', { class: 'row wrap' },
             h('button', {
               class: 'btn sm',
+              'data-testid': 'catalog-mass-labels-btn',
               onclick: () => {
                 const sel = products.filter((p) => selected.has(p.barcode));
                 openBarcodeSheetDialog(sel);
@@ -590,6 +592,7 @@ export const catalogView: View = {
             }, icon('scan'), 'Etiquetas'),
             h('button', {
               class: 'btn sm ghost',
+              'data-testid': 'catalog-mass-queue-btn',
               title: 'Añadir productos seleccionados a la cola de impresión de etiquetas',
               onclick: () => {
                 const sel = products.filter((p) => selected.has(p.barcode));
@@ -600,10 +603,12 @@ export const catalogView: View = {
             }, icon('plus'), 'Añadir a cola'),
             h('button', {
               class: 'btn primary sm',
+              'data-testid': 'catalog-mass-edit-btn',
               onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
             }, icon('edit'), 'Modificar'),
             h('button', {
               class: 'btn danger sm',
+              'data-testid': 'catalog-mass-delete-btn',
               onclick: async () => {
                 if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selCount} productos seleccionados del catálogo?`, 'Eliminar', true)) {
                   const n = await deleteProducts(Array.from(selected));
@@ -703,6 +708,7 @@ export const catalogView: View = {
         h('div', { class: 'row wrap' },
           h('button', {
             class: 'btn primary',
+            'data-testid': 'catalog-new-btn',
             onclick: async () => {
               const res = await editProductDialog('');
               if (res && res !== 'deleted') {
@@ -711,7 +717,9 @@ export const catalogView: View = {
             },
           }, icon('scan'), 'Nuevo producto'),
           h('button', {
-            class: 'btn', disabled: !products.length,
+            class: 'btn',
+            disabled: !products.length,
+            'data-testid': 'catalog-sheets-btn',
             onclick: () => {
               const words = norm(query).split(/\s+/).filter(Boolean);
               const visible = products
@@ -726,9 +734,10 @@ export const catalogView: View = {
           }, icon('scan'), 'Rótulos y hojas'),
           h('button', {
             class: 'btn',
-            title: 'Ver y gestionar la cola de impresión de etiquetas para imprimir distintos productos en la misma hoja',
+            'data-testid': 'catalog-queue-btn',
+            title: 'Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja',
             onclick: () => openBarcodeSheetDialog(),
-          }, icon('scan'), 'Cola de etiquetas'),
+          }, icon('scan'), 'Cola de rótulos'),
           h('button', {
             class: 'btn',
             onclick: () => {
@@ -745,6 +754,7 @@ export const catalogView: View = {
           }, icon('edit'), 'Acciones masivas'),
           h('button', {
             class: 'btn ghost sm',
+            'data-testid': 'catalog-settings-link',
             onclick: () => navigate('/ajustes'),
           }, icon('gear'), 'Importar / Compartir en Ajustes'),
         ),
@@ -760,12 +770,17 @@ export const catalogView: View = {
           : null,
       ),
       h('input', {
-        class: 'input', type: 'search', placeholder: 'Buscar por descripción, código o No. de parte', value: query,
+        class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: 'Buscar por descripción, código o No. de parte', value: query,
         oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; draw(); },
       }),
       h('div', { class: 'chips' }, chip('todos', 'Todos'), chip('sin_desc', `Sin descripción (${noDesc})`), chip('no_cat', 'No catalogados')),
       selectToolbar,
       massBar,
+      h('div', { class: 'plist-table-head', 'aria-hidden': 'true' },
+        h('span', null),
+        h('span', null, 'Producto / Código / SKU'),
+        h('span', null, 'Teórico'),
+      ),
       list,
     );
     draw();

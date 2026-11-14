@@ -196,6 +196,10 @@ export function icon(name: string): SVGSVGElement {
     upload: 'M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12',
     globe: 'M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20zM2 12h20M12 2a15 15 0 0 1 0 20M12 2a15 15 0 0 0 0 20',
     swap: 'M7 10h14l-4-4m4 4-4 4M17 14H3l4 4m-4-4 4-4',
+    check: 'M20 6L9 17l-5-5',
+    plus: 'M12 5v14M5 12h14',
+    refresh: 'M23 4v6h-6M1 20v-6h6M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15',
+    more: 'M5 12h.01M12 12h.01M19 12h.01',
   };
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');

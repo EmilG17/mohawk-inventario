@@ -61,6 +61,7 @@ type FeedFilter = 'all' | 'counts' | 'movements';
 type MatrixFilter = 'all' | 'alerts' | 'diff' | 'counted' | 'pending';
 
 let activeTab: SupervisorTab = 'techs';
+let userSelectedTab = false;
 let feedFilter: FeedFilter = 'all';
 let selectedTechFilter = '';
 let matrixFilter: MatrixFilter = 'all';
@@ -784,6 +785,12 @@ export const teamView: View = {
         ),
       );
 
+      if (!userSelectedTab && !current && curCounts.length === 0 && movements.length === 0) {
+        activeTab = 'sessions';
+      } else if (!userSelectedTab && current && activeTab === 'sessions') {
+        activeTab = 'techs';
+      }
+
       // 2. Renderizar barra de pestañas limpias del Supervisor
       const tabs: { id: SupervisorTab; label: string }[] = [
         { id: 'techs', label: `👨‍🔧 Técnicos en Vivo (${techList.length})` },
@@ -794,13 +801,37 @@ export const teamView: View = {
 
       clear(
         tabsBarWrap,
+        !current
+          ? h(
+              'div',
+              {
+                class: 'card',
+                'data-testid': 'team-no-session-badge',
+                style: 'width: 100%; margin: 0 0 8px 0; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-left: 4px solid var(--warning);',
+              },
+              h('div', null,
+                h('h2', { style: 'margin: 0 0 2px 0; font-size: 16px;' }, 'Sin sesión activa'),
+                h('div', { class: 'muted small' }, 'Inicia o reabre una sesión para activar el conteo de piso.'),
+              ),
+              h('button', {
+                class: 'btn primary sm',
+                type: 'button',
+                'data-testid': 'team-start-session-btn',
+                onclick: async () => {
+                  if (await newSessionFlow()) navigate('/contar');
+                },
+              }, icon('scan'), 'Iniciar nueva sesión'),
+            )
+          : null,
         tabs.map((t) =>
           h(
             'button',
             {
               class: `sup-tab-btn ${activeTab === t.id ? 'active' : ''}`,
               type: 'button',
+              'data-testid': `team-tab-${t.id}`,
               onclick: () => {
+                userSelectedTab = true;
                 activeTab = t.id;
                 void refreshDashboard();
               },
@@ -810,7 +841,12 @@ export const teamView: View = {
         ),
       );
 
-      // 3. Renderizar contenido de la pestaña activa
+      // 3. Renderizar contenido de la pestaña activa sin destruir foco si el usuario escribe (P3 anti-flicker)
+      const focused = document.activeElement;
+      if (focused && tabContentWrap.contains(focused) && focused.tagName === 'INPUT') {
+        return;
+      }
+
       if (activeTab === 'techs') {
         renderTechsTab(techList, totalUnitsCounted, current);
       } else if (activeTab === 'feed') {
@@ -1635,6 +1671,7 @@ export const teamView: View = {
   },
 
   destroy() {
+    userSelectedTab = false;
     if (unsubscribeRoom) {
       unsubscribeRoom();
       unsubscribeRoom = null;

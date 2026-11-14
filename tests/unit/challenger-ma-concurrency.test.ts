@@ -219,11 +219,7 @@ describe('Challenger 2: Movements Ledger Concurrency & Import Stress Adversary',
       expect(all[0].id).toBe('valid-item-1');
     });
 
-    it("reveals empirical vulnerability: importMovements 'append' mode allows NaN quantity due to IEEE-754 comparison weakness", async () => {
-      // In src/db/movements.ts:216:
-      // if (!m.id || !m.sku || typeof m.quantity !== 'number' || m.quantity <= 0) continue;
-      // In JS, typeof NaN === 'number' is TRUE, and NaN <= 0 is FALSE!
-      // Therefore, a movement with quantity: NaN passes validation and pollutes the ledger!
+    it("rejects NaN quantity in importMovements 'append' mode via Number.isFinite validation", async () => {
       const nanMovement: Movement = {
         id: 'nan-vuln-item',
         sku: 'SKU-NAN-LEAK',
@@ -236,18 +232,15 @@ describe('Challenger 2: Movements Ledger Concurrency & Import Stress Adversary',
       };
 
       const res = await importMovements([nanMovement], 'append');
-      // Empirically demonstrates the flaw:
-      expect(res.added).toBe(1);
+      expect(res.added).toBe(0);
 
       const all = await getAllMovements();
-      const found = all.find((m) => m.id === 'nan-vuln-item');
-      expect(found).toBeDefined();
-      expect(Number.isNaN(found?.quantity)).toBe(true);
+      expect(all.find((m) => m.id === 'nan-vuln-item')).toBeUndefined();
 
-      // Demonstrates blast radius: getMovementSummary results in NaN math corruption
       const summary = await getMovementSummary('SKU-NAN-LEAK');
-      expect(Number.isNaN(summary.totalIn)).toBe(true);
-      expect(Number.isNaN(summary.netMovements)).toBe(true);
+      expect(Number.isNaN(summary.totalIn)).toBe(false);
+      expect(summary.totalIn).toBe(0);
+      expect(summary.netMovements).toBe(0);
     });
 
     it("replaces cleanly in 'replace' mode, purging all prior movements and ignoring invalid incoming entries", async () => {

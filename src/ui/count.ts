@@ -6,6 +6,7 @@ import { mergeCountFiles } from '../io/mergeCounts';
 import { displayBarcode, normalizeBarcode, parseNumber } from '../io/normalize';
 import { resolveDescription, setManualDescription, type ResolveStatus } from '../lookup/lookup';
 import { beep, cameraAvailable, createDebouncer, startScanner, unlockAudio, vibrate, type ScannerHandle } from '../scanner/scanner';
+import { createWedgeController } from '../scanner/wedge';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
 import { decodeCompactCountQr, isCompactCountQr, triggerBackgroundSync } from '../sync/cloudSync';
 import { clear, confirmDialog, fmtNum, fmtTime, h, icon, openDialog, toast } from './dom';
@@ -32,9 +33,15 @@ let els: {
   cooldownBadge: HTMLElement;
 };
 const debounce = createDebouncer(1500);
-let keyBuffer = '';
-let keyLast = 0;
 let wantCamera = false;
+const wedge = createWedgeController({
+  minLength: 4,
+  maxIntervalMs: 80,
+  isBlocked: () => Boolean(document.querySelector('dialog[open]')) || isScanLocked(),
+  onScan: (code) => {
+    void processCode(code, 'teclado');
+  },
+});
 
 const COOLDOWN_MS = 2000;
 let cooldownUntil = 0;
@@ -157,27 +164,6 @@ function onVisibility() {
   } else if (wantCamera && !scanner) {
     void startCamera();
   }
-}
-
-/** Lectores Bluetooth/USB en modo teclado: teclean rápido y terminan con Enter. */
-function onKeydown(e: KeyboardEvent) {
-  const t = e.target as HTMLElement;
-  if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-  if (document.querySelector('dialog[open]')) return;
-  if (isScanLocked()) return;
-  const now = Date.now();
-  if (now - keyLast > 80) keyBuffer = '';
-  keyLast = now;
-  if (e.key === 'Enter') {
-    if (keyBuffer.length >= 4) {
-      const code = keyBuffer;
-      keyBuffer = '';
-      e.preventDefault();
-      void processCode(code, 'teclado');
-    }
-    return;
-  }
-  if (e.key.length === 1) keyBuffer += e.key;
 }
 
 // ---------------- flujo de escaneo ----------------
@@ -583,7 +569,7 @@ export const countView: View = {
     );
 
     document.addEventListener('visibilitychange', onVisibility);
-    document.addEventListener('keydown', onKeydown);
+    wedge.attach();
     renderCard();
     await renderRecent();
     if (sessionStorage.getItem('camera') === '1') void startCamera();
@@ -595,7 +581,7 @@ export const countView: View = {
     }
     cooldownUntil = 0;
     document.removeEventListener('visibilitychange', onVisibility);
-    document.removeEventListener('keydown', onKeydown);
+    wedge.detach();
     stopCamera(false);
     if (pending) await commitPending(true);
     pending = null;

@@ -30,6 +30,7 @@ import {
   vibrate,
   type ScannerHandle,
 } from '../scanner/scanner';
+import { createWedgeController, type WedgeController } from '../scanner/wedge';
 import {
   clear,
   confirmDialog,
@@ -78,10 +79,8 @@ let bitacoraSearch = '';
 let viewRootEl: HTMLElement | null = null;
 let activeModalDialog: HTMLDialogElement | null = null;
 let activeModalScanner: ScannerHandle | null = null;
-let keydownListener: ((e: KeyboardEvent) => void) | null = null;
+let wedgeController: WedgeController | null = null;
 let unsubscribeCloud: (() => void) | null = null;
-let keyBuffer = '';
-let keyLast = 0;
 let isModalOpening = false;
 
 /**
@@ -159,9 +158,9 @@ export const movementsView: View = {
       unsubscribeCloud();
       unsubscribeCloud = null;
     }
-    if (keydownListener) {
-      window.removeEventListener('keydown', keydownListener);
-      keydownListener = null;
+    if (wedgeController) {
+      wedgeController.detach();
+      wedgeController = null;
     }
     if (activeModalScanner) {
       try {
@@ -180,7 +179,6 @@ export const movementsView: View = {
       activeModalDialog = null;
     }
     viewRootEl = null;
-    keyBuffer = '';
     delete (window as any).__simulateMovementScan;
   },
 };
@@ -189,71 +187,47 @@ export const movementsView: View = {
  * Configura la captura de escáner USB tipo keyboard wedge
  */
 function setupKeyboardWedge() {
-  if (keydownListener) {
-    window.removeEventListener('keydown', keydownListener);
+  if (wedgeController) {
+    wedgeController.detach();
   }
-
-  keydownListener = (e: KeyboardEvent) => {
-    const t = e.target as HTMLElement | null;
-    // Si el usuario está escribiendo manualmente en un campo de texto (que no sea el input de SKU dentro del modal), no interceptar
-    if (t && (t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
-    if (t && t.tagName === 'INPUT' && (t as HTMLInputElement).id !== 'm-sku-input') return;
-
-    const now = Date.now();
-    if (now - keyLast > 80) keyBuffer = '';
-    keyLast = now;
-
-    if (e.key === 'Enter') {
-      if (keyBuffer.length >= 3) {
-        const code = keyBuffer.trim();
-        keyBuffer = '';
-        e.preventDefault();
-        handleWedgeScan(code);
-      }
-      return;
-    }
-
-    if (e.key && e.key.length === 1) {
-      keyBuffer += e.key;
-    }
-  };
-
-  window.addEventListener('keydown', keydownListener);
+  wedgeController = createWedgeController({
+    minLength: 3,
+    maxIntervalMs: 80,
+    allowInputIds: ['m-sku-input'],
+    onScan: (code, target) => {
+      void handleWedgeScan(code, target);
+    },
+  });
+  wedgeController.attach();
 }
 
 /**
  * Maneja una lectura recibida desde teclado USB o simulación
  */
-async function handleWedgeScan(code: string) {
+async function handleWedgeScan(code: string, target?: HTMLElement | null) {
   beep('ok');
   vibrate('ok');
 
   if (activeModalDialog && activeModalDialog.open) {
-    // Si el modal está abierto, inyectar el código en el modal
     const skuInput = activeModalDialog.querySelector('#m-sku-input') as HTMLInputElement | null;
-    if (skuInput) {
-      skuInput.value = code;
+    // Proteger escritura manual previa si #m-sku-input ya contiene un valor completo mayor que la ráfaga
+    const existing = skuInput?.value.trim() ?? '';
+    const useExisting = target?.id === 'm-sku-input' && existing.length > code.length && existing.endsWith(code);
+    const resolvedCode = useExisting ? existing : code;
+    if (skuInput && !useExisting) {
+      skuInput.value = resolvedCode;
       skuInput.dispatchEvent(new Event('input', { bubbles: true }));
       skuInput.dispatchEvent(new Event('change', { bubbles: true }));
     }
     if (typeof (activeModalDialog as any).__resolveSku === 'function') {
-      void (activeModalDialog as any).__resolveSku(code);
+      void (activeModalDialog as any).__resolveSku(resolvedCode);
     }
     return;
   }
 
-  if (isModalOpening) {
-    return;
-  }
-
-  isModalOpening = true;
-  try {
-    await openMovementRegistrationModal(code, 'IN', async () => {
-      await renderMainView();
-    });
-  } finally {
-    isModalOpening = false;
-  }
+  await openMovementRegistrationModal(code, 'IN', async () => {
+    await renderMainView();
+  });
 }
 
 /**
@@ -404,6 +378,7 @@ async function renderMainView(): Promise<void> {
       h('h2', null, 'Control de Movimientos y Existencia Ideal'),
       h('button', {
         class: 'btn primary sm',
+        'data-testid': 'movements-register-btn',
         onclick: async () => {
           await openMovementRegistrationModal(undefined, 'IN', async () => {
             await renderMainView();
@@ -1005,76 +980,84 @@ export async function openMovementRegistrationModal(
   defaultType: MovementType = 'IN',
   onSaved?: () => Promise<void>,
 ): Promise<HTMLDialogElement | void> {
-  unlockAudio();
+  if (isModalOpening || (activeModalDialog && activeModalDialog.open)) {
+    return;
+  }
+  isModalOpening = true;
+  try {
+    unlockAudio();
 
-  let movementType: MovementType = defaultType;
-  let detectedProduct: Product | undefined;
-  let initialStock = 0;
-  let dynamicStock = 0;
-  let idealStock = 0;
-  let cameraRunning = false;
+    let movementType: MovementType = defaultType;
+    let detectedProduct: Product | undefined;
+    let initialStock = 0;
+    let dynamicStock = 0;
+    let idealStock = 0;
+    let cameraRunning = false;
 
-  const [products, session, summaries, idealLevels] = await Promise.all([
-    allProducts(),
-    getActiveSession(),
-    getMovementSummariesBySku(),
-    getIdealLevels(),
-  ]);
+    const [products, session, summaries, idealLevels] = await Promise.all([
+      allProducts(),
+      getActiveSession(),
+      getMovementSummariesBySku(),
+      getIdealLevels(),
+    ]);
 
-  const counts: CountEntry[] = session ? await countsForSession(session.id) : [];
+    const counts: CountEntry[] = session ? await countsForSession(session.id) : [];
 
-  // Diálogo modal
-  const dlg = h('dialog', { class: 'dlg' }) as HTMLDialogElement;
-  activeModalDialog = dlg;
+    // Diálogo modal
+    const dlg = h('dialog', { class: 'dlg' }) as HTMLDialogElement;
+    activeModalDialog = dlg;
 
-  // 1. Selector de Tipo (Entrada / Salida)
-  const entryBtn = h('button', {
-    class: `segmented-btn ${movementType === 'IN' ? 'active in' : ''}`,
-    type: 'button',
-    onclick: () => {
-      movementType = 'IN';
-      updateSegmentedStyles();
-    },
-  }, '⬇️ Entrada (IN)');
+    // 1. Selector de Tipo (Entrada / Salida)
+    const entryBtn = h('button', {
+      class: `segmented-btn ${movementType === 'IN' ? 'active in' : ''}`,
+      type: 'button',
+      'data-testid': 'movement-type-in',
+      onclick: () => {
+        movementType = 'IN';
+        updateSegmentedStyles();
+      },
+    }, '⬇️ Entrada (IN)');
 
-  const exitBtn = h('button', {
-    class: `segmented-btn ${movementType === 'OUT' ? 'active out' : ''}`,
-    type: 'button',
-    onclick: () => {
-      movementType = 'OUT';
-      updateSegmentedStyles();
-    },
-  }, '⬆️ Salida (OUT)');
+    const exitBtn = h('button', {
+      class: `segmented-btn ${movementType === 'OUT' ? 'active out' : ''}`,
+      type: 'button',
+      'data-testid': 'movement-type-out',
+      onclick: () => {
+        movementType = 'OUT';
+        updateSegmentedStyles();
+      },
+    }, '⬆️ Salida (OUT)');
 
-  const segmentedSwitch = h('div', { class: 'segmented-switch' }, entryBtn, exitBtn);
+    const segmentedSwitch = h('div', { class: 'segmented-switch' }, entryBtn, exitBtn);
 
-  const actorLabelSpan = h('span', null, movementType === 'IN' ? 'Proveedor / Origen' : 'Técnico / Solicitante');
+    const actorLabelSpan = h('span', null, movementType === 'IN' ? 'Proveedor / Origen' : 'Técnico / Solicitante');
 
-  const updateSegmentedStyles = () => {
-    if (movementType === 'IN') {
-      entryBtn.className = 'segmented-btn active in';
-      exitBtn.className = 'segmented-btn';
-      actorLabelSpan.textContent = 'Proveedor / Origen';
-      if (!areaInput.value || areaInput.value === 'Línea de Producción') {
-        areaInput.value = 'Almacén Central';
+    const updateSegmentedStyles = () => {
+      if (movementType === 'IN') {
+        entryBtn.className = 'segmented-btn active in';
+        exitBtn.className = 'segmented-btn';
+        actorLabelSpan.textContent = 'Proveedor / Origen';
+        if (!areaInput.value || areaInput.value === 'Línea de Producción') {
+          areaInput.value = 'Almacén Central';
+        }
+      } else {
+        entryBtn.className = 'segmented-btn';
+        exitBtn.className = 'segmented-btn active out';
+        actorLabelSpan.textContent = 'Técnico / Solicitante';
+        if (!areaInput.value || areaInput.value === 'Almacén Central') {
+          areaInput.value = 'Línea de Producción';
+        }
       }
-    } else {
-      entryBtn.className = 'segmented-btn';
-      exitBtn.className = 'segmented-btn active out';
-      actorLabelSpan.textContent = 'Técnico / Solicitante';
-      if (!areaInput.value || areaInput.value === 'Almacén Central') {
-        areaInput.value = 'Línea de Producción';
-      }
-    }
-  };
+    };
 
-  // 2. Campo de Código / SKU y botón de escáner
-  const skuInput = h('input', {
-    id: 'm-sku-input',
-    class: 'input',
-    placeholder: 'Código de barras o SKU (ej. MHK-001)...',
-    autocomplete: 'off',
-  }) as HTMLInputElement;
+    // 2. Campo de Código / SKU y botón de escáner
+    const skuInput = h('input', {
+      id: 'm-sku-input',
+      'data-testid': 'movements-sku-input',
+      class: 'input',
+      placeholder: 'Código de barras o SKU (ej. MHK-001)...',
+      autocomplete: 'off',
+    }) as HTMLInputElement;
 
   const camToggleBtn = h('button', {
     class: 'btn ghost sm',
@@ -1403,6 +1386,7 @@ export async function openMovementRegistrationModal(
     h('button', {
       class: 'btn primary',
       type: 'button',
+      'data-testid': 'movements-save-btn',
       onclick: async () => {
         const ok = await saveEntry(false);
         if (ok) {
@@ -1437,6 +1421,9 @@ export async function openMovementRegistrationModal(
   }
 
   return dlg;
+  } finally {
+    isModalOpening = false;
+  }
 }
 
 /** Helper para agregar múltiples hijos */

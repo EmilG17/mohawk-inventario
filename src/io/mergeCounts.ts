@@ -404,7 +404,7 @@ export async function reconcileCatalogProducts(
     await bulkPutProducts(toPut, 'merge');
   }
 
-  // Si algún código temporal SKU:... se remapeó a su código de barras oficial, actualizar conteos locales
+  // Si algún código temporal SKU:... se remapeó a su código de barras oficial, actualizar conteos y movimientos locales
   if (barcodeRemap.size > 0) {
     const allCounts = await db.getAll('counts');
     const txCounts = db.transaction('counts', 'readwrite');
@@ -415,6 +415,22 @@ export async function reconcileCatalogProducts(
       }
     }
     await txCounts.done;
+
+    const { getAllMovements, saveAllMovements } = await import('../db/movements');
+    const allMovs = await getAllMovements();
+    let movChanged = false;
+    const nextMovs = allMovs.map((m) => {
+      if (!m.barcode) return m;
+      const mapped = barcodeRemap.get(m.barcode);
+      if (mapped && mapped !== m.barcode) {
+        movChanged = true;
+        return { ...m, barcode: mapped };
+      }
+      return m;
+    });
+    if (movChanged) {
+      await saveAllMovements(nextMovs);
+    }
   }
 
   return { added, updated };
