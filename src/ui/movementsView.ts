@@ -41,7 +41,7 @@ import {
   openDialog,
   toast,
 } from './dom';
-import { onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
+import { onCloudRoomUpdate, publishLiveScannerState, triggerBackgroundSync } from '../sync/cloudSync';
 import type { View } from './router';
 
 export type MovementStatus = IdealStatus;
@@ -1258,6 +1258,16 @@ export async function openMovementRegistrationModal(
       skuInput.value = found.sku;
     }
     updatePreview();
+    void publishLiveScannerState({
+      status: 'pending_confirm',
+      cameraOn: cameraRunning,
+      origin: cameraRunning ? 'camara' : 'manual',
+      barcode: found?.barcode || clean,
+      sku: found?.sku || clean.toUpperCase(),
+      description: found?.description,
+      qty: parseFloat(qtyInput.value) || 1,
+      sessionName: 'Movimientos Kardex',
+    });
   };
   (dlg as any).__resolveSku = resolveSkuInput;
 
@@ -1379,6 +1389,16 @@ export async function openMovementRegistrationModal(
         machineOrArea: areaInput.value.trim(),
         folio: folioInput.value.trim(),
         notes: notesInput.value.trim(),
+      });
+      void publishLiveScannerState({
+        status: 'registered',
+        cameraOn: cameraRunning,
+        barcode: detectedProduct?.barcode || rawSku,
+        sku: rawSku,
+        description: detectedProduct?.description,
+        qty,
+        counter: actorInput.value.trim() || undefined,
+        sessionName: 'Movimientos Kardex',
       });
       triggerBackgroundSync();
 

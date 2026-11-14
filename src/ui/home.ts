@@ -14,7 +14,7 @@ import { getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
 import { detectPlatformInfo } from './app';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { importCatalogFlow, syncCatalogWithDbFlow } from './catalog';
-import { isMobileCatalogReadOnly } from './catalogMode';
+import { isMobileCatalogReadOnly, isSupervisorModeEnabled } from './catalogMode';
 import {
   clear,
   confirmDialog,
@@ -97,6 +97,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
     const cloudStatus = getCloudConnectionStatus();
     const platform = detectPlatformInfo();
     const install = installState();
+    const supervisorUI = isSupervisorModeEnabled();
 
     const todayStr = new Intl.DateTimeFormat('es-MX', {
       weekday: 'long',
@@ -316,26 +317,31 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               h(
                 'div',
                 { class: 'dash-cta-subrow' },
-                h(
-                  'button',
-                  {
-                    class: 'btn sm',
-                    onclick: () => navigate('/reporte'),
-                  },
-                  icon('chart'),
-                  'Ver reporte de diferencias',
-                ),
-                h(
-                  'button',
-                  {
-                    class: 'btn sm',
-                    'data-testid': 'home-create-session-btn',
-                    onclick: async () => {
-                      if (await newSessionFlow()) navigate('/contar');
-                    },
-                  },
-                  'Crear sesión',
-                ),
+                supervisorUI
+                  ? h(
+                      'button',
+                      {
+                        class: 'btn sm',
+                        'data-testid': 'home-goto-report-btn',
+                        onclick: () => navigate('/reporte'),
+                      },
+                      icon('chart'),
+                      'Ver reporte de diferencias',
+                    )
+                  : null,
+                supervisorUI
+                  ? h(
+                      'button',
+                      {
+                        class: 'btn sm',
+                        'data-testid': 'home-create-session-btn',
+                        onclick: async () => {
+                          if (await newSessionFlow()) navigate('/contar');
+                        },
+                      },
+                      'Crear sesión',
+                    )
+                  : null,
                 h(
                   'button',
                   {
@@ -414,28 +420,32 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                 icon('swap'),
                 '− Salida Kardex',
               ),
-              h(
-                'button',
-                {
-                  class: 'btn sm dash-flow-btn',
-                  type: 'button',
-                  'data-testid': 'home-quick-unify',
-                  onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
-                },
-                icon('users'),
-                'Unificar Reportes',
-              ),
-              h(
-                'button',
-                {
-                  class: 'btn sm dash-flow-btn',
-                  type: 'button',
-                  'data-testid': 'home-quick-labels',
-                  onclick: () => openBarcodeSheetDialog(),
-                },
-                icon('scan'),
-                'Cola de Rótulos',
-              ),
+              supervisorUI
+                ? h(
+                    'button',
+                    {
+                      class: 'btn sm dash-flow-btn',
+                      type: 'button',
+                      'data-testid': 'home-quick-unify',
+                      onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+                    },
+                    icon('users'),
+                    'Unificar Reportes',
+                  )
+                : null,
+              supervisorUI
+                ? h(
+                    'button',
+                    {
+                      class: 'btn sm dash-flow-btn',
+                      type: 'button',
+                      'data-testid': 'home-quick-labels',
+                      onclick: () => openBarcodeSheetDialog(),
+                    },
+                    icon('scan'),
+                    'Cola de Rótulos',
+                  )
+                : null,
               h(
                 'button',
                 {
@@ -461,10 +471,11 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
           ),
         ),
 
-        /* 4. SECCIÓN EN 2 COLUMNAS (DESKTOP/TABLET) / 1 COLUMNA (MÓVIL) */
-        h(
-          'div',
-          { class: 'dash-cols-layout' },
+        /* 4. SECCIÓN EN 2 COLUMNAS (DESKTOP/TABLET / SUPERVISOR) */
+        supervisorUI
+          ? h(
+              'div',
+              { class: 'dash-cols-layout' },
 
           // COLUMNA IZQUIERDA: Sesión y Sesiones Anteriores
           h(
@@ -695,7 +706,8 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                 )
                 : null,
           ),
-        ),
+        )
+          : null,
 
         // Pie del Dashboard
         h(

@@ -21,6 +21,8 @@ export interface Settings {
   syncEndpointUrl: string;
   /** Sincronizar automáticamente cada escaneo en segundo plano */
   syncAuto: boolean;
+  /** Modo Supervisor en móvil: habilita controles administrativos y de auditoría en pantallas móviles */
+  supervisorMode?: boolean;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -36,6 +38,7 @@ export const DEFAULT_SETTINGS: Settings = {
   syncRoomCode: '',
   syncEndpointUrl: '',
   syncAuto: true,
+  supervisorMode: false,
 };
 
 let cache: Settings | null = null;

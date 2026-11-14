@@ -1,6 +1,6 @@
 import { getActiveSession } from '../db/db';
 import { startPendingWatcher } from '../lookup/pendingQueue';
-import { loadSettings } from '../settings';
+import { loadSettings, saveSettings, settingsSync } from '../settings';
 import {
   consumeUrlSyncParams,
   getCloudConnectionStatus,
@@ -9,6 +9,7 @@ import {
   startLiveCloudSync,
 } from '../sync/cloudSync';
 import { catalogView } from './catalog';
+import { isSupervisorModeEnabled } from './catalogMode';
 import { countView } from './count';
 import { clear, h, icon, toast } from './dom';
 import { homeView } from './home';
@@ -79,6 +80,7 @@ export async function bootstrapApp(): Promise<void> {
     const info = detectPlatformInfo();
     appEl.setAttribute('data-platform', info.platform);
     appEl.setAttribute('data-touch', String(info.isTouch));
+    appEl.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
     document.documentElement.setAttribute('data-platform', info.platform);
     sidebarPlatformBadge.textContent = info.label;
   };
@@ -244,6 +246,34 @@ export async function bootstrapApp(): Promise<void> {
   );
 
   // Mobile "Más ⋯" Bottom Sheet (< 900px)
+  const mobileSupervisorToggleLabel = h('span', null);
+  const syncMobileSupervisorLabel = () => {
+    const enabled = Boolean(settingsSync().supervisorMode);
+    mobileSupervisorToggleLabel.textContent = enabled
+      ? '👮 Modo Supervisor: ACTIVO (tocar para ocultar opciones)'
+      : '👷 Vista Técnico (tocar para Modo Supervisor)';
+  };
+  syncMobileSupervisorLabel();
+
+  const mobileSupervisorToggleBtn = h(
+    'button',
+    {
+      class: 'mobile-more-item mobile-supervisor-toggle-btn',
+      type: 'button',
+      'data-testid': 'mobile-supervisor-toggle',
+      onclick: async () => {
+        const next = !Boolean(settingsSync().supervisorMode);
+        await saveSettings({ supervisorMode: next });
+        applyPlatformAttributes();
+        syncMobileSupervisorLabel();
+        toast(next ? 'Modo Supervisor activado en móvil' : 'Vista Técnico móvil activada', 'ok');
+        closeMoreSheet();
+        navigate(currentPath() || '/');
+      },
+    },
+    mobileSupervisorToggleLabel,
+  );
+
   const moreBackdrop = h('div', {
     class: 'mobile-more-backdrop',
     hidden: true,
@@ -282,6 +312,7 @@ export async function bootstrapApp(): Promise<void> {
     allNavElements.push({ path: item.path, el: sheetBtn });
     return sheetBtn;
   }),
+  mobileSupervisorToggleBtn,
   );
 
   function closeMoreSheet() {
@@ -291,6 +322,7 @@ export async function bootstrapApp(): Promise<void> {
   }
 
   function toggleMoreSheet() {
+    syncMobileSupervisorLabel();
     const open = moreSheet.hidden;
     moreBackdrop.hidden = !open;
     moreSheet.hidden = !open;

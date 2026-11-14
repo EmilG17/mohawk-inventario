@@ -15,7 +15,7 @@ import {
   triggerBackgroundSync,
 } from '../sync/cloudSync';
 import { importCatalogFlow } from './catalog';
-import { isMobileCatalogReadOnly } from './catalogMode';
+import { isMobileCatalogReadOnly, isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, shareOrDownload, toast,
 } from './dom';
@@ -25,6 +25,8 @@ export const settingsView: View = {
   title: 'Ajustes',
   async render(root, params) {
     const readOnlyMobile = isMobileCatalogReadOnly();
+    const mobileViewport = isMobileViewport();
+    const supervisorUI = isSupervisorModeEnabled();
     const [s, products] = await Promise.all([loadSettings(), allProducts()]);
     const totalProds = products.length;
     const uncatalogedCount = products.filter((p) => p.uncataloged).length;
@@ -55,6 +57,11 @@ export const settingsView: View = {
 
     const syncEnabledCheck = h('input', { type: 'checkbox', checked: s.syncEnabled }) as HTMLInputElement;
     const syncAutoCheck = h('input', { type: 'checkbox', checked: s.syncAuto }) as HTMLInputElement;
+    const supervisorCheck = h('input', {
+      type: 'checkbox',
+      checked: Boolean(s.supervisorMode),
+      'data-testid': 'settings-supervisor-mode-toggle',
+    }) as HTMLInputElement;
     const syncRoomInput = h('input', {
       class: 'input input-sm',
       value: s.syncRoomCode,
@@ -87,7 +94,10 @@ export const settingsView: View = {
         syncAuto: syncAutoCheck.checked,
         syncRoomCode: cleanRoom,
         syncEndpointUrl: cleanEndpoint,
+        supervisorMode: supervisorCheck.checked,
       });
+
+      document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
 
       if (syncEnabledCheck.checked && cleanRoom) {
         startLiveCloudSync({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
@@ -103,6 +113,15 @@ export const settingsView: View = {
       chk.addEventListener('change', () => {
         void persistSettings(true);
       });
+    });
+
+    supervisorCheck.addEventListener('change', () => {
+      void (async () => {
+        await saveSettings({ supervisorMode: supervisorCheck.checked });
+        document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
+        toast(supervisorCheck.checked ? 'Modo Supervisor activado en móvil' : 'Vista Técnico móvil activada', 'ok');
+        rerender();
+      })();
     });
 
     const compactToggle = (title: string, subtitle: string, checkbox: HTMLInputElement) =>
@@ -199,31 +218,35 @@ export const settingsView: View = {
               },
             }, icon('refresh'), readOnlyMobile ? 'Sincronizar / Conciliar con BD' : 'Conciliar catálogo ahora'),
 
-            h('button', {
-              class: 'btn small',
-              disabled: totalProds === 0,
-              onclick: async () => {
-                const currentProds = await allProducts();
-                const file = buildCatalogFile(currentProds);
-                await shareOrDownload(
-                  JSON.stringify(file, null, 2),
-                  'catalogo_consumibles.json',
-                  MIME.json,
-                  'Catálogo de consumibles',
-                );
-              },
-            }, icon('share'), 'Compartir (.json)'),
+            supervisorUI
+              ? h('button', {
+                  class: 'btn small',
+                  disabled: totalProds === 0,
+                  onclick: async () => {
+                    const currentProds = await allProducts();
+                    const file = buildCatalogFile(currentProds);
+                    await shareOrDownload(
+                      JSON.stringify(file, null, 2),
+                      'catalogo_consumibles.json',
+                      MIME.json,
+                      'Catálogo de consumibles',
+                    );
+                  },
+                }, icon('share'), 'Compartir (.json)')
+              : null,
 
-            h('button', {
-              class: 'btn small',
-              disabled: totalProds === 0,
-              onclick: async () => {
-                const currentProds = await allProducts();
-                const bytes = buildCatalogWorkbook(currentProds);
-                downloadFile(bytes, 'catalogo_consumibles.xlsx', MIME.xlsx);
-                toast('Catálogo exportado a Excel', 'ok');
-              },
-            }, icon('download'), 'Exportar (.xlsx)'),
+            supervisorUI
+              ? h('button', {
+                  class: 'btn small',
+                  disabled: totalProds === 0,
+                  onclick: async () => {
+                    const currentProds = await allProducts();
+                    const bytes = buildCatalogWorkbook(currentProds);
+                    downloadFile(bytes, 'catalogo_consumibles.xlsx', MIME.xlsx);
+                    toast('Catálogo exportado a Excel', 'ok');
+                  },
+                }, icon('download'), 'Exportar (.xlsx)')
+              : null,
           ),
 
           readOnlyMobile
@@ -281,18 +304,23 @@ export const settingsView: View = {
               h('span', null, 'Nombre del técnico / contador'),
               nameInput,
             ),
-            h('label', { class: 'field compact-field' },
-              h('span', null, 'Moneda (Reporte)'),
-              currInput,
-            ),
+            supervisorUI
+              ? h('label', { class: 'field compact-field' },
+                  h('span', null, 'Moneda (Reporte)'),
+                  currInput,
+                )
+              : null,
           ),
 
           h('div', { class: 'settings-switch-grid' },
+            mobileViewport
+              ? compactToggle('👮 Modo Supervisor en móvil', 'Muestra controles de auditoría y reportes en este teléfono', supervisorCheck)
+              : null,
             compactToggle('🔊 Pitido', 'Sonido al escanear', beepCheck),
             compactToggle('📳 Vibración', 'Respuesta háptica', vibCheck),
             compactToggle('⚡ Modo rápido (+1)', 'Suma 1 sin preguntar', quickCheck),
-            compactToggle('👁️ Mostrar teórico', 'Ver stock esperado al contar', showExpCheck),
-            compactToggle('🌐 Buscar en internet', 'Autocompletar descripciones', lookupCheck),
+            supervisorUI ? compactToggle('👁️ Mostrar teórico', 'Ver stock esperado al contar', showExpCheck) : null,
+            supervisorUI ? compactToggle('🌐 Buscar en internet', 'Autocompletar descripciones', lookupCheck) : null,
           ),
         ),
 
@@ -351,45 +379,47 @@ export const settingsView: View = {
         ),
       ),
 
-      /* OPCIONES AVANZADAS COLAPSABLES PARA NO CONTAMINAR LA VISTA */
-      h('details', { class: 'card settings-advanced' },
-        h('summary', { class: 'settings-advanced-summary' },
-          h('span', null, '⚙️ Opciones avanzadas y restablecimiento de fábrica'),
-          h('span', { class: 'muted small' }, 'Proxy UPC · Borrar datos locales'),
-        ),
-        h('div', { class: 'settings-advanced-body' },
-          h('label', { class: 'field compact-field', style: 'max-width:420px' },
-            h('span', null, 'Ruta del proxy UPCitemdb'),
-            proxyInput,
-            h('span', { class: 'muted small' }, 'Por defecto "api/upc". Deja en blanco para consultar solo Open Facts directo.'),
-          ),
-          h('div', { class: 'settings-danger-bar' },
-            h('div', null,
-              h('b', { style: 'color:var(--danger)' }, 'Reiniciar aplicación en este dispositivo'),
-              h('div', { class: 'muted small' }, 'Elimina el catálogo, las sesiones y todos los conteos guardados en este navegador.'),
+      /* OPCIONES AVANZADAS COLAPSABLES SOLO PARA SUPERVISOR / PC */
+      supervisorUI
+        ? h('details', { class: 'card settings-advanced' },
+            h('summary', { class: 'settings-advanced-summary' },
+              h('span', null, '⚙️ Opciones avanzadas y restablecimiento de fábrica'),
+              h('span', { class: 'muted small' }, 'Proxy UPC · Borrar datos locales'),
             ),
-            h('button', {
-              class: 'btn danger ghost small',
-              onclick: async () => {
-                if (await confirmDialog(
-                  'Reiniciar todo',
-                  'Se borrarán el catálogo, todas las sesiones y todos los conteos guardados en este dispositivo. ¿Estás seguro?',
-                  'Borrar todo',
-                  true,
-                )) {
-                  const db = await getDB();
-                  await db.clear('products');
-                  await db.clear('counts');
-                  await db.clear('sessions');
-                  await db.clear('meta');
-                  toast('Datos borrados');
-                  location.reload();
-                }
-              },
-            }, icon('trash'), 'Borrar todos los datos'),
-          ),
-        ),
-      ),
+            h('div', { class: 'settings-advanced-body' },
+              h('label', { class: 'field compact-field', style: 'max-width:420px' },
+                h('span', null, 'Ruta del proxy UPCitemdb'),
+                proxyInput,
+                h('span', { class: 'muted small' }, 'Por defecto "api/upc". Deja en blanco para consultar solo Open Facts directo.'),
+              ),
+              h('div', { class: 'settings-danger-bar' },
+                h('div', null,
+                  h('b', { style: 'color:var(--danger)' }, 'Reiniciar aplicación en este dispositivo'),
+                  h('div', { class: 'muted small' }, 'Elimina el catálogo, las sesiones y todos los conteos guardados en este navegador.'),
+                ),
+                h('button', {
+                  class: 'btn danger ghost small',
+                  onclick: async () => {
+                    if (await confirmDialog(
+                      'Reiniciar todo',
+                      'Se borrarán el catálogo, todas las sesiones y todos los conteos guardados en este dispositivo. ¿Estás seguro?',
+                      'Borrar todo',
+                      true,
+                    )) {
+                      const db = await getDB();
+                      await db.clear('products');
+                      await db.clear('counts');
+                      await db.clear('sessions');
+                      await db.clear('meta');
+                      toast('Datos borrados');
+                      location.reload();
+                    }
+                  },
+                }, icon('trash'), 'Borrar todos los datos'),
+              ),
+            ),
+          )
+        : null,
     );
   },
 };

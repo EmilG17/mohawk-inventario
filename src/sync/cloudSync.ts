@@ -37,6 +37,20 @@ export interface CloudParticipant {
   lastQty?: number;
 }
 
+export interface LiveScannerState {
+  counter: string;
+  deviceId: string;
+  status: 'scanning' | 'pending_confirm' | 'registered' | 'idle';
+  cameraOn?: boolean;
+  origin?: 'camara' | 'teclado' | 'manual';
+  barcode?: string;
+  sku?: string;
+  description?: string;
+  qty?: number;
+  sessionName?: string;
+  updatedAt: number;
+}
+
 export interface TombstoneState {
   counts?: Record<string, number>;
   movements?: Record<string, number>;
@@ -52,6 +66,7 @@ export interface CloudRoomState {
   counts: CountEntry[];
   products: Product[];
   participants: Record<string, CloudParticipant>;
+  liveScanners?: Record<string, LiveScannerState>;
   movements?: Movement[];
   idealLevels?: Record<string, number>;
   tombstones?: {
@@ -324,6 +339,7 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
     'counts' in obj ||
     'movements' in obj ||
     'products' in obj ||
+    'liveScanners' in obj ||
     'sessionName' in obj ||
     'updatedAt' in obj;
 
@@ -338,6 +354,10 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
   const participants =
     obj.participants && typeof obj.participants === 'object' && !Array.isArray(obj.participants)
       ? (obj.participants as Record<string, CloudParticipant>)
+      : {};
+  const liveScanners: Record<string, LiveScannerState> =
+    obj.liveScanners && typeof obj.liveScanners === 'object' && !Array.isArray(obj.liveScanners)
+      ? (obj.liveScanners as Record<string, LiveScannerState>)
       : {};
   const idealLevels =
     obj.idealLevels && typeof obj.idealLevels === 'object' && !Array.isArray(obj.idealLevels)
@@ -363,6 +383,7 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
     counts,
     products,
     participants,
+    liveScanners,
     movements,
     idealLevels,
     tombstones,
@@ -502,6 +523,26 @@ export async function recordTombstone(
   await saveLocalTombstones(current);
 }
 
+function mergeLiveScannersMap(
+  baseMap?: Record<string, LiveScannerState>,
+  incomingMap?: Record<string, LiveScannerState>,
+): Record<string, LiveScannerState> {
+  const cutoff = Date.now() - 12 * 3600 * 1000;
+  const out: Record<string, LiveScannerState> = {};
+  for (const src of [baseMap, incomingMap]) {
+    if (!src || typeof src !== 'object') continue;
+    for (const [key, sc] of Object.entries(src)) {
+      if (!sc || typeof sc !== 'object') continue;
+      if (typeof sc.updatedAt === 'number' && sc.updatedAt < cutoff) continue;
+      const prev = out[key];
+      if (!prev || (sc.updatedAt || 0) >= (prev.updatedAt || 0)) {
+        out[key] = sc;
+      }
+    }
+  }
+  return out;
+}
+
 /**
  * Combina dos estados de sala sin perder ni duplicar conteos, productos ni movimientos.
  */
@@ -512,6 +553,7 @@ export function mergeRoomStates(
     sessionName: string;
     counts: CountEntry[];
     products: Product[];
+    liveScanners?: Record<string, LiveScannerState>;
     movements?: Movement[];
     idealLevels?: Record<string, number>;
     tombstones?: {
@@ -796,6 +838,8 @@ export function mergeRoomStates(
     }
   }
 
+  const mergedLiveScanners = mergeLiveScannersMap(base?.liveScanners, incoming.liveScanners);
+
   return {
     app: APP_ID,
     version: 1,
@@ -805,6 +849,7 @@ export function mergeRoomStates(
     counts: allCounts,
     products: [...prodMap.values()],
     participants,
+    liveScanners: mergedLiveScanners,
     movements: mergedMovements,
     idealLevels: mergedIdealLevels,
     tombstones: mergedTombstones,
@@ -840,7 +885,17 @@ export function computeStateFingerprint(state: CloudRoomState | null): string {
     ? `${Object.entries(state.tombstones.counts || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}|${Object.entries(state.tombstones.movements || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}|${Object.entries(state.tombstones.products || {}).sort().map(([k, v]) => `${k}:${v}`).join(',')}`
     : '';
 
-  return `${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}`;
+  const partSig = Object.entries(state.participants || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, p]) => `${k}:${p.scans}:${p.units}:${p.lastSeen}:${p.lastSku ?? ''}:${p.lastQty ?? ''}`)
+    .join(';');
+
+  const scannerSig = Object.entries(state.liveScanners || {})
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, sc]) => `${k}:${sc.status}:${sc.barcode ?? ''}:${sc.qty ?? ''}:${sc.cameraOn ? 1 : 0}:${sc.updatedAt}`)
+    .join(';');
+
+  return `${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}|${partSig}|${scannerSig}`;
 }
 
 /**
@@ -852,10 +907,14 @@ export async function applyIncomingRoomStateToLocal(
   sourceTransport: 'remote' | 'local',
 ): Promise<boolean> {
   const prevMirror = getLocalRoomMirror(incomingState.roomCode);
+  const mergedState: CloudRoomState = {
+    ...incomingState,
+    liveScanners: mergeLiveScannersMap(prevMirror?.liveScanners, incomingState.liveScanners),
+  };
   const prevFp = computeStateFingerprint(prevMirror);
-  const nextFp = computeStateFingerprint(incomingState);
+  const nextFp = computeStateFingerprint(mergedState);
 
-  saveLocalRoomMirror(incomingState.roomCode, incomingState);
+  saveLocalRoomMirror(incomingState.roomCode, mergedState);
 
   let hasNewChanges = prevFp !== nextFp;
 
@@ -1161,12 +1220,14 @@ async function doSyncNow(opts?: {
       }
     : localTombstones;
 
-  // 2. Fusionar conteos locales + remotos incluyendo lápidas (tombstones)
+  // 2. Fusionar conteos locales + remotos incluyendo lápidas (tombstones) y estado de escáneres
+  const localMirrorScanners = getLocalRoomMirror(roomCode)?.liveScanners;
   const mergedRoom = mergeRoomStates(remoteState, {
     roomCode,
     sessionName: session?.name || remoteState?.sessionName || `Sala ${roomCode}`,
     counts: localCounts,
     products: changedProducts,
+    liveScanners: localMirrorScanners,
     movements: localMovements,
     idealLevels: localIdealLevels,
     tombstones: outgoingTombstones,
@@ -1323,22 +1384,12 @@ let isPollingNow = false;
 let currentPollMs = 3000;
 let isSseConnected = false;
 
-function pauseLivePolling(): void {
-  if (livePollTimer) {
-    clearInterval(livePollTimer);
-    livePollTimer = null;
-  }
-}
-
 function resumeLivePolling(endpointUrl: string, roomCode: string): void {
-  if (isSseConnected) return; // Si SSE está activo, suspendemos el polling para no agotar la cuota de Firebase
   if (livePollTimer !== null || !endpointUrl || !roomCode) return;
   void pullRemoteRoomQuietly(endpointUrl, roomCode);
   if (typeof setInterval !== 'undefined') {
     livePollTimer = setInterval(() => {
-      if (!isSseConnected) {
-        void pullRemoteRoomQuietly(endpointUrl, roomCode);
-      }
+      void pullRemoteRoomQuietly(endpointUrl, roomCode);
     }, currentPollMs);
   }
 }
@@ -1355,7 +1406,6 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
     const onConnected = () => {
       isSseConnected = true;
       liveSseRetries = 0;
-      pauseLivePolling();
       emitStatus({ liveStream: 'sse', state: 'connected', lastError: null });
     };
 
@@ -1365,6 +1415,10 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
       onConnected();
       try {
         const parsed = JSON.parse(ev.data);
+        if (parsed && typeof parsed === 'object' && 'path' in parsed && parsed.path && parsed.path !== '/') {
+          void pullRemoteRoomQuietly(endpointUrl, roomCode);
+          return;
+        }
         const payload = parsed && typeof parsed === 'object' && 'data' in parsed ? parsed.data : parsed;
         const coerced = coerceRemoteRoomState(payload, roomCode);
         if (coerced) {
@@ -1498,6 +1552,7 @@ async function pullRemoteRoomQuietly(endpointUrl: string, roomCode: string): Pro
         roomCode,
         endpointUrl,
         transport: 'remote',
+        liveStream: isSseConnected ? 'sse' : 'polling',
         lastLatencyMs: latencyMs,
         lastError: null,
       });
@@ -1532,6 +1587,92 @@ export function triggerBackgroundSync(sessionId?: string): void {
       void setMeta('pendingCloudSyncRoom', s.syncRoomCode);
     });
   }, 350);
+}
+
+/**
+ * Publica en tiempo real el estado actual del escáner de este dispositivo
+ * (cámara activa, código escaneado pendiente de confirmar, ajuste de cantidad o registro)
+ * hacia la sala compartida para que el supervisor lo vea al instante.
+ */
+export async function publishLiveScannerState(
+  patch: Omit<LiveScannerState, 'counter' | 'deviceId' | 'updatedAt'> & { counter?: string },
+): Promise<void> {
+  const s = settingsSync();
+  const cleanRoom = normalizeRoomCode(s.syncRoomCode);
+  if (!cleanRoom) return;
+
+  const counter = (patch.counter || s.counterName || 'Técnico').trim() || 'Técnico';
+  const deviceId = await getDeviceId();
+  const deviceKey = `${counter.replace(/[.#$/[\]\s]+/g, '_')}__${deviceId.slice(0, 8)}`;
+  const now = Date.now();
+
+  const entry: LiveScannerState = {
+    counter,
+    deviceId,
+    status: patch.status,
+    cameraOn: patch.cameraOn,
+    origin: patch.origin,
+    barcode: patch.barcode,
+    sku: patch.sku,
+    description: patch.description,
+    qty: patch.qty,
+    sessionName: patch.sessionName,
+    updatedAt: now,
+  };
+
+  const prevMirror = getLocalRoomMirror(cleanRoom);
+  const nextMirror: CloudRoomState = prevMirror
+    ? {
+        ...prevMirror,
+        updatedAt: now,
+        liveScanners: mergeLiveScannersMap(prevMirror.liveScanners, { [deviceKey]: entry }),
+      }
+    : {
+        app: APP_ID,
+        version: 1,
+        roomCode: cleanRoom,
+        updatedAt: now,
+        sessionName: patch.sessionName || `Sala ${cleanRoom}`,
+        counts: [],
+        products: [],
+        participants: {},
+        liveScanners: { [deviceKey]: entry },
+        movements: [],
+        idealLevels: {},
+      };
+
+  saveLocalRoomMirror(cleanRoom, nextMirror);
+  if (broadcastChannel) {
+    try {
+      broadcastChannel.postMessage(nextMirror);
+    } catch {}
+  }
+  notifyRoomListeners(nextMirror);
+
+  const endpointUrl = normalizeEndpointBaseUrl(s.syncEndpointUrl || '');
+  if (!s.syncEnabled || !endpointUrl || typeof fetch === 'undefined') return;
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) return;
+
+  const roomUrl = buildRoomEndpointUrl(endpointUrl, cleanRoom);
+  if (!roomUrl) return;
+
+  const isFirebase = /firebaseio\.com/i.test(roomUrl) || /\.firebasedatabase\.app/i.test(roomUrl);
+  if (isFirebase) {
+    const baseRoomNoJson = roomUrl.replace(/\.json$/i, '');
+    const scannerPatchUrl = `${baseRoomNoJson}/liveScanners.json`;
+    try {
+      await fetch(scannerPatchUrl, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ [deviceKey]: entry }),
+        signal: getFetchTimeoutSignal(6000),
+      });
+    } catch {
+      // Silencioso para no bloquear la operación local de conteo en móvil
+    }
+  } else if (s.syncAuto) {
+    triggerBackgroundSync();
+  }
 }
 
 /**

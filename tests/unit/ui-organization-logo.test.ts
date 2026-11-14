@@ -342,6 +342,7 @@ vi.mock('../../src/sync/cloudSync', () => ({
   onCloudStatusChange: vi.fn(() => () => {}),
   decodeCompactCountQr: vi.fn(() => null),
   isCompactCountQr: vi.fn(() => false),
+  publishLiveScannerState: vi.fn(async () => {}),
   triggerBackgroundSync: vi.fn(),
 }));
 

@@ -21,13 +21,16 @@ import {
 import { renderQrCodeSvg } from '../barcode/code128';
 import { buildCountFile, safeFileName, type CountFile } from '../io/exportResults';
 import { mergeCountFiles, parseTechnicianReportFile } from '../io/mergeCounts';
+import { normalizeBarcode } from '../io/normalize';
 import { buildReport, type ReportRow } from '../report';
 import { loadSettings, saveSettings } from '../settings';
 import {
   buildRoomInviteUrl,
+  canonicalCountId,
   decodeCompactCountQr,
   encodeCompactCountQrChunks,
   generateRoomCode,
+  getCachedRoomState,
   getCloudConnectionStatus,
   normalizeEndpointBaseUrl,
   normalizeRoomCode,
@@ -37,6 +40,7 @@ import {
   syncNow,
   testFirebaseConnection,
   type CloudConnectionStatus,
+  type LiveScannerState,
 } from '../sync/cloudSync';
 import {
   clear,
@@ -52,6 +56,7 @@ import {
   shareOrDownload,
   toast,
 } from './dom';
+import { isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
 import { newSessionFlow } from './home';
 import { navigate, type View } from './router';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
@@ -416,6 +421,25 @@ export const teamView: View = {
           h(
             'div',
             { class: 'sup-hero-actions' },
+            isMobileViewport()
+              ? h(
+                  'button',
+                  {
+                    class: `btn sm ${s.supervisorMode ? 'primary' : 'ghost'}`,
+                    type: 'button',
+                    'data-testid': 'team-supervisor-toggle',
+                    onclick: async () => {
+                      const next = !Boolean(s.supervisorMode);
+                      await saveSettings({ supervisorMode: next });
+                      s = await loadSettings();
+                      document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
+                      renderStatusHeader(getCloudConnectionStatus());
+                      toast(next ? 'Modo Supervisor activado en móvil' : 'Vista Técnico móvil activada', 'ok');
+                    },
+                  },
+                  s.supervisorMode ? '👮 Modo Supervisor: ON' : '👷 Vista Técnico (Supervisor OFF)',
+                )
+              : null,
             s.syncRoomCode
               ? h(
                   'button',
@@ -578,6 +602,22 @@ export const teamView: View = {
             h(
               'div',
               { class: 'row wrap', style: 'gap: 8px;' },
+              normalizeRoomCode(roomInput.value) !== 'HHF-1114' || !endpointInput.value.includes('hhf-inventory')
+                ? h(
+                    'button',
+                    {
+                      class: 'btn sm',
+                      type: 'button',
+                      'data-testid': 'team-preset-hhf-btn',
+                      onclick: () => {
+                        roomInput.value = 'HHF-1114';
+                        endpointInput.value = 'https://hhf-inventory-default-rtdb.firebaseio.com';
+                        void connectAndSync();
+                      },
+                    },
+                    '⚡ Conectar HHF-1114',
+                  )
+                : null,
               h(
                 'button',
                 { class: 'btn primary', type: 'button', onclick: connectAndSync },
@@ -592,18 +632,71 @@ export const teamView: View = {
 
     const refreshDashboard = async () => {
       if (!root.isConnected) return;
-      const [sessions, current, deviceId, products, movements, movSummaries, idealLevels] = await Promise.all([
-        allSessions(),
-        getActiveSession(),
-        getDeviceId(),
-        allProducts(),
-        listMovements(),
-        getMovementSummariesBySku(),
-        getIdealLevels(),
-      ]);
+      const [sessions, current, deviceId, localProducts, localMovements, movSummaries, localIdealLevels] =
+        await Promise.all([
+          allSessions(),
+          getActiveSession(),
+          getDeviceId(),
+          allProducts(),
+          listMovements(),
+          getMovementSummariesBySku(),
+          getIdealLevels(),
+        ]);
       if (!root.isConnected) return;
 
-      const curCounts = current ? await countsForSession(current.id) : [];
+      const roomState = s.syncRoomCode ? getCachedRoomState(s.syncRoomCode) : null;
+      const localCounts = current ? await countsForSession(current.id) : [];
+
+      // Fusionar productos locales + productos en la nube (incluso si aún no hay sesión local)
+      const prodTomb = roomState?.tombstones?.products || {};
+      const prodMergedMap = new Map<string, Product>();
+      for (const p of localProducts) {
+        const tombTs = prodTomb[p.barcode];
+        if (tombTs !== undefined && tombTs >= (p.updatedAt || 0)) continue;
+        prodMergedMap.set(normalizeBarcode(p.barcode) || p.barcode, p);
+      }
+      for (const p of roomState?.products || []) {
+        if (!p || !p.barcode) continue;
+        const tombTs = prodTomb[p.barcode];
+        if (tombTs !== undefined && tombTs >= (p.updatedAt || 0)) continue;
+        const key = normalizeBarcode(p.barcode) || p.barcode;
+        const prev = prodMergedMap.get(key);
+        if (!prev || (p.updatedAt || 0) >= (prev.updatedAt || 0) || (prev.uncataloged && !p.uncataloged)) {
+          prodMergedMap.set(key, p);
+        }
+      }
+      const products = [...prodMergedMap.values()];
+
+      // Fusionar conteos locales + conteos en vivo de la sala
+      const countTomb = roomState?.tombstones?.counts || {};
+      const countMergedMap = new Map<string, CountEntry>();
+      for (const c of [...localCounts, ...(roomState?.counts || [])]) {
+        if (!c || !c.id) continue;
+        const cid = canonicalCountId(c.id);
+        const tombTs = countTomb[cid];
+        if (tombTs !== undefined && tombTs >= c.timestamp) continue;
+        const prev = countMergedMap.get(cid);
+        if (!prev || c.timestamp >= prev.timestamp) {
+          countMergedMap.set(cid, c);
+        }
+      }
+      const curCounts = [...countMergedMap.values()];
+
+      // Fusionar movimientos locales + movimientos de la sala
+      const movTomb = roomState?.tombstones?.movements || {};
+      const movMergedMap = new Map<string, Movement>();
+      for (const m of [...localMovements, ...(roomState?.movements || [])]) {
+        if (!m || !m.id) continue;
+        const tombTs = movTomb[m.id];
+        if (tombTs !== undefined && tombTs >= m.timestamp) continue;
+        const prev = movMergedMap.get(m.id);
+        if (!prev || m.timestamp >= prev.timestamp) {
+          movMergedMap.set(m.id, m);
+        }
+      }
+      const movements = [...movMergedMap.values()];
+      const idealLevels = { ...localIdealLevels, ...(roomState?.idealLevels || {}) };
+
       const reportLines = buildReport(products, curCounts, {
         includeNotCounted: true,
         movementsBySku: movSummaries,
@@ -615,10 +708,22 @@ export const teamView: View = {
       const prodBySku = new Map<string, Product>();
       for (const p of products) {
         prodByBarcode.set(p.barcode, p);
+        const normKey = normalizeBarcode(p.barcode);
+        if (normKey) prodByBarcode.set(normKey, p);
         if (p.sku) prodBySku.set(p.sku.toUpperCase(), p);
       }
 
-      // Agrupar actividad por técnico (conteos + movimientos de Kardex)
+      const now = Date.now();
+      const activeLiveScanners: LiveScannerState[] = Object.values(roomState?.liveScanners || {})
+        .filter((sc) => sc && typeof sc.updatedAt === 'number' && now - sc.updatedAt <= 15 * 60 * 1000)
+        .sort((a, b) => {
+          const rank = (st: LiveScannerState['status']) =>
+            st === 'pending_confirm' ? 0 : st === 'scanning' ? 1 : st === 'registered' ? 2 : 3;
+          const dr = rank(a.status) - rank(b.status);
+          return dr !== 0 ? dr : b.updatedAt - a.updatedAt;
+        });
+
+      // Agrupar actividad por técnico (conteos + movimientos de Kardex + telemetría en vivo)
       interface TechSummary {
         name: string;
         scans: number;
@@ -627,24 +732,33 @@ export const teamView: View = {
         lastSeen: number;
         lastActionLabel: string;
         skusTouched: Set<string>;
+        liveScanner?: LiveScannerState;
       }
       const techMap = new Map<string, TechSummary>();
 
-      const sortedCounts = [...curCounts].sort((a, b) => a.timestamp - b.timestamp);
-      for (const c of sortedCounts) {
-        const name = (c.counter || 'Técnico').trim();
-        const prod = prodByBarcode.get(c.barcode);
-        const skuLabel = prod?.sku || c.barcode;
-        const descLabel = prod?.description || c.barcode;
-        const cur = techMap.get(name) ?? {
+      const getOrInitTech = (name: string): TechSummary => {
+        const existing = techMap.get(name);
+        if (existing) return existing;
+        const created: TechSummary = {
           name,
           scans: 0,
           units: 0,
           movementsCount: 0,
           lastSeen: 0,
-          lastActionLabel: 'Sin lecturas',
+          lastActionLabel: 'Conectado en sala',
           skusTouched: new Set<string>(),
         };
+        techMap.set(name, created);
+        return created;
+      };
+
+      const sortedCounts = [...curCounts].sort((a, b) => a.timestamp - b.timestamp);
+      for (const c of sortedCounts) {
+        const name = (c.counter || 'Técnico').trim();
+        const prod = prodByBarcode.get(c.barcode) || prodByBarcode.get(normalizeBarcode(c.barcode));
+        const skuLabel = prod?.sku || c.barcode;
+        const descLabel = prod?.description || c.barcode;
+        const cur = getOrInitTech(name);
         cur.scans += 1;
         cur.units += c.qty;
         cur.skusTouched.add(skuLabel);
@@ -652,7 +766,6 @@ export const teamView: View = {
           cur.lastSeen = c.timestamp;
           cur.lastActionLabel = `Contó ${c.qty >= 0 ? '+' : ''}${fmtNum(c.qty)} · ${skuLabel} (${descLabel})`;
         }
-        techMap.set(name, cur);
       }
 
       const sortedMovs = [...movements].sort((a, b) => a.timestamp - b.timestamp);
@@ -660,26 +773,50 @@ export const teamView: View = {
         const name = (m.technicianOrSupplier || 'Almacén').trim();
         const prod = prodBySku.get(m.sku.toUpperCase());
         const descLabel = prod?.description || m.sku;
-        const cur = techMap.get(name) ?? {
-          name,
-          scans: 0,
-          units: 0,
-          movementsCount: 0,
-          lastSeen: 0,
-          lastActionLabel: 'Sin actividad',
-          skusTouched: new Set<string>(),
-        };
+        const cur = getOrInitTech(name);
         cur.movementsCount += 1;
         cur.skusTouched.add(m.sku.toUpperCase());
         if (m.timestamp >= cur.lastSeen) {
           cur.lastSeen = m.timestamp;
           cur.lastActionLabel = `${m.type === 'IN' ? 'Entrada +' : 'Salida −'}${fmtNum(m.quantity)} · ${m.sku} (${descLabel})`;
         }
-        techMap.set(name, cur);
+      }
+
+      for (const p of Object.values(roomState?.participants || {})) {
+        if (!p || !p.counter) continue;
+        const cur = getOrInitTech(p.counter.trim());
+        if (cur.scans === 0 && p.scans > 0) {
+          cur.scans = p.scans;
+          cur.units = p.units;
+        }
+        if (p.lastSku) cur.skusTouched.add(p.lastSku);
+        if (p.lastSeen >= cur.lastSeen) {
+          cur.lastSeen = p.lastSeen;
+          if (cur.lastActionLabel === 'Conectado en sala' && p.lastSku) {
+            cur.lastActionLabel = `Contó ${p.lastQty ?? 1} · ${p.lastSku}${p.lastDescription ? ` (${p.lastDescription})` : ''}`;
+          }
+        }
+      }
+
+      for (const sc of activeLiveScanners) {
+        const cur = getOrInitTech((sc.counter || 'Técnico').trim());
+        if (!cur.liveScanner || sc.updatedAt >= cur.liveScanner.updatedAt) {
+          cur.liveScanner = sc;
+        }
+        if (sc.sku || sc.barcode) {
+          cur.skusTouched.add(sc.sku || sc.barcode || '');
+        }
+        if (sc.updatedAt >= cur.lastSeen) {
+          cur.lastSeen = sc.updatedAt;
+          if (sc.status === 'pending_confirm' && (sc.sku || sc.barcode)) {
+            cur.lastActionLabel = `⏳ Confirmando ${fmtNum(sc.qty ?? 1)} · ${sc.sku || sc.barcode}`;
+          } else if (sc.status === 'scanning') {
+            cur.lastActionLabel = '📷 Cámara encendida escaneando...';
+          }
+        }
       }
 
       const techList = [...techMap.values()].sort((a, b) => b.lastSeen - a.lastSeen);
-      const now = Date.now();
       const activeNowCount = techList.filter((t) => now - t.lastSeen <= 5 * 60 * 1000).length;
 
       // Métricas globales
@@ -785,9 +922,15 @@ export const teamView: View = {
         ),
       );
 
-      if (!userSelectedTab && !current && curCounts.length === 0 && movements.length === 0) {
+      const hasLiveRoomData =
+        curCounts.length > 0 ||
+        movements.length > 0 ||
+        activeLiveScanners.length > 0 ||
+        Object.keys(roomState?.participants || {}).length > 0;
+
+      if (!userSelectedTab && !current && !hasLiveRoomData) {
         activeTab = 'sessions';
-      } else if (!userSelectedTab && current && activeTab === 'sessions') {
+      } else if (!userSelectedTab && (current || hasLiveRoomData) && activeTab === 'sessions') {
         activeTab = 'techs';
       }
 
@@ -807,20 +950,34 @@ export const teamView: View = {
               {
                 class: 'card',
                 'data-testid': 'team-no-session-badge',
-                style: 'width: 100%; margin: 0 0 8px 0; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-left: 4px solid var(--warning);',
+                style:
+                  'width: 100%; margin: 0 0 8px 0; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-left: 4px solid var(--warning);',
               },
-              h('div', null,
+              h(
+                'div',
+                null,
                 h('h2', { style: 'margin: 0 0 2px 0; font-size: 16px;' }, 'Sin sesión activa'),
-                h('div', { class: 'muted small' }, 'Inicia o reabre una sesión para activar el conteo de piso.'),
+                h(
+                  'div',
+                  { class: 'muted small' },
+                  roomState && (hasLiveRoomData || products.length > 0)
+                    ? `Monitoreando en vivo Sala ${roomState.roomCode} (${roomState.sessionName || 'Remota'}) · ${curCounts.length} lectura(s) · ${products.length} SKUs`
+                    : 'Inicia o reabre una sesión para activar el conteo de piso.',
+                ),
               ),
-              h('button', {
-                class: 'btn primary sm',
-                type: 'button',
-                'data-testid': 'team-start-session-btn',
-                onclick: async () => {
-                  if (await newSessionFlow()) navigate('/contar');
+              h(
+                'button',
+                {
+                  class: 'btn primary sm',
+                  type: 'button',
+                  'data-testid': 'team-start-session-btn',
+                  onclick: async () => {
+                    if (await newSessionFlow()) navigate('/contar');
+                  },
                 },
-              }, icon('scan'), 'Iniciar nueva sesión'),
+                icon('scan'),
+                'Iniciar nueva sesión',
+              ),
             )
           : null,
         tabs.map((t) =>
@@ -848,14 +1005,100 @@ export const teamView: View = {
       }
 
       if (activeTab === 'techs') {
-        renderTechsTab(techList, totalUnitsCounted, current);
+        renderTechsTab(techList, totalUnitsCounted, current, activeLiveScanners, prodByBarcode, prodBySku);
       } else if (activeTab === 'feed') {
-        renderLiveFeedTab(curCounts, movements, prodByBarcode, prodBySku);
+        renderLiveFeedTab(curCounts, movements, prodByBarcode, prodBySku, activeLiveScanners);
       } else if (activeTab === 'matrix') {
         renderMatrixTab(reportLines, curCounts);
       } else {
         renderSessionsTab(sessions, current, curCounts, products, deviceId);
       }
+    };
+
+    const renderLiveScannersStrip = (
+      scanners: LiveScannerState[],
+      prodByBarcode: Map<string, Product>,
+      prodBySku: Map<string, Product>,
+    ): HTMLElement | null => {
+      if (scanners.length === 0 && !s.syncRoomCode) return null;
+      const statusMeta = (st: LiveScannerState['status']) => {
+        if (st === 'pending_confirm') return { label: '⏳ Confirmando cantidad', cls: 'badge warn' };
+        if (st === 'scanning') return { label: '📷 Cámara buscando código', cls: 'badge info' };
+        if (st === 'registered') return { label: '✅ Recién registrado', cls: 'badge ok' };
+        return { label: '⚪ Escáner en pausa', cls: 'badge' };
+      };
+      return h(
+        'section',
+        {
+          class: 'card sup-live-scanners-card',
+          'data-testid': 'team-live-scanners',
+          style: 'margin-bottom: 12px; border-left: 4px solid var(--accent);',
+        },
+        h(
+          'div',
+          { class: 'row wrap', style: 'justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 8px;' },
+          h(
+            'div',
+            null,
+            h('h3', { style: 'margin: 0; font-size: 15px;' }, '📡 Escáneres en Vivo'),
+            h(
+              'div',
+              { class: 'muted small' },
+              scanners.length > 0
+                ? `${scanners.length} terminal(es) reportando actividad de escáner en tiempo real`
+                : `Sala ${s.syncRoomCode} lista · cuando un técnico encienda cámara o escanee aparecerá aquí al instante`,
+            ),
+          ),
+        ),
+        scanners.length > 0
+          ? h(
+              'div',
+              { class: 'col', style: 'gap: 8px;' },
+              scanners.map((sc) => {
+                const meta = statusMeta(sc.status);
+                const prod =
+                  (sc.barcode ? prodByBarcode.get(sc.barcode) || prodByBarcode.get(normalizeBarcode(sc.barcode)) : undefined) ||
+                  (sc.sku ? prodBySku.get(sc.sku.toUpperCase()) : undefined);
+                const skuDisplay = sc.sku || prod?.sku || sc.barcode || '—';
+                const descDisplay = sc.description || prod?.description || '';
+                const originIcon = sc.origin === 'camara' ? '📷 Cámara' : sc.origin === 'teclado' ? '⌨️ USB/BT' : sc.origin === 'manual' ? '✍️ Manual' : '';
+                return h(
+                  'div',
+                  {
+                    class: 'sup-live-scanner-row',
+                    'data-testid': `live-scanner-${sc.counter}`,
+                    style:
+                      'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface-2, rgba(255,255,255,0.03)); border: 1px solid var(--border);',
+                  },
+                  h(
+                    'div',
+                    { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
+                    h('strong', null, sc.counter),
+                    h('span', { class: meta.cls }, meta.label),
+                    sc.cameraOn ? h('span', { class: 'badge info' }, '🎥 Cam ON') : null,
+                    originIcon ? h('span', { class: 'muted small' }, originIcon) : null,
+                  ),
+                  h(
+                    'div',
+                    { class: 'row wrap', style: 'gap: 10px; align-items: center;' },
+                    sc.barcode || sc.sku
+                      ? h(
+                          'span',
+                          { class: 'small' },
+                          h('code', { class: 'mono' }, skuDisplay),
+                          descDisplay ? ` · ${descDisplay}` : '',
+                        )
+                      : h('span', { class: 'muted small' }, 'Esperando lectura de código...'),
+                    typeof sc.qty === 'number'
+                      ? h('span', { class: 'badge ok', style: 'font-weight: 800;' }, `Cant: ${fmtNum(sc.qty)}`)
+                      : null,
+                    h('span', { class: 'muted small' }, fmtRelativeAgo(sc.updatedAt)),
+                  ),
+                );
+              }),
+            )
+          : null,
+      );
     };
 
     const renderTechsTab = (
@@ -867,13 +1110,19 @@ export const teamView: View = {
         lastSeen: number;
         lastActionLabel: string;
         skusTouched: Set<string>;
+        liveScanner?: LiveScannerState;
       }[],
       totalUnits: number,
       current: Session | undefined,
+      activeLiveScanners: LiveScannerState[],
+      prodByBarcode: Map<string, Product>,
+      prodBySku: Map<string, Product>,
     ) => {
+      const liveStrip = renderLiveScannersStrip(activeLiveScanners, prodByBarcode, prodBySku);
       if (techList.length === 0) {
         clear(
           tabContentWrap,
+          liveStrip,
           h(
             'section',
             { class: 'card', style: 'text-align: center; padding: 28px 16px;' },
@@ -913,14 +1162,15 @@ export const teamView: View = {
         return;
       }
 
-      const now = Date.now();
+      const nowMs = Date.now();
       clear(
         tabContentWrap,
+        liveStrip,
         h(
           'div',
           { class: 'sup-tech-grid' },
           techList.map((t) => {
-            const isOnline = now - t.lastSeen <= 3 * 60 * 1000;
+            const isOnline = nowMs - t.lastSeen <= 3 * 60 * 1000;
             const sharePct = totalUnits > 0 ? Math.min(100, Math.round((Math.max(0, t.units) / totalUnits) * 100)) : 0;
             const initials = t.name
               .split(/\s+/)
@@ -952,6 +1202,19 @@ export const teamView: View = {
                   isOnline ? `🟢 Activo (${fmtRelativeAgo(t.lastSeen)})` : fmtRelativeAgo(t.lastSeen),
                 ),
               ),
+              t.liveScanner && (t.liveScanner.status === 'pending_confirm' || t.liveScanner.status === 'scanning')
+                ? h(
+                    'div',
+                    {
+                      class: 'small',
+                      style:
+                        'margin: 6px 0; padding: 6px 8px; border-radius: var(--r-sm); background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35);',
+                    },
+                    t.liveScanner.status === 'pending_confirm'
+                      ? `⏳ En pantalla: ${t.liveScanner.sku || t.liveScanner.barcode || ''} · Cant: ${fmtNum(t.liveScanner.qty ?? 1)}`
+                      : '📷 Cámara encendida buscando código...',
+                  )
+                : null,
               h(
                 'div',
                 { class: 'sup-tech-metrics' },
@@ -1029,6 +1292,7 @@ export const teamView: View = {
       movements: Movement[],
       prodByBarcode: Map<string, Product>,
       prodBySku: Map<string, Product>,
+      activeLiveScanners: LiveScannerState[] = [],
     ) => {
       interface FeedEvent {
         id: string;
@@ -1082,8 +1346,11 @@ export const teamView: View = {
         .sort((a, b) => b.timestamp - a.timestamp)
         .slice(0, 120);
 
+      const liveStrip = renderLiveScannersStrip(activeLiveScanners, prodByBarcode, prodBySku);
+
       clear(
         tabContentWrap,
+        liveStrip,
         h(
           'section',
           { class: 'card' },

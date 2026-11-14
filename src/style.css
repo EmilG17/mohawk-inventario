@@ -46,6 +46,7 @@ html, body {
 .app-header {
   position: sticky; top: 0; z-index: 20;
   display: flex; align-items: center; justify-content: space-between;
+  gap: 8px; max-width: 100%; overflow: hidden;
   padding: calc(10px + var(--safe-top)) 16px 10px;
   background: var(--primary);
   color: #fff;
@@ -53,6 +54,7 @@ html, body {
 }
 .header-left {
   display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;
+  min-width: 0; flex: 1 1 auto;
 }
 .brand-mark {
   display: inline-flex; align-items: center; justify-content: center;
@@ -68,10 +70,11 @@ html, body {
   margin: 0; font-size: 18px; font-weight: 700; letter-spacing: -0.01em;
 }
 .header-right {
-  display: flex; align-items: center; gap: 8px;
+  display: flex; align-items: center; gap: 6px;
+  min-width: 0; flex-shrink: 1; max-width: 58%;
 }
 .top-session {
-  color: #cbd5e1; font-size: 12px; max-width: 140px;
+  color: #cbd5e1; font-size: 12px; max-width: 110px;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .online-dot {
@@ -469,7 +472,7 @@ html, body {
 .btn.danger.ghost { background: transparent; }
 .btn.sm { min-height: 34px; padding: 6px 12px; font-size: 12px; }
 .btn.xl { min-height: 52px; width: 100%; font-size: 16px; font-weight: 700; margin: 8px 0; }
-.btn.round { width: 44px; height: 44px; border-radius: 50%; font-size: 22px; padding: 0; }
+.btn.round { width: 44px; height: 44px; border-radius: 50%; font-size: 22px; padding: 0; flex-shrink: 0; }
 .btn.grow { flex: 1; }
 .btn.active { background: var(--warning); color: #fff; border-color: var(--warning); }
 .btn .ico { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
@@ -487,7 +490,7 @@ html, body {
   font-family: inherit; font-size: 15px;
 }
 .input:focus { outline: 2px solid var(--accent); border-color: var(--accent); }
-.input.qty { font-size: 24px; font-weight: 700; text-align: center; }
+.input.qty { font-size: 24px; font-weight: 700; text-align: center; flex: 1; min-width: 0; }
 textarea.input { min-height: 60px; resize: vertical; }
 
 .field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 13px; font-weight: 500; }
@@ -2168,6 +2171,9 @@ textarea.input { min-height: 60px; resize: vertical; }
   background: rgba(255, 255, 255, 0.12);
   color: #ffffff;
   white-space: nowrap;
+  max-width: 155px;
+  overflow: hidden;
+  text-overflow: ellipsis;
   transition: transform 0.15s ease, background 0.15s ease;
 }
 .top-cloud-pill:hover {
@@ -3024,6 +3030,9 @@ textarea.input { min-height: 60px; resize: vertical; }
    ========================================================================== */
 
 @media (max-width: 899px) {
+  #app:not([data-supervisor="true"]) .workflow-bar {
+    display: none !important;
+  }
   .btn.sm,
   .chip,
   .sup-tab-btn,
@@ -3040,6 +3049,13 @@ textarea.input { min-height: 60px; resize: vertical; }
   .dash-quick-session-title {
     max-width: 100%;
   }
+}
+
+.mobile-supervisor-toggle-btn {
+  background: rgba(59, 130, 246, 0.08);
+  border-color: rgba(59, 130, 246, 0.3);
+  color: var(--text);
+  font-weight: 700;
 }
 
 .plist-table-head,

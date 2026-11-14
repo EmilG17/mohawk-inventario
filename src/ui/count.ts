@@ -8,9 +8,15 @@ import { resolveDescription, setManualDescription, type ResolveStatus } from '..
 import { beep, cameraAvailable, createDebouncer, startScanner, unlockAudio, vibrate, type ScannerHandle } from '../scanner/scanner';
 import { createWedgeController } from '../scanner/wedge';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
-import { decodeCompactCountQr, isCompactCountQr, onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
+import {
+  decodeCompactCountQr,
+  isCompactCountQr,
+  onCloudRoomUpdate,
+  publishLiveScannerState,
+  triggerBackgroundSync,
+} from '../sync/cloudSync';
 import { clear, confirmDialog, fmtNum, fmtTime, h, icon, openDialog, toast } from './dom';
-import { isMobileCatalogReadOnly } from './catalogMode';
+import { isMobileCatalogReadOnly, isSupervisorModeEnabled } from './catalogMode';
 import { newSessionFlow } from './home';
 import { editProductDialog, sourceBadge } from './productDialog';
 import { navigate, type View } from './router';
@@ -21,6 +27,7 @@ interface Pending {
   product?: Product;
   status: ResolveStatus | 'buscando';
   token: number;
+  origin?: 'camara' | 'teclado' | 'manual';
 }
 
 let session: Session | undefined;
@@ -115,6 +122,26 @@ export function triggerCooldown(ms = COOLDOWN_MS): void {
   }, 100);
 }
 
+// ---------------- telemetría en vivo ----------------
+function emitScannerState(
+  status: 'scanning' | 'pending_confirm' | 'registered' | 'idle',
+  extra?: {
+    barcode?: string;
+    sku?: string;
+    description?: string;
+    qty?: number;
+    origin?: 'camara' | 'teclado' | 'manual';
+  },
+): void {
+  void publishLiveScannerState({
+    status,
+    cameraOn: Boolean(scanner),
+    sessionName: session?.name,
+    counter: session?.counter,
+    ...extra,
+  });
+}
+
 // ---------------- cámara ----------------
 async function startCamera() {
   if (scanner) return;
@@ -135,6 +162,18 @@ async function startCamera() {
     els.camMsg.textContent = '';
     els.camBtn.replaceChildren(icon('stop'), 'Detener cámara');
     els.torchBtn.hidden = !scanner.torchSupported;
+    emitScannerState(
+      pending ? 'pending_confirm' : 'scanning',
+      pending
+        ? {
+            barcode: pending.code,
+            sku: pending.product?.sku || pending.code,
+            description: pending.product?.description,
+            qty: pending.qty,
+            origin: pending.origin,
+          }
+        : { origin: 'camara' },
+    );
   } catch (e) {
     const err = e as Error;
     scanner = null;
@@ -158,6 +197,20 @@ function stopCamera(remember = true) {
     els.camMsg.textContent = 'Cámara apagada';
     els.camBtn.replaceChildren(icon('camera'), 'Activar cámara');
     els.torchBtn.hidden = true;
+  }
+  if (viewMounted) {
+    emitScannerState(
+      pending ? 'pending_confirm' : 'idle',
+      pending
+        ? {
+            barcode: pending.code,
+            sku: pending.product?.sku || pending.code,
+            description: pending.product?.description,
+            qty: pending.qty,
+            origin: pending.origin,
+          }
+        : undefined,
+    );
   }
 }
 
@@ -229,13 +282,28 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
   feedback(known && !known.uncataloged ? 'ok' : 'warn');
 
   const token = ++tokenSeq;
-  pending = { code, qty: 1, product: known, status: known?.description ? 'catalogo' : 'buscando', token };
+  pending = { code, qty: 1, product: known, status: known?.description ? 'catalogo' : 'buscando', token, origin };
 
   if (s.quickMode) {
     const entry = await addCount({ sessionId: session.id, barcode: code, qty: 1, counter: session.counter });
     lastQuick = entry;
+    emitScannerState('registered', {
+      barcode: code,
+      sku: known?.sku || code,
+      description: known?.description,
+      qty: 1,
+      origin,
+    });
     triggerCooldown(COOLDOWN_MS);
     triggerBackgroundSync(session.id);
+  } else {
+    emitScannerState('pending_confirm', {
+      barcode: code,
+      sku: known?.sku || code,
+      description: known?.description,
+      qty: 1,
+      origin,
+    });
   }
   renderCard();
 
@@ -244,6 +312,15 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
     if (pending?.token === token) {
       pending.product = r.product;
       pending.status = r.status;
+      if (!s.quickMode) {
+        emitScannerState('pending_confirm', {
+          barcode: code,
+          sku: r.product?.sku || code,
+          description: r.product?.description,
+          qty: pending.qty,
+          origin,
+        });
+      }
       renderCard();
     }
   } else {
@@ -268,6 +345,13 @@ async function commitPending(silent = false): Promise<void> {
   if (p.qty > 0) {
     await addCount({ sessionId: session.id, barcode: p.code, qty: p.qty, counter: session.counter });
     if (!silent) toast(`Registrado: ${fmtNum(p.qty)} × ${p.product?.description || displayBarcode(p.code)}`, 'ok');
+    emitScannerState('registered', {
+      barcode: p.code,
+      sku: p.product?.sku || p.code,
+      description: p.product?.description,
+      qty: p.qty,
+      origin: p.origin,
+    });
     triggerBackgroundSync(session.id);
   }
   renderCard();
@@ -304,8 +388,19 @@ function renderCard(): void {
   const p = pending;
   const prod = p.product;
   const s = settingsSync();
+  const supervisorUI = isSupervisorModeEnabled();
   const desc = prod?.description;
   const codeLabel = p.code.startsWith('SKU:') ? p.code.slice(4) : displayBarcode(p.code);
+
+  const emitPendingQty = () => {
+    emitScannerState('pending_confirm', {
+      barcode: p.code,
+      sku: p.product?.sku || p.code,
+      description: p.product?.description,
+      qty: p.qty,
+      origin: p.origin,
+    });
+  };
 
   const descInput = h('input', { class: 'input', placeholder: 'Descripción del producto', maxlength: 200 });
   const saveDesc = async () => {
@@ -323,7 +418,13 @@ function renderCard(): void {
 
   const qtyInput = h('input', {
     class: 'input qty', type: 'text', inputmode: 'decimal', value: String(p.qty), 'aria-label': 'Cantidad',
-    oninput: () => { const n = parseNumber(qtyInput.value); if (n !== undefined && n >= 0) p.qty = n; },
+    oninput: () => {
+      const n = parseNumber(qtyInput.value);
+      if (n !== undefined && n >= 0) {
+        p.qty = n;
+        emitPendingQty();
+      }
+    },
     onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); void commitPending(); } },
     onfocus: () => qtyInput.select(),
   });
@@ -357,7 +458,7 @@ function renderCard(): void {
       : null,
     h('div', { class: 'pc-info' },
       h('span', null, 'Ya contado en sesión: ', h('b', null, counted)),
-      s.showExpected && prod?.expectedQty !== undefined ? h('span', null, 'Teórico: ', h('b', null, fmtNum(prod.expectedQty))) : null,
+      s.showExpected && supervisorUI && prod?.expectedQty !== undefined ? h('span', null, 'Teórico: ', h('b', null, fmtNum(prod.expectedQty))) : null,
     ),
     s.quickMode
       ? h('div', { class: 'row' },
@@ -369,19 +470,22 @@ function renderCard(): void {
               triggerBackgroundSync(session?.id);
               lastQuick = null;
               pending = null;
+              emitScannerState(scanner ? 'scanning' : 'idle');
               toast('Escaneo deshecho');
               renderCard();
               await renderRecent();
             }
           },
         }, 'Deshacer'),
-        h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), 'Producto'),
+        supervisorUI
+          ? h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), 'Producto')
+          : null,
       )
       : [
         h('div', { class: 'qty-row' },
-          h('button', { class: 'btn round', 'aria-label': 'Menos', onclick: () => { p.qty = Math.max(0, Math.round((p.qty - 1) * 1000) / 1000); qtyInput.value = String(p.qty); } }, '−'),
+          h('button', { class: 'btn round', 'aria-label': 'Menos', onclick: () => { p.qty = Math.max(0, Math.round((p.qty - 1) * 1000) / 1000); qtyInput.value = String(p.qty); emitPendingQty(); } }, '−'),
           qtyInput,
-          h('button', { class: 'btn round', 'aria-label': 'Más', onclick: () => { p.qty = Math.round((p.qty + 1) * 1000) / 1000; qtyInput.value = String(p.qty); } }, '+'),
+          h('button', { class: 'btn round', 'aria-label': 'Más', onclick: () => { p.qty = Math.round((p.qty + 1) * 1000) / 1000; qtyInput.value = String(p.qty); emitPendingQty(); } }, '+'),
         ),
         h('div', { class: 'qty-quick-chips', 'aria-label': 'Incremento rápido' },
           [5, 10, 25].map((step) =>
@@ -392,14 +496,17 @@ function renderCard(): void {
               onclick: () => {
                 p.qty = Math.round((p.qty + step) * 1000) / 1000;
                 qtyInput.value = String(p.qty);
+                emitPendingQty();
               },
             }, `+${step}`),
           ),
         ),
         h('p', { class: 'muted small center' }, 'Confirma la cantidad con + / − y presiona Registrar.'),
         h('div', { class: 'row' },
-          h('button', { class: 'btn ghost', onclick: () => { pending = null; renderCard(); triggerCooldown(COOLDOWN_MS); } }, 'Cancelar'),
-          h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), 'Producto'),
+          h('button', { class: 'btn ghost', onclick: () => { pending = null; emitScannerState(scanner ? 'scanning' : 'idle'); renderCard(); triggerCooldown(COOLDOWN_MS); } }, 'Cancelar'),
+          supervisorUI
+            ? h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), 'Producto')
+            : null,
           h('button', { class: 'btn primary grow', onclick: () => void commitPending() }, 'Registrar'),
         ),
       ],
@@ -445,11 +552,7 @@ async function renderRecent(): Promise<void> {
 
 function editEntry(c: CountEntry, p?: Product) {
   const qty = h('input', { class: 'input qty', type: 'text', inputmode: 'decimal', value: String(c.qty) });
-  openDialog('Editar escaneo', h('div', { class: 'form' },
-    h('p', null, h('b', null, p?.description || 'Sin descripción')),
-    h('p', { class: 'muted small' }, displayBarcode(c.barcode), ' · ', fmtTime(c.timestamp), ' · ', c.counter),
-    h('label', { class: 'field' }, h('span', null, 'Cantidad'), qty),
-  ), [
+  const actions: { label: string; kind?: 'primary' | 'danger'; onClick: () => boolean | void | Promise<boolean | void> }[] = [
     {
       label: 'Eliminar', kind: 'danger', onClick: async () => {
         if (await confirmDialog('Eliminar escaneo', '¿Eliminar este registro?', 'Eliminar', true)) {
@@ -460,7 +563,9 @@ function editEntry(c: CountEntry, p?: Product) {
         } else return true;
       },
     },
-    { label: 'Producto', onClick: () => { void editAndRefresh(c.barcode); } },
+    ...(isSupervisorModeEnabled()
+      ? [{ label: 'Producto', onClick: () => { void editAndRefresh(c.barcode); } }]
+      : []),
     {
       label: 'Guardar', kind: 'primary', onClick: async () => {
         const n = parseNumber(qty.value);
@@ -471,7 +576,12 @@ function editEntry(c: CountEntry, p?: Product) {
         toast('Cantidad actualizada', 'ok');
       },
     },
-  ]);
+  ];
+  openDialog('Editar escaneo', h('div', { class: 'form' },
+    h('p', null, h('b', null, p?.description || 'Sin descripción')),
+    h('p', { class: 'muted small' }, displayBarcode(c.barcode), ' · ', fmtTime(c.timestamp), ' · ', c.counter),
+    h('label', { class: 'field' }, h('span', null, 'Cantidad'), qty),
+  ), actions);
   setTimeout(() => qty.select(), 50);
 }
 
@@ -527,6 +637,7 @@ export const countView: View = {
       return;
     }
     const s = settingsSync();
+    const supervisorUI = isSupervisorModeEnabled();
     const video = h('video', { playsinline: true, muted: true, autoplay: true }) as HTMLVideoElement;
     const camMsg = h('div', { class: 'cam-msg' }, 'Cámara apagada');
     const cooldownBadge = h('div', { class: 'cam-cooldown', hidden: true });
@@ -565,22 +676,26 @@ export const countView: View = {
           h('span', { class: 'muted small' }, ` · ${session.counter}`),
         ),
         h('div', { class: 'session-bar-actions' },
-          h('span', {
-            class: 'badge info scanner-ready-badge',
-            title: 'Lector físico USB/Bluetooth listo automáticamente en esta pantalla',
-          }, 'Escáner USB/BT'),
+          supervisorUI
+            ? h('span', {
+                class: 'badge info scanner-ready-badge',
+                title: 'Lector físico USB/Bluetooth listo automáticamente en esta pantalla',
+              }, 'Escáner USB/BT')
+            : null,
           h('button', {
             class: 'btn ghost sm',
             type: 'button',
             'data-testid': 'count-goto-kardex',
             onclick: () => navigate('/movimientos'),
           }, icon('swap'), 'Kardex'),
-          h('button', {
-            class: 'btn ghost sm',
-            type: 'button',
-            'data-testid': 'count-goto-report',
-            onclick: () => navigate('/reporte'),
-          }, icon('chart'), 'Reporte'),
+          supervisorUI
+            ? h('button', {
+                class: 'btn ghost sm',
+                type: 'button',
+                'data-testid': 'count-goto-report',
+                onclick: () => navigate('/reporte'),
+              }, icon('chart'), 'Reporte')
+            : null,
           h('button', {
             class: 'btn ghost sm danger',
             type: 'button',
@@ -643,6 +758,12 @@ export const countView: View = {
     stopCamera(false);
     if (pending) await commitPending(true);
     pending = null;
+    void publishLiveScannerState({
+      status: 'idle',
+      cameraOn: false,
+      sessionName: session?.name,
+      counter: session?.counter,
+    });
   },
 };
 
