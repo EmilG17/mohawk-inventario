@@ -1742,6 +1742,7 @@ textarea.input { min-height: 60px; resize: vertical; }
   /* Ocultar elementos de navegación, interfaz, toasts y modales */
   header,
   nav,
+  .workflow-bar,
   .tabs,
   .tab-bar,
   .session-bar,
@@ -3143,3 +3144,206 @@ textarea.input { min-height: 60px; resize: vertical; }
     padding: 24px;
   }
 }
+
+/* === UI Organization, Brand Identity & Fluent Workflow === */
+.header-brand-stack {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.1;
+}
+.brand-kicker {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: #38bdf8;
+}
+.header-left .brand-title {
+  font-size: 16px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hero-brand-mark {
+  width: 42px;
+  height: 42px;
+  border-radius: 11px;
+}
+.report-brand-mark {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+}
+
+.app-main-col {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workflow-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+  max-width: 100%;
+  padding: 8px 14px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.workflow-bar::-webkit-scrollbar {
+  display: none;
+}
+.workflow-steps,
+.workflow-tools {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.workflow-step,
+.workflow-tool-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease;
+}
+.workflow-step:hover,
+.workflow-tool-pill:hover {
+  background: var(--primary-light);
+  border-color: rgba(31, 58, 95, 0.25);
+}
+.workflow-step.active,
+.workflow-tool-pill.active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #ffffff;
+}
+.workflow-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: rgba(15, 23, 42, 0.1);
+  font-size: 11px;
+  font-weight: 800;
+}
+.workflow-step.active .workflow-step-num {
+  background: #38bdf8;
+  color: #0f172a;
+}
+.workflow-arrow {
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 700;
+  user-select: none;
+}
+.workflow-tool-pill svg {
+  width: 14px;
+  height: 14px;
+  flex-shrink: 0;
+}
+
+@media (min-width: 900px) {
+  .workflow-bar {
+    padding: 10px 32px;
+  }
+}
+
+.dash-flow-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.dash-flow-label {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.dash-flow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.dash-flow-btn {
+  flex: 1 1 auto;
+  justify-content: center;
+}
+.dash-flow-in {
+  background: var(--success-bg);
+  color: var(--success);
+  border-color: rgba(21, 128, 61, 0.28);
+}
+.dash-flow-in:hover {
+  filter: brightness(0.96);
+}
+.dash-flow-out {
+  background: var(--warning-bg);
+  color: var(--warning);
+  border-color: rgba(180, 83, 9, 0.28);
+}
+.dash-flow-out:hover {
+  filter: brightness(0.96);
+}
+
+.session-bar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+.session-bar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.scanner-ready-badge {
+  white-space: nowrap;
+}
+
+.qty-quick-chips {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 4px;
+}
+
+.catalog-toolbar-group {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.catalog-toolbar-row {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.catalog-group-label {
+  font-weight: 700;
+  letter-spacing: 0.05em;
+}
+.queue-count-badge {
+  margin-left: 6px;
+  font-size: 11px;
+  padding: 1px 6px;
+}
+

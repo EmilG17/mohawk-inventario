@@ -10,8 +10,10 @@ import {
 import { getAllMovements } from '../db/movements';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
-import { getCloudConnectionStatus } from '../sync/cloudSync';
+import { getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
 import { detectPlatformInfo } from './app';
+import { openBarcodeSheetDialog } from './barcodeSheet';
+import { importCatalogFlow } from './catalog';
 import {
   clear,
   confirmDialog,
@@ -23,6 +25,7 @@ import {
   toast,
 } from './dom';
 import { installState, promptInstall } from './install';
+import { createBrandLogo } from './logo';
 import type { View } from './router';
 import { navigate } from './router';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
@@ -59,17 +62,19 @@ export async function newSessionFlow(): Promise<boolean> {
   return true;
 }
 
-export const homeView: View = {
-  title: 'Inicio',
-  async render(root) {
-    const [s, session, products, pending, sessions, movements] = await Promise.all([
-      loadSettings(),
-      getActiveSession(),
-      allProducts(),
-      pendingCount(),
-      allSessions(),
-      getAllMovements(),
-    ]);
+let currentRoot: HTMLElement | null = null;
+let unsubscribeHomeCloud: (() => void) | null = null;
+
+async function renderHomeContent(root: HTMLElement): Promise<void> {
+  const [s, session, products, pending, sessions, movements] = await Promise.all([
+    loadSettings(),
+    getActiveSession(),
+    allProducts(),
+    pendingCount(),
+    allSessions(),
+    getAllMovements(),
+  ]);
+  if (currentRoot !== root) return;
 
     const counts = session ? await countsForSession(session.id) : [];
     const catalogCount = products.filter((p) => !p.uncataloged).length;
@@ -115,6 +120,7 @@ export const homeView: View = {
             h(
               'div',
               { class: 'dash-hero-left' },
+              createBrandLogo(32, 'brand-mark hero-brand-mark'),
               h(
                 'div',
                 { class: 'dash-user-avatar' },
@@ -377,65 +383,70 @@ export const homeView: View = {
 
           h('div', { class: 'dash-divider' }),
 
-          // Accesos a Herramientas
+          // Acciones Rápidas de Flujo (1 clic)
           h(
             'div',
-            { class: 'dash-tools-grid' },
+            { class: 'dash-flow-section' },
+            h('span', { class: 'dash-flow-label muted xsmall uppercase' }, 'Acciones rápidas de flujo'),
             h(
-              'button',
-              { class: 'dash-tool-tile', onclick: () => navigate('/movimientos') },
-              h('div', { class: 'dash-tool-icon-wrap' }, icon('swap')),
-              h('div', { class: 'dash-tool-text' },
-                h('b', null, 'Kardex (IN/OUT)'),
-                h('span', { class: 'muted xsmall' }, 'Entradas y salidas'),
+              'div',
+              { class: 'dash-flow-actions' },
+              h(
+                'button',
+                {
+                  class: 'btn sm dash-flow-btn dash-flow-in',
+                  type: 'button',
+                  'data-testid': 'home-quick-in',
+                  onclick: () => navigate('/movimientos?action=in'),
+                },
+                icon('plus'),
+                '+ Entrada Kardex',
               ),
-            ),
-            h(
-              'button',
-              { class: 'dash-tool-tile', onclick: () => navigate('/reporte') },
-              h('div', { class: 'dash-tool-icon-wrap' }, icon('chart')),
-              h('div', { class: 'dash-tool-text' },
-                h('b', null, 'Reportes & Faltantes'),
-                h('span', { class: 'muted xsmall' }, 'Diferencias y costos'),
+              h(
+                'button',
+                {
+                  class: 'btn sm dash-flow-btn dash-flow-out',
+                  type: 'button',
+                  'data-testid': 'home-quick-out',
+                  onclick: () => navigate('/movimientos?action=out'),
+                },
+                icon('swap'),
+                '− Salida Kardex',
               ),
-            ),
-            h(
-              'button',
-              {
-                class: 'dash-tool-tile',
-                onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
-              },
-              h('div', { class: 'dash-tool-icon-wrap' }, icon('users')),
-              h('div', { class: 'dash-tool-text' },
-                h('b', null, 'Unificar Reportes'),
-                h('span', { class: 'muted xsmall' }, 'Consolidar técnicos'),
+              h(
+                'button',
+                {
+                  class: 'btn sm dash-flow-btn',
+                  type: 'button',
+                  'data-testid': 'home-quick-unify',
+                  onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
+                },
+                icon('users'),
+                'Unificar Reportes',
               ),
-            ),
-            h(
-              'button',
-              { class: 'dash-tool-tile', onclick: () => navigate('/catalogo') },
-              h('div', { class: 'dash-tool-icon-wrap' }, icon('list')),
-              h('div', { class: 'dash-tool-text' },
-                h('b', null, 'Catálogo & Rótulos'),
-                h('span', { class: 'muted xsmall' }, 'Consumibles y códigos'),
+              h(
+                'button',
+                {
+                  class: 'btn sm dash-flow-btn',
+                  type: 'button',
+                  'data-testid': 'home-quick-labels',
+                  onclick: () => openBarcodeSheetDialog(),
+                },
+                icon('scan'),
+                'Cola de Rótulos',
               ),
-            ),
-            h(
-              'button',
-              { class: 'dash-tool-tile', onclick: () => navigate('/equipo') },
-              h('div', { class: 'dash-tool-icon-wrap' }, icon('users')),
-              h('div', { class: 'dash-tool-text' },
-                h('b', null, 'Monitor Supervisor'),
-                h('span', { class: 'muted xsmall' }, 'Tablero en tiempo real'),
-              ),
-            ),
-            h(
-              'button',
-              { class: 'dash-tool-tile', onclick: () => navigate('/ajustes') },
-              h('div', { class: 'dash-tool-icon-wrap' }, icon('gear')),
-              h('div', { class: 'dash-tool-text' },
-                h('b', null, 'Ajustes & Nube'),
-                h('span', { class: 'muted xsmall' }, 'Configuración general'),
+              h(
+                'button',
+                {
+                  class: 'btn sm dash-flow-btn',
+                  type: 'button',
+                  'data-testid': 'home-quick-import',
+                  onclick: () => void importCatalogFlow(() => {
+                    if (currentRoot) void renderHomeContent(currentRoot);
+                  }),
+                },
+                icon('upload'),
+                'Importar Catálogo',
               ),
             ),
           ),
@@ -687,5 +698,28 @@ export const homeView: View = {
         ),
       ),
     );
+}
+
+export const homeView: View = {
+  title: 'Inicio',
+  async render(root) {
+    currentRoot = root;
+    if (unsubscribeHomeCloud) {
+      unsubscribeHomeCloud();
+      unsubscribeHomeCloud = null;
+    }
+    unsubscribeHomeCloud = onCloudRoomUpdate(() => {
+      if (!currentRoot) return;
+      if (typeof document !== 'undefined' && document.querySelector?.('dialog[open]')) return;
+      void renderHomeContent(currentRoot);
+    });
+    await renderHomeContent(root);
+  },
+  destroy() {
+    currentRoot = null;
+    if (unsubscribeHomeCloud) {
+      unsubscribeHomeCloud();
+      unsubscribeHomeCloud = null;
+    }
   },
 };

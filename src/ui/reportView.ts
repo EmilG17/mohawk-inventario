@@ -17,6 +17,7 @@ import {
 } from './dom';
 import { editProductDialog } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
+import { createBrandLogo } from './logo';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
 import { navigate, type View } from './router';
 import { onCloudRoomUpdate } from '../sync/cloudSync';
@@ -220,6 +221,7 @@ export const reportView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head wrap', style: 'align-items: flex-start; gap: 10px;' },
+          createBrandLogo(28, 'brand-mark report-brand-mark'),
           h('div', { class: 'grow' },
             h('div', { class: 'row', style: 'gap: 8px; align-items: center; margin-bottom: 4px;' },
               h('span', { class: 'muted small' }, 'Sesión'),

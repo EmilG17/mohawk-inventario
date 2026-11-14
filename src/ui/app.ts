@@ -13,6 +13,7 @@ import { countView } from './count';
 import { clear, h, icon, toast } from './dom';
 import { homeView } from './home';
 import { initInstall } from './install';
+import { createBrandLogo } from './logo';
 import { movementsView } from './movementsView';
 import { reportView } from './reportView';
 import { currentPath, navigate, registerRoute, startRouter } from './router';
@@ -103,32 +104,16 @@ export async function bootstrapApp(): Promise<void> {
   const sessionBadge = h('span', { class: 'top-session muted small' });
   const onlineDot = h('span', { class: 'online-dot', title: navigator.onLine ? 'En línea' : 'Sin conexión' });
 
-  const createBrandLogo = (size = 24) => {
-    const el = h('span', { class: 'brand-mark', 'aria-hidden': 'true' });
-    el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="${size}" height="${size}" style="display:block;">
-      <g stroke="#38bdf8" stroke-width="28" stroke-linecap="round" stroke-linejoin="round" fill="none">
-        <path d="M84 160 V108 A24 24 0 0 1 108 84 H160" />
-        <path d="M428 160 V108 A24 24 0 0 0 404 84 H352" />
-        <path d="M84 352 V404 A24 24 0 0 0 108 428 H160" />
-        <path d="M428 352 V404 A24 24 0 0 1 404 428 H352" />
-      </g>
-      <path d="M256 120 L372 178 L256 236 L140 178 Z" fill="none" stroke="#ffffff" stroke-width="26" stroke-linejoin="round" />
-      <path d="M198 149 L314 207" stroke="#38bdf8" stroke-width="22" stroke-linecap="round" />
-      <path d="M140 178 V328 L256 386 L372 328 V178" fill="none" stroke="#ffffff" stroke-width="26" stroke-linecap="round" stroke-linejoin="round" />
-      <rect x="190" y="254" width="22" height="72" rx="10" fill="#ffffff" />
-      <rect x="234" y="260" width="28" height="72" rx="10" fill="#38bdf8" />
-      <rect x="284" y="254" width="24" height="72" rx="10" fill="#ffffff" />
-    </svg>`;
-    return el;
-  };
-
   const mobileBrandLogoEl = createBrandLogo(24);
 
   // Top header (para pantallas móviles < 900px)
   const header = h('header', { class: 'app-header' },
     h('div', { class: 'header-left', onclick: () => navigate('/') },
       mobileBrandLogoEl,
-      titleEl,
+      h('div', { class: 'header-brand-stack' },
+        h('span', { class: 'brand-kicker' }, 'MOHAWK'),
+        titleEl,
+      ),
     ),
     h('div', { class: 'header-right' },
       cloudBadge,
@@ -198,7 +183,65 @@ export async function bootstrapApp(): Promise<void> {
     ),
   );
 
+  const WORKFLOW_PRIMARY: { path: string; step: string; label: string; testId: string }[] = [
+    { path: '/catalogo', step: '1', label: 'Catálogo', testId: 'workflow-catalog' },
+    { path: '/contar', step: '2', label: 'Contar', testId: 'workflow-count' },
+    { path: '/movimientos', step: '3', label: 'Kardex', testId: 'workflow-kardex' },
+    { path: '/reporte', step: '4', label: 'Reporte', testId: 'workflow-report' },
+  ];
+
+  const WORKFLOW_TOOLS: { path: string; label: string; iconName: string; testId: string }[] = [
+    { path: '/equipo', label: 'Supervisor', iconName: 'users', testId: 'workflow-team' },
+    { path: '/ajustes', label: 'Ajustes', iconName: 'gear', testId: 'workflow-settings' },
+  ];
+
+  const workflowBar = h('nav', {
+    class: 'workflow-bar',
+    'aria-label': 'Flujo de trabajo del inventario',
+    'data-testid': 'workflow-bar',
+  },
+  h('div', { class: 'workflow-steps' },
+    WORKFLOW_PRIMARY.map((item, idx) => {
+      const btn = h('button', {
+        class: 'workflow-step',
+        type: 'button',
+        'data-path': item.path,
+        'data-testid': item.testId,
+        onclick: () => navigate(item.path),
+      },
+      h('span', { class: 'workflow-step-num' }, item.step),
+      h('span', null, item.label),
+      );
+      allNavElements.push({ path: item.path, el: btn });
+      return idx > 0
+        ? [h('span', { class: 'workflow-arrow', 'aria-hidden': 'true' }, '›'), btn]
+        : [btn];
+    }).flat(),
+  ),
+  h('div', { class: 'workflow-tools' },
+    WORKFLOW_TOOLS.map((tool) => {
+      const btn = h('button', {
+        class: 'workflow-tool-pill',
+        type: 'button',
+        'data-path': tool.path,
+        'data-testid': tool.testId,
+        onclick: () => navigate(tool.path),
+      },
+      icon(tool.iconName),
+      h('span', null, tool.label),
+      );
+      allNavElements.push({ path: tool.path, el: btn });
+      return btn;
+    }),
+  ),
+  );
+
   const main = h('main', { class: 'app-main', id: 'view-root' });
+
+  const mainCol = h('div', { class: 'app-main-col' },
+    workflowBar,
+    main,
+  );
 
   // Mobile "Más ⋯" Bottom Sheet (< 900px)
   const moreBackdrop = h('div', {
@@ -289,7 +332,7 @@ export async function bootstrapApp(): Promise<void> {
 
   const appLayoutWrapper = h('div', { class: 'app-body-layout' },
     sidebar,
-    main,
+    mainCol,
   );
 
   clear(appEl, header, appLayoutWrapper, moreBackdrop, moreSheet, nav);

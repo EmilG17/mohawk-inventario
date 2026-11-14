@@ -8,7 +8,7 @@ import { resolveDescription, setManualDescription, type ResolveStatus } from '..
 import { beep, cameraAvailable, createDebouncer, startScanner, unlockAudio, vibrate, type ScannerHandle } from '../scanner/scanner';
 import { createWedgeController } from '../scanner/wedge';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
-import { decodeCompactCountQr, isCompactCountQr, triggerBackgroundSync } from '../sync/cloudSync';
+import { decodeCompactCountQr, isCompactCountQr, onCloudRoomUpdate, triggerBackgroundSync } from '../sync/cloudSync';
 import { clear, confirmDialog, fmtNum, fmtTime, h, icon, openDialog, toast } from './dom';
 import { newSessionFlow } from './home';
 import { editProductDialog, sourceBadge } from './productDialog';
@@ -34,6 +34,8 @@ let els: {
 };
 const debounce = createDebouncer(1500);
 let wantCamera = false;
+let unsubscribeCountCloud: (() => void) | null = null;
+let viewMounted = false;
 const wedge = createWedgeController({
   minLength: 4,
   maxIntervalMs: 80,
@@ -379,6 +381,19 @@ function renderCard(): void {
           qtyInput,
           h('button', { class: 'btn round', 'aria-label': 'Más', onclick: () => { p.qty = Math.round((p.qty + 1) * 1000) / 1000; qtyInput.value = String(p.qty); } }, '+'),
         ),
+        h('div', { class: 'qty-quick-chips', 'aria-label': 'Incremento rápido' },
+          [5, 10, 25].map((step) =>
+            h('button', {
+              class: 'chip sm',
+              type: 'button',
+              'data-testid': `count-quick-plus-${step}`,
+              onclick: () => {
+                p.qty = Math.round((p.qty + step) * 1000) / 1000;
+                qtyInput.value = String(p.qty);
+              },
+            }, `+${step}`),
+          ),
+        ),
         h('p', { class: 'muted small center' }, 'Confirma la cantidad con + / − y presiona Registrar.'),
         h('div', { class: 'row' },
           h('button', { class: 'btn ghost', onclick: () => { pending = null; renderCard(); triggerCooldown(COOLDOWN_MS); } }, 'Cancelar'),
@@ -542,29 +557,48 @@ export const countView: View = {
     els = { video, camMsg, camBtn, torchBtn, card, recent, recentTitle, input, videoWrap, cooldownBadge };
 
     clear(root,
-      h('div', { class: 'session-bar', style: 'display: flex; justify-content: space-between; align-items: center;' },
+      h('div', { class: 'session-bar' },
         h('div', { class: 'session-info' },
           h('span', { class: 'muted small' }, 'Sesión: '), h('b', { class: 'small' }, session.name),
           h('span', { class: 'muted small' }, ` · ${session.counter}`),
         ),
-        h('button', {
-          class: 'btn ghost sm danger',
-          onclick: async () => {
-            const ok = await confirmDialog(
-              'Finalizar sesión de conteo',
-              `¿Deseas finalizar la sesión "${session?.name}"? Los datos quedarán guardados y no habrá sesión activa hasta que inicies una nueva o decidas reabrirla.`,
-              'Finalizar sesión',
-              true,
-            );
-            if (ok && session) {
-              stopCamera(true);
-              if (pending) await commitPending(true);
-              await closeSession(session.id);
-              toast('Sesión finalizada con éxito', 'ok');
-              navigate('/');
-            }
-          },
-        }, 'Finalizar sesión'),
+        h('div', { class: 'session-bar-actions' },
+          h('span', {
+            class: 'badge info scanner-ready-badge',
+            title: 'Lector físico USB/Bluetooth listo automáticamente en esta pantalla',
+          }, 'Escáner USB/BT'),
+          h('button', {
+            class: 'btn ghost sm',
+            type: 'button',
+            'data-testid': 'count-goto-kardex',
+            onclick: () => navigate('/movimientos'),
+          }, icon('swap'), 'Kardex'),
+          h('button', {
+            class: 'btn ghost sm',
+            type: 'button',
+            'data-testid': 'count-goto-report',
+            onclick: () => navigate('/reporte'),
+          }, icon('chart'), 'Reporte'),
+          h('button', {
+            class: 'btn ghost sm danger',
+            type: 'button',
+            onclick: async () => {
+              const ok = await confirmDialog(
+                'Finalizar sesión de conteo',
+                `¿Deseas finalizar la sesión "${session?.name}"? Los datos quedarán guardados y no habrá sesión activa hasta que inicies una nueva o decidas reabrirla.`,
+                'Finalizar sesión',
+                true,
+              );
+              if (ok && session) {
+                stopCamera(true);
+                if (pending) await commitPending(true);
+                await closeSession(session.id);
+                toast('Sesión finalizada con éxito', 'ok');
+                navigate('/');
+              }
+            },
+          }, 'Finalizar sesión'),
+        ),
       ),
       h('section', { class: 'scan-area' },
         videoWrap,
@@ -578,6 +612,13 @@ export const countView: View = {
       recent,
     );
 
+    viewMounted = true;
+    if (unsubscribeCountCloud) unsubscribeCountCloud();
+    unsubscribeCountCloud = onCloudRoomUpdate(() => {
+      if (viewMounted && session && els) {
+        void renderRecent();
+      }
+    });
     document.addEventListener('visibilitychange', onVisibility);
     wedge.attach();
     renderCard();
@@ -585,6 +626,11 @@ export const countView: View = {
     if (sessionStorage.getItem('camera') === '1') void startCamera();
   },
   async destroy() {
+    viewMounted = false;
+    if (unsubscribeCountCloud) {
+      unsubscribeCountCloud();
+      unsubscribeCountCloud = null;
+    }
     if (cooldownTimer) {
       clearInterval(cooldownTimer);
       cooldownTimer = null;

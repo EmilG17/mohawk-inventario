@@ -534,10 +534,27 @@ export const catalogView: View = {
     const selected = new Set<string>();
     const list = h('ul', { class: 'plist' });
     const countEl = h('span', { class: 'muted small' });
+    const queueBadgeEl = h('span', { class: 'badge info queue-count-badge', hidden: true });
+    const updateQueueBadge = () => {
+      const total = getPrintQueueTotalCount();
+      queueBadgeEl.hidden = total <= 0;
+      queueBadgeEl.textContent = String(total);
+    };
     const massBar = h('div', { class: 'mass-bar', hidden: true });
     const selectAllCheck = h('input', { type: 'checkbox', class: 'item-check' }) as HTMLInputElement;
     const selectAllLabel = h('span', null, 'Seleccionar visibles');
     const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+    const visibleProducts = () => {
+      const words = norm(query).split(/\s+/).filter(Boolean);
+      return products
+        .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
+        .filter((p) => {
+          if (!words.length) return true;
+          const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
+          return words.every((w) => hay.includes(w));
+        });
+    };
 
     const refreshData = async (clearSelection = true) => {
       if (clearSelection) selected.clear();
@@ -546,14 +563,8 @@ export const catalogView: View = {
     };
 
     const draw = () => {
-      const words = norm(query).split(/\s+/).filter(Boolean);
-      const items = products
-        .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
-        .filter((p) => {
-          if (!words.length) return true;
-          const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
-          return words.every((w) => hay.includes(w));
-        })
+      updateQueueBadge();
+      const items = visibleProducts()
         .sort((a, b) => (a.description || '~').localeCompare(b.description || '~'));
 
       const selCount = selected.size;
@@ -598,6 +609,7 @@ export const catalogView: View = {
                 const sel = products.filter((p) => selected.has(p.barcode));
                 for (const p of sel) addToPrintQueue(p, 1);
                 const total = getPrintQueueTotalCount();
+                updateQueueBadge();
                 toast(`${sel.length} producto(s) añadidos a la cola (${total} etiquetas totales)`, 'ok');
               },
             }, icon('plus'), 'Añadir a cola'),
@@ -688,15 +700,7 @@ export const catalogView: View = {
       h('button', {
         class: 'btn sm',
         onclick: () => {
-          const words = norm(query).split(/\s+/).filter(Boolean);
-          const visible = products
-            .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
-            .filter((p) => {
-              if (!words.length) return true;
-              const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
-              return words.every((w) => hay.includes(w));
-            });
-          openMassActionsDialog(visible, Array.from(selected), products, refreshData);
+          openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
         },
       }, icon('edit'), '⚡ Acciones masivas'),
     );
@@ -704,70 +708,72 @@ export const catalogView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
-        h('p', { class: 'muted small' }, 'Consulta consumibles, imprime etiquetas de código de barras o aplica modificaciones en lote. Para importar o compartir el catálogo ve a Ajustes.'),
-        h('div', { class: 'row wrap' },
-          h('button', {
-            class: 'btn primary',
-            'data-testid': 'catalog-new-btn',
-            onclick: async () => {
-              const res = await editProductDialog('');
-              if (res && res !== 'deleted') {
-                await refreshData();
-              }
-            },
-          }, icon('scan'), 'Nuevo producto'),
-          h('button', {
-            class: 'btn',
-            disabled: !products.length,
-            'data-testid': 'catalog-sheets-btn',
-            onclick: () => {
-              const words = norm(query).split(/\s+/).filter(Boolean);
-              const visible = products
-                .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
-                .filter((p) => {
-                  if (!words.length) return true;
-                  const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
-                  return words.every((w) => hay.includes(w));
-                });
-              openBarcodeSheetDialog(visible.length ? visible : products);
-            },
-          }, icon('scan'), 'Rótulos y hojas'),
-          h('button', {
-            class: 'btn',
-            'data-testid': 'catalog-queue-btn',
-            title: 'Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja',
-            onclick: () => openBarcodeSheetDialog(),
-          }, icon('scan'), 'Cola de rótulos'),
-          h('button', {
-            class: 'btn',
-            onclick: () => {
-              const words = norm(query).split(/\s+/).filter(Boolean);
-              const visible = products
-                .filter((p) => filter === 'todos' || (filter === 'sin_desc' ? !p.description : p.uncataloged))
-                .filter((p) => {
-                  if (!words.length) return true;
-                  const hay = norm(`${p.description} ${p.sku} ${displayBarcode(p.barcode)} ${p.brand ?? ''}`);
-                  return words.every((w) => hay.includes(w));
-                });
-              openMassActionsDialog(visible, Array.from(selected), products, refreshData);
-            },
-          }, icon('edit'), 'Acciones masivas'),
-          h('button', {
-            class: 'btn ghost sm',
-            'data-testid': 'catalog-settings-link',
-            onclick: () => navigate('/ajustes'),
-          }, icon('gear'), 'Importar / Compartir en Ajustes'),
+        h('p', { class: 'muted small' }, 'Consulta consumibles, importa hojas Excel/CSV, imprime etiquetas de código de barras o aplica modificaciones en lote.'),
+        h('div', { class: 'catalog-toolbar-group' },
+          h('div', { class: 'catalog-toolbar-row' },
+            h('span', { class: 'catalog-group-label muted xsmall uppercase' }, 'Gestión'),
+            h('div', { class: 'row wrap' },
+              h('button', {
+                class: 'btn primary',
+                'data-testid': 'catalog-new-btn',
+                onclick: async () => {
+                  const res = await editProductDialog('');
+                  if (res && res !== 'deleted') {
+                    await refreshData();
+                  }
+                },
+              }, icon('scan'), 'Nuevo producto'),
+              h('button', {
+                class: 'btn',
+                type: 'button',
+                'data-testid': 'catalog-import-btn',
+                onclick: () => void importCatalogFlow(() => { void refreshData(); }),
+              }, icon('upload'), 'Importar Excel / CSV'),
+              h('button', {
+                class: 'btn',
+                onclick: () => {
+                  openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
+                },
+              }, icon('edit'), 'Acciones masivas'),
+              noDesc > 0
+                ? h('button', {
+                  class: 'btn sm',
+                  onclick: async () => {
+                    toast('Buscando descripciones…');
+                    const n = await processPending();
+                    toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
+                    await refreshData();
+                  },
+                }, icon('globe'), `Buscar en internet ${noDesc} sin descripción`)
+                : null,
+            ),
+          ),
+          h('div', { class: 'catalog-toolbar-row' },
+            h('span', { class: 'catalog-group-label muted xsmall uppercase' }, 'Etiquetas y Ajustes'),
+            h('div', { class: 'row wrap' },
+              h('button', {
+                class: 'btn',
+                disabled: !products.length,
+                'data-testid': 'catalog-sheets-btn',
+                onclick: () => {
+                  const visible = visibleProducts();
+                  openBarcodeSheetDialog(visible.length ? visible : products);
+                },
+              }, icon('scan'), 'Rótulos y hojas'),
+              h('button', {
+                class: 'btn',
+                'data-testid': 'catalog-queue-btn',
+                title: 'Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja',
+                onclick: () => openBarcodeSheetDialog(),
+              }, icon('scan'), 'Cola de rótulos', queueBadgeEl),
+              h('button', {
+                class: 'btn ghost sm',
+                'data-testid': 'catalog-settings-link',
+                onclick: () => navigate('/ajustes'),
+              }, icon('gear'), 'Importar / Compartir en Ajustes'),
+            ),
+          ),
         ),
-        noDesc
-          ? h('button', {
-            class: 'btn sm', onclick: async () => {
-              toast('Buscando descripciones…');
-              const n = await processPending();
-              toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
-              await refreshData();
-            },
-          }, icon('globe'), `Buscar en internet ${noDesc} sin descripción`)
-          : null,
       ),
       h('input', {
         class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: 'Buscar por descripción, código o No. de parte', value: query,

@@ -130,12 +130,14 @@ export const movementsView: View = {
   async render(root: HTMLElement, params: URLSearchParams): Promise<void> {
     viewRootEl = root;
 
-    if (params.get('tab') === 'bitacora') {
+    const actionParam = params?.get('action');
+
+    if (params?.get('tab') === 'bitacora') {
       activeSubTab = 'bitacora';
-    } else if (params.get('tab') === 'comparative') {
+    } else if (params?.get('tab') === 'comparative') {
       activeSubTab = 'comparative';
     }
-    if (params.get('filter') === 'deficit_critical') {
+    if (params?.get('filter') === 'deficit_critical') {
       tableFilter = 'deficit_critical';
     }
 
@@ -150,6 +152,30 @@ export const movementsView: View = {
         void renderMainView();
       }
     });
+
+    if (actionParam === 'in' || actionParam === 'out') {
+      if (
+        typeof history !== 'undefined' &&
+        typeof history.replaceState === 'function' &&
+        typeof location !== 'undefined' &&
+        typeof location.hash === 'string'
+      ) {
+        const hash = location.hash || '#/movimientos';
+        const qIdx = hash.indexOf('?');
+        if (qIdx !== -1) {
+          const base = hash.slice(0, qIdx);
+          const nextParams = new URLSearchParams(hash.slice(qIdx + 1));
+          nextParams.delete('action');
+          const nextQs = nextParams.toString();
+          const nextHash = nextQs ? `${base}?${nextQs}` : base;
+          history.replaceState(null, '', `${location.pathname ?? ''}${location.search ?? ''}${nextHash}`);
+        }
+      }
+      const initialType = actionParam === 'out' ? 'OUT' : 'IN';
+      void openMovementRegistrationModal(undefined, initialType, async () => {
+        await renderMainView();
+      });
+    }
   },
 
   async destroy(): Promise<void> {
@@ -374,17 +400,39 @@ async function renderMainView(): Promise<void> {
 
   // 1. KPIs en Vivo
   const kpiSection = h('section', { class: 'card' },
-    h('div', { class: 'card-head' },
+    h('div', { class: 'card-head wrap' },
       h('h2', null, 'Control de Movimientos y Existencia Ideal'),
-      h('button', {
-        class: 'btn primary sm',
-        'data-testid': 'movements-register-btn',
-        onclick: async () => {
-          await openMovementRegistrationModal(undefined, 'IN', async () => {
-            await renderMainView();
-          });
-        },
-      }, icon('swap'), 'Registrar Movimiento'),
+      h('div', { class: 'row wrap', style: 'gap: 6px;' },
+        h('button', {
+          class: 'btn sm dash-flow-in',
+          type: 'button',
+          'data-testid': 'movements-quick-in-btn',
+          onclick: async () => {
+            await openMovementRegistrationModal(undefined, 'IN', async () => {
+              await renderMainView();
+            });
+          },
+        }, '+ Entrada'),
+        h('button', {
+          class: 'btn sm dash-flow-out',
+          type: 'button',
+          'data-testid': 'movements-quick-out-btn',
+          onclick: async () => {
+            await openMovementRegistrationModal(undefined, 'OUT', async () => {
+              await renderMainView();
+            });
+          },
+        }, '− Salida'),
+        h('button', {
+          class: 'btn primary sm',
+          'data-testid': 'movements-register-btn',
+          onclick: async () => {
+            await openMovementRegistrationModal(undefined, 'IN', async () => {
+              await renderMainView();
+            });
+          },
+        }, icon('swap'), 'Registrar Movimiento'),
+      ),
     ),
     h('div', { class: 'kpis kpis-4' },
       h('div', { class: 'kpi good', id: 'kpi-card-in' },
