@@ -2,7 +2,8 @@ import { h } from './dom';
 
 /**
  * Geometría vectorial del logotipo HHF (Registro de Consumibles · Taller de Reparaciones):
- * esquinas de escáner (#38bdf8), caja de consumibles con herramientas, código de barras y pistas de circuito.
+ * esquinas de escáner (#38bdf8), caja de consumibles con herramientas, código de barras y pistas de circuito,
+ * adaptada sobre fondo oscuro azul marino (#0f172a -> #1e3a5f).
  */
 export const BRAND_CUBE_SVG_PATHS = `
   <path d="M256 120 L372 178" fill="none" stroke="none" />
@@ -13,25 +14,25 @@ export const BRAND_CUBE_SVG_PATHS = `
     <path d="M402 342 V388 A20 20 0 0 1 382 408 H336" />
   </g>
   <!-- Herramientas superiores (desarmador, tuercas, llave española) -->
-  <g stroke="#0d253f" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
+  <g stroke="#163559" stroke-width="12" stroke-linecap="round" stroke-linejoin="round">
     <line x1="168" y1="226" x2="144" y2="146" stroke="#a8bfd1" stroke-width="14" />
     <line x1="168" y1="226" x2="144" y2="146" stroke="#0d253f" stroke-width="4" />
     <circle cx="204" cy="176" r="22" fill="#dce8f0" />
-    <circle cx="204" cy="176" r="8" fill="#ffffff" />
+    <circle cx="204" cy="176" r="8" fill="#172d4c" />
     <circle cx="252" cy="158" r="22" fill="#dce8f0" />
-    <circle cx="252" cy="158" r="8" fill="#ffffff" />
+    <circle cx="252" cy="158" r="8" fill="#172d4c" />
     <path d="M294 248 L334 176 A26 26 0 1 1 360 194 L322 258 Z" fill="#a8bfd1" />
     <circle cx="242" cy="240" r="34" fill="#a8bfd1" />
-    <circle cx="242" cy="240" r="14" fill="#ffffff" />
+    <circle cx="242" cy="240" r="14" fill="#172d4c" />
   </g>
   <!-- Caja de consumibles -->
   <path d="M138 258 L244 214 L344 258 L244 304 Z" fill="#0d253f" />
-  <path d="M138 258 L244 304 L244 404 L138 358 Z" fill="#f2a65a" stroke="#0d253f" stroke-width="12" stroke-linejoin="round" />
-  <path d="M244 304 L344 258 L344 358 L244 404 Z" fill="#0d253f" stroke="#0d253f" stroke-width="12" stroke-linejoin="round" />
-  <path d="M114 282 L138 258 L244 304 L220 330 Z" fill="#f7c183" stroke="#0d253f" stroke-width="10" stroke-linejoin="round" />
-  <path d="M244 304 L344 258 L368 282 L268 330 Z" fill="#cc823d" stroke="#0d253f" stroke-width="10" stroke-linejoin="round" />
-  <!-- Código de barras y pistas de circuito -->
-  <g fill="#0d253f">
+  <path d="M138 258 L244 304 L244 404 L138 358 Z" fill="#f2a65a" stroke="#163559" stroke-width="10" stroke-linejoin="round" />
+  <path d="M244 304 L344 258 L344 358 L244 404 Z" fill="#0d253f" stroke="#284c75" stroke-width="10" stroke-linejoin="round" />
+  <path d="M114 282 L138 258 L244 304 L220 330 Z" fill="#f7c183" stroke="#163559" stroke-width="8" stroke-linejoin="round" />
+  <path d="M244 304 L344 258 L368 282 L268 330 Z" fill="#cc823d" stroke="#163559" stroke-width="8" stroke-linejoin="round" />
+  <!-- Código de barras y pistas de circuito adaptadas a fondo oscuro -->
+  <g fill="#e2f2fe">
     <rect x="358" y="206" width="8" height="46" />
     <rect x="372" y="206" width="5" height="46" />
     <rect x="382" y="206" width="10" height="46" />
@@ -43,32 +44,32 @@ export const BRAND_CUBE_SVG_PATHS = `
     <rect x="398" y="294" width="6" height="46" />
     <rect x="410" y="294" width="8" height="46" />
   </g>
-  <g stroke="#0d253f" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none">
+  <g stroke="#e2f2fe" stroke-width="8" stroke-linecap="round" stroke-linejoin="round" fill="none">
     <path d="M352 260 H420 L444 236 H462" />
     <path d="M352 272 H462" />
     <path d="M352 284 H420 L444 308 H462" />
   </g>
-  <g fill="#0d253f">
+  <g fill="#e2f2fe">
     <circle cx="468" cy="236" r="10" />
     <circle cx="468" cy="272" r="10" />
     <circle cx="468" cy="308" r="10" />
   </g>
 `;
 
-/** Crea un elemento HTML con el logotipo HHF adaptado de la aplicación. */
+/** Crea un elemento HTML con el logotipo HHF transparente adaptado automáticamente a fondos claros u oscuros. */
 export function createBrandLogo(size = 24, className = 'brand-mark'): HTMLElement {
   const el = h('span', { class: className, 'aria-hidden': 'true' });
-  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="${size}" height="${size}" style="display:block;">${BRAND_CUBE_SVG_PATHS}<rect width="512" height="512" rx="96" fill="#ffffff" /><image href="icons/hhf-emblem.png" x="14" y="14" width="484" height="484" preserveAspectRatio="xMidYMid meet" /></svg>`;
+  el.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="${size}" height="${size}" style="display:block;"><g class="brand-vector-fallback" opacity="0">${BRAND_CUBE_SVG_PATHS}</g><image class="brand-emblem-light" href="icons/hhf-emblem.png" x="8" y="8" width="496" height="496" preserveAspectRatio="xMidYMid meet" /><image class="brand-emblem-dark" href="icons/hhf-emblem-dark.png" x="8" y="8" width="496" height="496" preserveAspectRatio="xMidYMid meet" /></svg>`;
   return el;
 }
 
-/** Genera el SVG autónomo (para favicon e iconos PWA) usando la paleta clara y el emblema HHF. */
+/** Genera el SVG autónomo (para favicon e iconos PWA) usando el tema azul marino (#0f172a -> #1e3a5f) de la aplicación. */
 export function buildStandaloneIconSvg(size = 512): string {
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="${size}" height="${size}">
   <defs>
     <linearGradient id="mohawk-bg" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" stop-color="#ffffff" />
-      <stop offset="100%" stop-color="#f1f5f9" />
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="100%" stop-color="#1e3a5f" />
     </linearGradient>
   </defs>
   <rect width="512" height="512" rx="112" fill="url(#mohawk-bg)" />${BRAND_CUBE_SVG_PATHS}

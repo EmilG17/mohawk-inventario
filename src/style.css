@@ -59,18 +59,32 @@ html, body {
 .brand-mark {
   display: inline-flex; align-items: center; justify-content: center;
   width: 38px; height: 38px;
-  background: #ffffff;
-  border: 1px solid rgba(53, 167, 196, 0.45);
-  color: #0d253f;
-  font-weight: 900; font-size: 20px; border-radius: 10px;
-  padding: 2px;
-  overflow: hidden;
-  box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+  background: transparent;
+  border: none;
+  color: inherit;
+  font-weight: 900; font-size: 20px; border-radius: 8px;
+  padding: 0;
+  overflow: visible;
+  box-shadow: none;
   flex-shrink: 0;
 }
 .brand-mark svg {
   width: 100%;
   height: 100%;
+  display: block;
+}
+.brand-mark .brand-emblem-light {
+  display: block;
+}
+.brand-mark .brand-emblem-dark {
+  display: none;
+}
+.app-header .brand-mark .brand-emblem-light,
+.app-sidebar .brand-mark .brand-emblem-light {
+  display: none;
+}
+.app-header .brand-mark .brand-emblem-dark,
+.app-sidebar .brand-mark .brand-emblem-dark {
   display: block;
 }
 .brand-title {
