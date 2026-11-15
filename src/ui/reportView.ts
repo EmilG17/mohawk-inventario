@@ -277,7 +277,7 @@ export const reportView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head wrap', style: 'align-items: center; gap: 10px;' },
-          createBrandLogo(24, 'brand-mark report-brand-mark'),
+          createBrandLogo(32, 'brand-mark report-brand-mark'),
           h('div', { class: 'grow' },
             h('div', { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
               h('h2', { style: 'margin: 0;' }, session.name),

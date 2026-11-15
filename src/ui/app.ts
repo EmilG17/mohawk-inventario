@@ -106,14 +106,14 @@ export async function bootstrapApp(): Promise<void> {
   const sessionBadge = h('span', { class: 'top-session muted small' });
   const onlineDot = h('span', { class: 'online-dot', title: navigator.onLine ? 'En línea' : 'Sin conexión' });
 
-  const mobileBrandLogoEl = createBrandLogo(24);
+  const mobileBrandLogoEl = createBrandLogo(30);
 
   // Top header (para pantallas móviles < 900px)
   const header = h('header', { class: 'app-header' },
     h('div', { class: 'header-left', onclick: () => navigate('/') },
       mobileBrandLogoEl,
       h('div', { class: 'header-brand-stack' },
-        h('span', { class: 'brand-kicker' }, 'MOHAWK'),
+        h('span', { class: 'brand-kicker' }, 'HHF · TALLER DE REPARACIONES'),
         titleEl,
       ),
     ),
@@ -125,7 +125,7 @@ export async function bootstrapApp(): Promise<void> {
   );
 
   // Desktop Sidebar (visible en pantallas >= 900px)
-  const sidebarBrandLogoEl = createBrandLogo(28);
+  const sidebarBrandLogoEl = createBrandLogo(38);
 
   const sidebarCloudPill = h('button', {
     class: 'sidebar-cloud-pill',
@@ -165,8 +165,8 @@ export async function bootstrapApp(): Promise<void> {
       h('div', { class: 'sidebar-brand-row' },
         sidebarBrandLogoEl,
         h('div', { class: 'sidebar-title-wrap' },
-          h('span', { class: 'sidebar-brand-name' }, 'MOHAWK'),
-          h('span', { class: 'sidebar-brand-sub' }, 'Inventario de Consumibles'),
+          h('span', { class: 'sidebar-brand-name' }, 'HHF'),
+          h('span', { class: 'sidebar-brand-sub' }, 'Registro de Consumibles · Taller de Reparaciones'),
         ),
       ),
       sidebarPlatformBadge,

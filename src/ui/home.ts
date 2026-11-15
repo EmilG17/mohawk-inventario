@@ -121,7 +121,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             h(
               'div',
               { class: 'dash-hero-left' },
-              createBrandLogo(32, 'brand-mark hero-brand-mark'),
+              createBrandLogo(44, 'brand-mark hero-brand-mark'),
               h(
                 'div',
                 { class: 'dash-user-avatar' },
