@@ -220,25 +220,76 @@ export const reportView: View = {
         ? h('span', { class: 'badge info' }, 'Cerrada')
         : h('span', { class: 'badge warn' }, 'Abierta');
 
+    const secondaryItems: (HTMLElement | null)[] = [
+      summary.shortValue || summary.overValue || summary.reorderValue
+        ? h('div', { class: 'row values-row wrap', style: 'margin: 0;' },
+          h('span', { class: 'small' }, 'Faltante: ', h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
+          h('span', { class: 'small' }, 'Sobrante: ', h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
+          h('span', { class: 'small' }, 'Neto: ', h('b', null, fmtMoney(summary.netValue))),
+          summary.reorderValue ? h('span', { class: 'small' }, 'Est. Compra: ', h('b', null, fmtMoney(summary.reorderValue))) : null,
+        )
+        : null,
+      (() => {
+        const techStats = new Map<string, { scans: number; units: number; products: Set<string> }>();
+        for (const c of counts) {
+          const name = c.counter?.trim() || session.counter || 'Técnico';
+          const st = techStats.get(name) ?? { scans: 0, units: 0, products: new Set<string>() };
+          st.scans++;
+          st.units += c.qty;
+          st.products.add(c.barcode);
+          techStats.set(name, st);
+        }
+        if (techStats.size === 0) return null;
+        return h(
+          'div',
+          null,
+          h('div', { class: 'muted xsmall bold uppercase', style: 'margin-bottom: 4px;' }, `Participación (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
+          h(
+            'ul',
+            { class: 'contributor-list' },
+            [...techStats.entries()].map(([name, info]) =>
+              h(
+                'li',
+                null,
+                h('span', null, h('b', null, name)),
+                h(
+                  'span',
+                  { class: 'muted small' },
+                  `${info.products.size} prod. · ${info.scans} escaneo(s) · ${fmtNum(info.units)} u.`,
+                ),
+              ),
+            ),
+          ),
+        );
+      })(),
+      h('label', { class: 'check-inline small muted' },
+        h('input', {
+          type: 'checkbox', checked: includeNotCounted,
+          onchange: (e: Event) => {
+            includeNotCounted = (e.target as HTMLInputElement).checked;
+            navigate(`/reporte?session=${session.id}`);
+          },
+        }),
+        h('span', null, 'Incluir productos del catálogo no contados'),
+      ),
+    ];
+
     clear(root,
       h('section', { class: 'card' },
-        h('div', { class: 'card-head wrap', style: 'align-items: flex-start; gap: 10px;' },
-          createBrandLogo(28, 'brand-mark report-brand-mark'),
+        h('div', { class: 'card-head wrap', style: 'align-items: center; gap: 10px;' },
+          createBrandLogo(24, 'brand-mark report-brand-mark'),
           h('div', { class: 'grow' },
-            h('div', { class: 'row', style: 'gap: 8px; align-items: center; margin-bottom: 4px;' },
-              h('span', { class: 'muted small' }, 'Sesión'),
+            h('div', { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
+              h('h2', { style: 'margin: 0;' }, session.name),
               statusBadge,
+              countEl,
             ),
-            h('h2', { style: 'margin: 0 0 6px 0;' }, session.name),
-            h('div', { class: 'muted small' },
-              `Responsable: ${session.counter} · Creada: ${fmtDateTime(session.createdAt)}`,
+            h('div', { class: 'muted xsmall' },
+              `${session.counter} · ${fmtDateTime(session.createdAt)}`,
               session.closed && session.closedAt ? ` · Finalizada: ${fmtDateTime(session.closedAt)}` : '',
             ),
           ),
-          h('div', { style: 'display: flex; flex-direction: column; align-items: flex-end; gap: 6px;' },
-            sessionSelect,
-            countEl,
-          ),
+          sessionSelect,
         ),
         h('div', { class: 'kpis' },
           kpi(`${summary.accuracy}%`, 'Exactitud', summary.accuracy >= 95 ? 'good' : summary.accuracy >= 80 ? 'warn' : 'bad'),
@@ -248,20 +299,11 @@ export const reportView: View = {
           kpi(fmtNum(summary.notCounted), 'No contados'),
           kpi(fmtNum(summary.reorderCount), 'Por pedir', summary.reorderCount ? 'warn' : ''),
         ),
-        summary.shortValue || summary.overValue || summary.reorderValue
-          ? h('div', { class: 'row values-row wrap' },
-            h('span', { class: 'small' }, 'Faltante: ', h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
-            h('span', { class: 'small' }, 'Sobrante: ', h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
-            h('span', { class: 'small' }, 'Neto: ', h('b', null, fmtMoney(summary.netValue))),
-            summary.reorderValue ? h('span', { class: 'small' }, 'Est. Compra: ', h('b', null, fmtMoney(summary.reorderValue))) : null,
-          )
-          : null,
-        h('div', { class: 'row wrap' },
-          h('button', { class: 'btn primary', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
-          h('button', { class: 'btn', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
-          h('button', { class: 'btn', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
+        h('div', { class: 'row wrap', style: 'gap: 6px;' },
+          h('button', { class: 'btn primary sm', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
+          h('button', { class: 'btn sm', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
           h('button', {
-            class: 'btn',
+            class: 'btn sm',
             'data-testid': 'report-unify-btn',
             onclick: () => void openUnifyReportsDialog((sid) => {
               selectedSessionId = sid;
@@ -269,7 +311,7 @@ export const reportView: View = {
             }),
           }, icon('users'), 'Unificar reportes de técnicos'),
           h('button', {
-            class: 'btn',
+            class: 'btn sm',
             'data-testid': 'report-print-labels',
             onclick: () => {
               const sessionProducts = products.filter((p) => counts.some((c) => c.barcode === p.barcode));
@@ -284,9 +326,10 @@ export const reportView: View = {
               });
             },
           }, icon('scan'), 'Imprimir etiquetas de sesión'),
+          h('button', { class: 'btn ghost sm', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
           isClosed
             ? h('button', {
-              class: 'btn',
+              class: 'btn sm',
               onclick: async () => {
                 await reopenSession(session.id);
                 toast('Sesión reabierta y activada', 'ok');
@@ -295,7 +338,7 @@ export const reportView: View = {
             }, 'Reabrir sesión')
             : isCur
               ? h('button', {
-                class: 'btn danger ghost',
+                class: 'btn danger ghost sm',
                 onclick: async () => {
                   const ok = await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión "${session.name}"?`, 'Finalizar', true);
                   if (ok) {
@@ -306,7 +349,7 @@ export const reportView: View = {
                 },
               }, 'Finalizar sesión')
               : h('button', {
-                class: 'btn',
+                class: 'btn sm',
                 onclick: async () => {
                   await setActiveSession(session.id);
                   toast(`Sesión activa: ${session.name}`, 'ok');
@@ -314,55 +357,18 @@ export const reportView: View = {
                 },
               }, 'Activar sesión'),
         ),
-        (() => {
-          const techStats = new Map<string, { scans: number; units: number; products: Set<string> }>();
-          for (const c of counts) {
-            const name = c.counter?.trim() || session.counter || 'Técnico';
-            const st = techStats.get(name) ?? { scans: 0, units: 0, products: new Set<string>() };
-            st.scans++;
-            st.units += c.qty;
-            st.products.add(c.barcode);
-            techStats.set(name, st);
-          }
-          if (techStats.size === 0) return null;
-          return h(
-            'details',
-            { class: 'help-box', open: techStats.size > 1 },
-            h('summary', null, `Resumen por técnico (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
-            h(
-              'ul',
-              { class: 'contributor-list', style: 'margin-top: 6px;' },
-              [...techStats.entries()].map(([name, info]) =>
-                h(
-                  'li',
-                  null,
-                  h('span', null, h('b', null, name)),
-                  h(
-                    'span',
-                    { class: 'muted small' },
-                    `${info.products.size} prod. · ${info.scans} escaneo(s) · ${fmtNum(info.units)} u.`,
-                  ),
-                ),
-              ),
-            ),
-          );
-        })(),
-        h('label', { class: 'check-inline small muted' },
-          h('input', {
-            type: 'checkbox', checked: includeNotCounted,
-            onchange: (e: Event) => {
-              includeNotCounted = (e.target as HTMLInputElement).checked;
-              navigate(`/reporte?session=${session.id}`);
-            },
-          }),
-          h('span', null, 'Incluir productos del catálogo no contados'),
+        h('details', { class: 'ui-disclosure' },
+          h('summary', { class: 'ui-disclosure-summary' }, 'Desglose financiero, técnicos y opciones'),
+          h('div', { class: 'ui-disclosure-body' }, ...secondaryItems),
         ),
       ),
-      h('input', {
-        class: 'input', type: 'search', placeholder: 'Buscar por descripción, código o responsable', value: query,
-        oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; drawList(); },
-      }),
-      chipsWrap,
+      h('div', { class: 'filter-bar-row' },
+        h('input', {
+          class: 'input', type: 'search', placeholder: 'Buscar por descripción, código o responsable', value: query,
+          oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; drawList(); },
+        }),
+        chipsWrap,
+      ),
       h('div', { class: 'rlist-table-head', 'aria-hidden': 'true' },
         h('span', null, 'Producto / Estado'),
         h('span', null, 'Ideal · Contado · Diferencia'),

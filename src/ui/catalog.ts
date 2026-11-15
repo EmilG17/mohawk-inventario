@@ -806,58 +806,62 @@ export const catalogView: View = {
     clear(root,
       h('section', { class: 'card' },
         h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
-        h(
-          'p',
-          { class: 'muted small' },
-          readOnlyMobile
-            ? 'Consulta existencias, sincroniza con la BD o imprime etiquetas. Para editar productos usa una PC.'
-            : 'Consulta consumibles, importa hojas Excel/CSV, imprime etiquetas de código de barras o aplica modificaciones en lote.',
-        ),
         readOnlyMobile
           ? h(
               'div',
               { class: 'catalog-readonly-banner', 'data-testid': 'catalog-mobile-readonly-badge' },
-              'Catálogo en solo lectura (móvil): la creación, importación y edición están bloqueadas en móvil para proteger la BD.',
+              'Solo lectura en móvil: sincroniza con BD o imprime etiquetas. Edición disponible en PC.',
             )
           : null,
-        h('div', { class: 'catalog-toolbar-group' },
-          h('div', { class: 'catalog-toolbar-row' },
-            h('span', { class: 'catalog-group-label muted xsmall uppercase' }, readOnlyMobile ? 'Sincronización con BD' : 'Gestión y BD'),
-            h('div', { class: 'row wrap' },
-              readOnlyMobile
-                ? null
-                : h('button', {
-                    class: 'btn primary',
-                    'data-testid': 'catalog-new-btn',
-                    onclick: async () => {
-                      const res = await editProductDialog('');
-                      if (res && res !== 'deleted') {
-                        await refreshData();
-                      }
-                    },
-                  }, icon('scan'), 'Nuevo producto'),
-              readOnlyMobile
-                ? null
-                : h('button', {
-                    class: 'btn',
-                    type: 'button',
-                    'data-testid': 'catalog-import-btn',
-                    onclick: () => void importCatalogFlow(() => { void refreshData(); }),
-                  }, icon('upload'), 'Importar Excel / CSV'),
+        h('div', { class: 'toolbar-compact-row' },
+          h('div', { class: 'row wrap', style: 'gap: 6px;' },
+            readOnlyMobile
+              ? null
+              : h('button', {
+                  class: 'btn primary sm',
+                  'data-testid': 'catalog-new-btn',
+                  onclick: async () => {
+                    const res = await editProductDialog('');
+                    if (res && res !== 'deleted') {
+                      await refreshData();
+                    }
+                  },
+                }, icon('scan'), 'Nuevo producto'),
+            readOnlyMobile
+              ? null
+              : h('button', {
+                  class: 'btn sm',
+                  type: 'button',
+                  'data-testid': 'catalog-import-btn',
+                  onclick: () => void importCatalogFlow(() => { void refreshData(); }),
+                }, icon('upload'), 'Importar Excel / CSV'),
+            h('button', {
+              class: readOnlyMobile ? 'btn primary sm' : 'btn sm',
+              type: 'button',
+              'data-testid': 'catalog-sync-db-btn',
+              onclick: () => void syncCatalogWithDbFlow(() => { void refreshData(); }),
+            }, icon('refresh'), 'Sincronizar con BD'),
+            h('button', {
+              class: 'btn sm',
+              'data-testid': 'catalog-queue-btn',
+              title: 'Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja',
+              onclick: () => openBarcodeSheetDialog(),
+            }, icon('scan'), 'Cola de rótulos', queueBadgeEl),
+          ),
+        ),
+        h('details', { class: 'ui-disclosure' },
+          h('summary', { class: 'ui-disclosure-summary' }, 'Más herramientas (rótulos y ajustes)'),
+          h('div', { class: 'ui-disclosure-body' },
+            h('div', { class: 'row wrap', style: 'gap: 6px;' },
               h('button', {
-                class: readOnlyMobile ? 'btn primary' : 'btn',
-                type: 'button',
-                'data-testid': 'catalog-sync-db-btn',
-                onclick: () => void syncCatalogWithDbFlow(() => { void refreshData(); }),
-              }, icon('refresh'), 'Sincronizar con BD'),
-              readOnlyMobile
-                ? null
-                : h('button', {
-                    class: 'btn',
-                    onclick: () => {
-                      openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
-                    },
-                  }, icon('edit'), 'Acciones masivas'),
+                class: 'btn sm',
+                disabled: !products.length,
+                'data-testid': 'catalog-sheets-btn',
+                onclick: () => {
+                  const visible = visibleProducts();
+                  openBarcodeSheetDialog(visible.length ? visible : products);
+                },
+              }, icon('scan'), 'Rótulos y hojas'),
               !readOnlyMobile && noDesc > 0
                 ? h('button', {
                     class: 'btn sm',
@@ -867,42 +871,24 @@ export const catalogView: View = {
                       toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
                       await refreshData();
                     },
-                  }, icon('globe'), `Buscar en internet ${noDesc} sin descripción`)
+                  }, icon('globe'), `Buscar en internet (${noDesc})`)
                 : null,
-            ),
-          ),
-          h('div', { class: 'catalog-toolbar-row' },
-            h('span', { class: 'catalog-group-label muted xsmall uppercase' }, 'Etiquetas y Ajustes'),
-            h('div', { class: 'row wrap' },
-              h('button', {
-                class: 'btn',
-                disabled: !products.length,
-                'data-testid': 'catalog-sheets-btn',
-                onclick: () => {
-                  const visible = visibleProducts();
-                  openBarcodeSheetDialog(visible.length ? visible : products);
-                },
-              }, icon('scan'), 'Rótulos y hojas'),
-              h('button', {
-                class: 'btn',
-                'data-testid': 'catalog-queue-btn',
-                title: 'Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja',
-                onclick: () => openBarcodeSheetDialog(),
-              }, icon('scan'), 'Cola de rótulos', queueBadgeEl),
               h('button', {
                 class: 'btn ghost sm',
                 'data-testid': 'catalog-settings-link',
                 onclick: () => navigate('/ajustes'),
-              }, icon('gear'), readOnlyMobile ? 'Ajustes / Sala en la nube' : 'Importar / Compartir en Ajustes'),
+              }, icon('gear'), readOnlyMobile ? 'Ajustes / Sala en la nube' : 'Ajustes de catálogo'),
             ),
           ),
         ),
       ),
-      h('input', {
-        class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: 'Buscar por descripción, código o No. de parte', value: query,
-        oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; draw(); },
-      }),
-      h('div', { class: 'chips' }, chip('todos', 'Todos'), chip('sin_desc', `Sin descripción (${noDesc})`), chip('no_cat', 'No catalogados')),
+      h('div', { class: 'filter-bar-row' },
+        h('input', {
+          class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: 'Buscar por descripción, código o No. de parte', value: query,
+          oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; draw(); },
+        }),
+        h('div', { class: 'chips' }, chip('todos', 'Todos'), chip('sin_desc', `Sin descripción (${noDesc})`), chip('no_cat', 'No catalogados')),
+      ),
       selectToolbar,
       massBar,
       h('div', { class: 'plist-table-head', 'aria-hidden': 'true' },

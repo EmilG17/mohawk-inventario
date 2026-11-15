@@ -140,8 +140,6 @@ export const settingsView: View = {
       h('div', { class: 'settings-header-bar' },
         h('div', null,
           h('h2', { style: 'margin:0; font-size:1.15rem' }, 'Ajustes y Catálogo'),
-          h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
-            'Configuración general, importación/conciliación de catálogo y sincronización en línea.'),
         ),
         h('button', {
           class: 'btn primary small',
@@ -153,11 +151,7 @@ export const settingsView: View = {
         /* TARJETA 1: GESTIÓN Y CONCILIACIÓN DE CATÁLOGO */
         h('section', { class: 'card settings-card' },
           h('div', { class: 'settings-card-head' },
-            h('div', null,
-              h('h3', { class: 'settings-card-title' }, 'Catálogo y Conciliación'),
-              h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
-                'Importa, comparte o concilia el catálogo maestro con los conteos y lecturas por código o SKU.'),
-            ),
+            h('h3', { class: 'settings-card-title' }, 'Catálogo y Conciliación'),
             h('span', { class: 'badge info' }, `${fmtNum(totalProds)} ítems`),
           ),
 
@@ -292,11 +286,7 @@ export const settingsView: View = {
         /* TARJETA 2: PERFIL Y COMPORTAMIENTO DE ESCANEO */
         h('section', { class: 'card settings-card' },
           h('div', { class: 'settings-card-head' },
-            h('div', null,
-              h('h3', { class: 'settings-card-title' }, 'Perfil y Escaneo'),
-              h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
-                'Identificación del técnico y preferencias al leer códigos.'),
-            ),
+            h('h3', { class: 'settings-card-title' }, 'Perfil y Escaneo'),
           ),
 
           h('div', { class: 'settings-row-2col' },
@@ -327,11 +317,7 @@ export const settingsView: View = {
         /* TARJETA 3: SINCRONIZACIÓN EN LÍNEA (FIREBASE / EQUIPO) */
         h('section', { class: 'card settings-card settings-card-wide' },
           h('div', { class: 'settings-card-head' },
-            h('div', null,
-              h('h3', { class: 'settings-card-title' }, 'Sincronización en Línea (Firebase Realtime DB)'),
-              h('p', { class: 'muted small', style: 'margin:2px 0 0 0' },
-                'Conecta a técnicos y supervisor en tiempo real para unificar conteos, movimientos y catálogo.'),
-            ),
+            h('h3', { class: 'settings-card-title' }, 'Sincronización en Línea (Firebase Realtime DB)'),
             h('span', {
               class: `sup-live-pill ${cloudState.state === 'connected' ? 'live' : cloudState.state === 'error' ? 'error' : 'local'}`,
             }, cloudState.state === 'connected' ? '● En vivo' : cloudState.state === 'error' ? '● Error' : '● Local'),

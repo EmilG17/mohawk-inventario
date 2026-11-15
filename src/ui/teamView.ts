@@ -531,16 +531,7 @@ export const teamView: View = {
           h(
             'div',
             { class: 'card-head wrap', style: 'gap: 8px;' },
-            h(
-              'div',
-              null,
-              h('h3', { style: 'margin: 0;' }, 'Configuración de Sala y Enlace Firebase'),
-              h(
-                'p',
-                { class: 'muted small', style: 'margin: 2px 0 0 0;' },
-                'Pega el enlace de tu Firebase Realtime Database (incluso si es el link de la consola web, se limpiará automáticamente).',
-              ),
-            ),
+            h('h3', { style: 'margin: 0;' }, 'Configuración de Sala y Enlace Firebase'),
           ),
           h(
             'div',
@@ -597,7 +588,7 @@ export const teamView: View = {
               'label',
               { class: 'check-inline small' },
               autoCheck,
-              h('span', null, 'Transmitir y recibir cada escaneo y movimiento automáticamente en tiempo real'),
+              h('span', null, 'Sincronizar escaneos y movimientos en tiempo real'),
             ),
             h(
               'div',
@@ -1725,38 +1716,44 @@ export const teamView: View = {
           ? h(
               'section',
               { class: 'card' },
-              h('div', { class: 'muted small' }, 'Herramientas de consolidación offline / por archivo'),
-              h('h3', { style: 'margin: 2px 0 6px 0;' }, `Sesión Activa: ${current.name}`),
-              h('div', { class: 'row wrap', style: 'gap: 8px;' },
+              h('div', { class: 'toolbar-compact-row' },
+                h('h3', { style: 'margin: 0;' }, `Sesión Activa: ${current.name}`),
                 h(
                   'button',
                   {
-                    class: 'btn primary',
+                    class: 'btn primary sm',
                     onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
                   },
                   icon('users'),
                   'Unificar reportes de técnicos (Excel / CSV / JSON)',
                 ),
-                h('button', { class: 'btn', onclick: importOthers }, icon('upload'), 'Importar archivos a esta sesión'),
-                h('button', { class: 'btn', onclick: shareMyCount, disabled: !curCounts.length }, icon('share'), 'Compartir mi conteo'),
-                h(
-                  'button',
-                  {
-                    class: 'btn',
-                    disabled: !curCounts.length,
-                    onclick: () => openShowMyQrDialog(current, curCounts),
-                  },
-                  icon('scan'),
-                  'Mostrar QR de mi conteo',
-                ),
-                h(
-                  'button',
-                  {
-                    class: 'btn',
-                    onclick: () => openReceiveQrDialog(current, () => void refreshDashboard()),
-                  },
-                  icon('scan'),
-                  'Recibir por QR',
+              ),
+              h('details', { class: 'ui-disclosure' },
+                h('summary', { class: 'ui-disclosure-summary' }, 'Herramientas de archivo y transferencia QR'),
+                h('div', { class: 'ui-disclosure-body' },
+                  h('div', { class: 'row wrap', style: 'gap: 8px;' },
+                    h('button', { class: 'btn sm', onclick: importOthers }, icon('upload'), 'Importar archivos a esta sesión'),
+                    h('button', { class: 'btn sm', onclick: shareMyCount, disabled: !curCounts.length }, icon('share'), 'Compartir mi conteo'),
+                    h(
+                      'button',
+                      {
+                        class: 'btn sm',
+                        disabled: !curCounts.length,
+                        onclick: () => openShowMyQrDialog(current, curCounts),
+                      },
+                      icon('scan'),
+                      'Mostrar QR de mi conteo',
+                    ),
+                    h(
+                      'button',
+                      {
+                        class: 'btn sm',
+                        onclick: () => openReceiveQrDialog(current, () => void refreshDashboard()),
+                      },
+                      icon('scan'),
+                      'Recibir por QR',
+                    ),
+                  ),
                 ),
               ),
             )

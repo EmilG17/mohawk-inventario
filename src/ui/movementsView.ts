@@ -424,7 +424,7 @@ async function renderMainView(): Promise<void> {
           },
         }, '− Salida'),
         h('button', {
-          class: 'btn primary sm',
+          class: 'btn ghost sm',
           'data-testid': 'movements-register-btn',
           onclick: async () => {
             await openMovementRegistrationModal(undefined, 'IN', async () => {
@@ -520,7 +520,7 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
     },
   }) as HTMLInputElement;
 
-  const chipsContainer = h('div', { class: 'chips', style: 'padding-top: 8px;' },
+  const chipsContainer = h('div', { class: 'chips' },
     h('button', {
       class: `chip ${tableFilter === 'todos' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'todos'; updateChips(); updateTableRows(); },
@@ -619,7 +619,7 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
   updateTableRows();
 
   clear(container,
-    h('div', { style: 'margin-bottom: 10px;' },
+    h('div', { class: 'filter-bar-row' },
       searchInput,
       chipsContainer,
     ),
@@ -1005,14 +1005,19 @@ function renderBitacoraSection(
     h('div', { class: 'card-head' },
       h('h3', null, 'Bitácora de Consumo y Trazabilidad'),
     ),
-    h('div', { style: 'display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px;' },
+    h('div', { class: 'filter-bar-row' },
       searchInput,
-      h('div', { style: 'display: grid; grid-template-columns: 1fr 1fr; gap: 8px;' },
-        techInput,
-        areaInput,
-      ),
       typeChips,
-      dateChips,
+    ),
+    h('details', { class: 'ui-disclosure', style: 'margin-bottom: 10px;' },
+      h('summary', { class: 'ui-disclosure-summary' }, 'Filtros avanzados (técnico, área y periodo)'),
+      h('div', { class: 'ui-disclosure-body' },
+        h('div', { style: 'display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px;' },
+          techInput,
+          areaInput,
+        ),
+        dateChips,
+      ),
     ),
     listContainer,
   );

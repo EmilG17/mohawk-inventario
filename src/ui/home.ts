@@ -100,10 +100,9 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
     const supervisorUI = isSupervisorModeEnabled();
 
     const todayStr = new Intl.DateTimeFormat('es-MX', {
-      weekday: 'long',
+      day: '2-digit',
+      month: 'short',
       year: 'numeric',
-      month: 'long',
-      day: 'numeric',
     }).format(new Date());
 
     clear(
@@ -139,7 +138,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                     ? h('span', { class: 'badge ok' }, `Sala: ${cloudStatus.roomCode}`)
                     : cloudStatus.roomCode
                       ? h('span', { class: 'badge warn' }, `Sala: ${cloudStatus.roomCode}`)
-                      : h('span', { class: 'badge default' }, 'Modo Local'),
+                      : h('span', { class: 'badge default' }, 'Local'),
                   h(
                     'span',
                     { class: navigator.onLine ? 'badge ok' : 'badge warn' },
@@ -152,7 +151,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                   h(
                     'div',
                     null,
-                    h('div', { class: 'muted xsmall' }, 'Operador / Contador asignado'),
+                    h('div', { class: 'muted xsmall' }, 'Operador'),
                     h('div', { class: 'big' }, s.counterName || 'Sin asignar'),
                   ),
                   h(
@@ -168,32 +167,20 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                     'Cambiar',
                   ),
                 ),
-                h('div', { class: 'muted small dash-date-text' }, todayStr),
+                h('div', { class: 'muted xsmall dash-date-text' }, todayStr),
               ),
             ),
-            h(
-              'div',
-              { class: 'dash-hero-right' },
-              session
-                ? h(
+            !session
+              ? h(
                   'div',
-                  { class: 'dash-quick-session-badge' },
-                  h('span', { class: 'muted xsmall' }, 'SESIÓN ACTIVA'),
-                  h('b', { class: 'dash-quick-session-title' }, session.name),
+                  { class: 'dash-hero-right' },
                   h(
-                    'span',
-                    { class: 'muted small' },
-                    `${distinct} productos · ${fmtNum(units)} unidades`,
+                    'h2',
+                    { class: 'badge warn dash-idle-pill', 'data-testid': 'home-idle-badge', style: 'margin:0; font-weight:700;' },
+                    'Sin sesión activa',
                   ),
                 )
-                : h(
-                  'div',
-                  { class: 'dash-quick-session-badge empty', 'data-testid': 'home-idle-badge' },
-                  h('span', { class: 'muted xsmall' }, 'ESTADO DE CONTEO'),
-                  h('h2', { class: 'dash-quick-session-title', style: 'margin:0; font-weight:700;' }, 'Sin sesión activa'),
-                  h('span', { class: 'muted small' }, 'Inicia una sesión para comenzar'),
-                ),
-            ),
+              : null,
           ),
         ),
 
@@ -212,7 +199,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             h(
               'div',
               { class: 'dash-kpi-header' },
-              h('span', { class: 'dash-kpi-label' }, 'Sesión de Conteo'),
+              h('span', { class: 'dash-kpi-label' }, 'Sesión'),
               session
                 ? h('span', { class: 'badge ok' }, 'Activa')
                 : h('span', { class: 'badge default' }, 'Inactiva'),
@@ -226,8 +213,8 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               'div',
               { class: 'dash-kpi-sub' },
               session
-                ? `${fmtNum(units)} pzas · ${counts.length} escaneos`
-                : 'Clic para iniciar sesión',
+                ? `${session.name} · ${fmtNum(units)} pzas (${counts.length})`
+                : 'Sin sesión activa',
             ),
           ),
 
@@ -238,14 +225,14 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             h(
               'div',
               { class: 'dash-kpi-header' },
-              h('span', { class: 'dash-kpi-label' }, 'Catálogo Maestro'),
+              h('span', { class: 'dash-kpi-label' }, 'Catálogo'),
               h('span', { class: 'badge info' }, `${fmtNum(catalogCount)} SKUs`),
             ),
             h('div', { class: 'dash-kpi-value' }, fmtNum(catalogCount)),
             h(
               'div',
               { class: 'dash-kpi-sub' },
-              `${fmtNum(withExpected)} con inventario ideal${uncatalogedCount > 0 ? ` · ${uncatalogedCount} nuevos` : ''}`,
+              `${fmtNum(withExpected)} con ideal${uncatalogedCount > 0 ? ` · ${uncatalogedCount} nuevos` : ''}`,
             ),
           ),
 
@@ -256,7 +243,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             h(
               'div',
               { class: 'dash-kpi-header' },
-              h('span', { class: 'dash-kpi-label' }, 'Kardex (Flujo)'),
+              h('span', { class: 'dash-kpi-label' }, 'Kardex'),
               h('span', { class: 'badge ok' }, `${totalMovements} movs`),
             ),
             h(
@@ -266,7 +253,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               ' / ',
               h('span', { class: 'out-text' }, `-${fmtNum(Math.round(totalOut))}`),
             ),
-            h('div', { class: 'dash-kpi-sub' }, 'Entradas vs Salidas acumuladas'),
+            h('div', { class: 'dash-kpi-sub' }, 'Entradas / salidas'),
           ),
 
           // KPI 4: Equipo y Nube
@@ -276,22 +263,22 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             h(
               'div',
               { class: 'dash-kpi-header' },
-              h('span', { class: 'dash-kpi-label' }, 'Monitor Equipo'),
+              h('span', { class: 'dash-kpi-label' }, 'Supervisor'),
               h(
                 'span',
                 { class: cloudStatus.state === 'connected' ? 'badge ok' : 'badge default' },
-                cloudStatus.state === 'connected' ? 'Conectado' : 'Local',
+                cloudStatus.state === 'connected' ? 'En vivo' : 'Local',
               ),
             ),
             h(
               'div',
               { class: 'dash-kpi-value' },
-              cloudStatus.state === 'connected' ? 'En Vivo' : 'Modo Local',
+              cloudStatus.state === 'connected' ? 'Conectado' : 'Local',
             ),
             h(
               'div',
               { class: 'dash-kpi-sub' },
-              cloudStatus.roomCode ? `Sala: ${cloudStatus.roomCode}` : 'Sin sala compartida',
+              cloudStatus.roomCode ? `Sala ${cloudStatus.roomCode}` : 'Solo este equipo',
             ),
           ),
         ),
@@ -381,11 +368,6 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                 icon('scan'),
                 'Iniciar nueva sesión de conteo',
               ),
-              h(
-                'p',
-                { class: 'muted small center', style: 'margin: 6px 0 0 0;' },
-                'Comienza a escanear productos con la cámara de tu teléfono o con lector de código de barras USB/Bluetooth.',
-              ),
             ),
 
           h('div', { class: 'dash-divider' }),
@@ -394,7 +376,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
           h(
             'div',
             { class: 'dash-flow-section' },
-            h('span', { class: 'dash-flow-label muted xsmall uppercase' }, 'Acciones rápidas de flujo'),
+            h('span', { class: 'dash-flow-label muted xsmall uppercase' }, 'Accesos rápidos'),
             h(
               'div',
               { class: 'dash-flow-actions' },
@@ -578,35 +560,29 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
             ),
           ),
 
-          // COLUMNA DERECHA: Kardex y Catálogo
+          // COLUMNA DERECHA: Actividad de Kardex y Alertas de Catálogo
           h(
             'div',
             { class: 'dash-col' },
 
-            // Tarjeta de Kardex
+            // Tarjeta de Actividad Reciente (Kardex + Resumen Catálogo)
             h(
               'section',
               { class: 'card dash-section-card' },
               h(
                 'div',
                 { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, 'Kardex e Inventario Ideal'),
+                h('h3', { class: 'dash-card-title' }, 'Actividad Reciente de Kardex'),
                 h(
                   'button',
                   { class: 'btn ghost sm', onclick: () => navigate('/movimientos') },
                   'Abrir Kardex →',
                 ),
               ),
-              h(
-                'p',
-                { class: 'muted small' },
-                'Registro en tiempo real de entradas de proveedores y entregas a técnicos/máquinas con balance dinámico de existencias.',
-              ),
               recentMovements.length > 0
                 ? h(
                   'div',
                   { class: 'dash-mini-movs-list' },
-                  h('div', { class: 'muted xsmall uppercase bold' }, 'Últimos movimientos registrados:'),
                   recentMovements.map((m) =>
                     h(
                       'div',
@@ -630,46 +606,25 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                     ),
                   ),
                 )
-                : h('p', { class: 'muted xsmall' }, 'Sin movimientos de entradas/salidas aún.'),
-            ),
-
-            // Tarjeta de Catálogo
-            h(
-              'section',
-              { class: 'card dash-section-card' },
-              h(
-                'div',
-                { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, 'Catálogo de Consumibles'),
-                h(
-                  'button',
-                  { class: 'btn ghost sm', onclick: () => navigate('/catalogo') },
-                  'Ver Catálogo →',
-                ),
-              ),
-              catalogCount
+                : h('p', { class: 'muted small' }, 'Sin movimientos recientes en bitácora.'),
+              (pending > 0 || !catalogCount)
                 ? h(
                   'div',
-                  null,
+                  { class: 'row wrap', style: 'margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border); justify-content: space-between; align-items: center;' },
                   h(
-                    'p',
-                    { class: 'small' },
-                    h('b', null, `${fmtNum(catalogCount)} consumibles registrados`),
-                    withExpected ? ` · ${fmtNum(withExpected)} con existencia teórica` : '',
+                    'span',
+                    { class: 'warn-text small' },
+                    !catalogCount
+                      ? 'Sin catálogo cargado.'
+                      : `${pending} producto(s) pendiente(s) de descripción.`,
                   ),
-                  pending
-                    ? h(
-                      'p',
-                      { class: 'muted small warn-text' },
-                      `${pending} producto(s) pendiente(s) de descripción en línea.`,
-                    )
-                    : null,
+                  h(
+                    'button',
+                    { class: 'btn ghost sm', onclick: () => navigate('/catalogo') },
+                    'Ir a Catálogo →',
+                  ),
                 )
-                : h(
-                  'p',
-                  { class: 'warn-text small' },
-                  'No hay catálogo cargado. Puedes cargar el catálogo de ejemplo desde Ajustes o importar tu archivo Excel/CSV.',
-                ),
+                : null,
             ),
 
             // Tarjeta PWA (solo cuando aplica)
@@ -681,7 +636,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                 h(
                   'p',
                   { class: 'small' },
-                  'Instala Inventario de Consumibles como app nativa en tu dispositivo para acceso instantáneo y funcionamiento 100% sin internet.',
+                  'Instala la app en tu dispositivo para acceso directo y uso offline.',
                 ),
                 h(
                   'button',
@@ -699,7 +654,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                     { class: 'small' },
                     'En Safari toca ',
                     h('b', null, 'Compartir'),
-                    ' y luego ',
+                    ' y ',
                     h('b', null, '“Agregar a pantalla de inicio”'),
                     '.',
                   ),
@@ -708,15 +663,6 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
           ),
         )
           : null,
-
-        // Pie del Dashboard
-        h(
-          'div',
-          { class: 'dash-footer-note muted small center' },
-          navigator.onLine
-            ? '● Conectado a la red · Modo PWA activo'
-            : '● Sin conexión a internet · Los escaneos y movimientos se guardan localmente en el dispositivo',
-        ),
       ),
     );
 }
