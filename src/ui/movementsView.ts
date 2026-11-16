@@ -587,12 +587,12 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
         h('tr', null,
           h('th', null, 'SKU / Código'),
           h('th', null, 'Descripción'),
-          h('th', { style: 'text-align: right;' }, 'Stock Físico'),
-          h('th', { style: 'text-align: right;' }, 'Entradas (+)'),
-          h('th', { style: 'text-align: right;' }, 'Salidas (−)'),
-          h('th', { style: 'text-align: right;' }, 'Stock Dinámico'),
-          h('th', { style: 'text-align: right;' }, 'Inventario Ideal'),
-          h('th', { style: 'text-align: right;' }, 'Brecha / Gap'),
+          h('th', { style: 'text-align: right;' }, 'Físico'),
+          h('th', { style: 'text-align: right;' }, 'Entradas'),
+          h('th', { style: 'text-align: right;' }, 'Salidas'),
+          h('th', { style: 'text-align: right;' }, 'Dinámico'),
+          h('th', { style: 'text-align: right;' }, 'Ideal'),
+          h('th', { style: 'text-align: right;' }, 'Brecha'),
           h('th', { style: 'text-align: center;' }, 'Estado'),
           h('th', { style: 'text-align: center;' }, 'Acciones'),
         ),
@@ -668,9 +668,9 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
   );
 
   // Descripción cell
-  const descCell = h('td', { style: 'max-width: 220px; white-space: normal;' },
-    h('div', { style: 'font-weight: 500;' }, row.description),
-    h('span', { class: 'badge sm' }, row.unit),
+  const descCell = h('td', { class: 'kdx-desc-cell' },
+    h('div', { class: 'kdx-desc-title' }, row.description),
+    h('span', { class: 'badge sm kdx-unit-badge' }, row.unit),
   );
 
   // Stock Físico cell

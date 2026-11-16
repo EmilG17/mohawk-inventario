@@ -98,7 +98,7 @@ function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
 
   const qrBox = h('div', {
     style:
-      'display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; background: #fff; border-radius: 12px; border: 1px solid #e2e8f0; margin: 8px auto;',
+      'display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; background: #fff; border-radius: 12px; border: 1px solid var(--border); margin: 8px auto;',
   });
   qrBox.innerHTML = svg;
 
@@ -152,7 +152,7 @@ function openShowMyQrDialog(session: Session, counts: CountEntry[]): void {
   let idx = 0;
 
   const qrBox = h('div', {
-    style: 'display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; background: #fff; border-radius: 12px; border: 1px solid #e2e8f0;',
+    style: 'display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 12px; background: #fff; border-radius: 12px; border: 1px solid var(--border);',
   });
   const pageLabel = h('div', { class: 'badge info' });
 

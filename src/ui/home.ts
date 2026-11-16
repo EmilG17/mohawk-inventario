@@ -384,7 +384,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   onclick: () => navigate('/movimientos?action=in'),
                 },
                 icon('plus'),
-                '+ Entrada Kardex',
+                'Entrada Kardex',
               ),
               h(
                 'button',
@@ -395,7 +395,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   onclick: () => navigate('/movimientos?action=out'),
                 },
                 icon('swap'),
-                '− Salida Kardex',
+                'Salida Kardex',
               ),
               supervisorUI
                 ? h(

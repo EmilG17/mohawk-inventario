@@ -212,6 +212,8 @@ export function icon(name: string): SVGSVGElement {
     arrowUp: 'M12 19V5M5 12l7-7 7 7',
     pause: 'M6 4h4v16H6zM14 4h4v16h-4z',
     copy: 'M9 9h13v13H9zM5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1',
+    panel: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5zM9 3v18',
+    chevronLeft: 'M15 18l-6-6 6-6',
   };
   const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
   svg.setAttribute('viewBox', '0 0 24 24');

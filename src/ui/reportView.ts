@@ -203,7 +203,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
     id: 'session-select',
     'data-testid': 'report-session-select',
     class: 'input sm session-picker',
-    style: 'max-width: 260px; font-weight: normal;',
+    style: 'max-width: 310px; font-weight: normal;',
     onchange: (e: Event) => {
       const val = (e.target as HTMLSelectElement).value;
       selectedSessionId = val;
@@ -303,7 +303,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
         kpi(fmtNum(summary.notCounted), 'No contados'),
         kpi(fmtNum(summary.reorderCount), 'Por pedir', summary.reorderCount ? 'warn' : ''),
       ),
-      h('div', { class: 'row wrap', style: 'gap: 6px;' },
+      h('div', { class: 'row wrap rep-actions-row', style: 'gap: 6px;' },
         h('button', { class: 'btn primary sm', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
         h('button', { class: 'btn sm', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
         h('button', {

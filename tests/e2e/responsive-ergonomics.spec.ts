@@ -31,6 +31,14 @@ test.describe('Ergonomía diferenciada Móvil (<900px) vs PC (>=900px)', () => {
       await expect(page).toHaveURL(/#\/equipo/);
       await page.getByTestId('sidebar-nav-settings').click();
       await expect(page).toHaveURL(/#\/ajustes/);
+
+      // Ocultar y volver a mostrar el panel lateral en PC
+      await page.getByTestId('sidebar-collapse-btn').click();
+      await expect(page.locator('#app')).toHaveAttribute('data-sidebar-hidden', 'true');
+      await expect(page.locator('.app-sidebar')).toBeHidden();
+      await page.getByTestId('sidebar-toggle-btn').click();
+      await expect(page.locator('#app')).toHaveAttribute('data-sidebar-hidden', 'false');
+      await expect(page.locator('.app-sidebar')).toBeVisible();
     } else {
       await expect(page.locator('.app-nav')).toBeVisible();
       await expect(page.locator('.app-sidebar')).toBeHidden();

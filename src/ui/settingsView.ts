@@ -145,7 +145,7 @@ export const settingsView: View = {
     clear(root,
       h('div', { class: 'settings-header-bar' },
         h('div', null,
-          h('h2', { style: 'margin:0; font-size:1.15rem' }, 'Ajustes y Catálogo'),
+          h('h2', { style: 'margin:0; font-size:18px; font-weight:700' }, 'Ajustes y Catálogo'),
         ),
         h('button', {
           class: 'btn primary small',

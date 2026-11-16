@@ -75,6 +75,14 @@ export async function bootstrapApp(): Promise<void> {
 
   const appEl = document.getElementById('app')!;
 
+  const SIDEBAR_STORAGE_KEY = 'mhk_sidebar_hidden';
+  let sidebarHidden = false;
+  try {
+    sidebarHidden = localStorage.getItem(SIDEBAR_STORAGE_KEY) === '1';
+  } catch {
+    sidebarHidden = false;
+  }
+
   const sidebarPlatformBadge = h('span', { class: 'sidebar-platform-badge' });
   const applyPlatformAttributes = () => {
     const info = detectPlatformInfo();
@@ -160,14 +168,29 @@ export async function bootstrapApp(): Promise<void> {
     }),
   );
 
-  const sidebar = h('aside', { class: 'app-sidebar' },
+  const sidebarCollapseBtn = h('button', {
+    class: 'sidebar-collapse-btn',
+    type: 'button',
+    'data-testid': 'sidebar-collapse-btn',
+    title: 'Ocultar panel lateral (Ctrl+B)',
+    'aria-label': 'Ocultar panel lateral',
+    onclick: (e: Event) => {
+      e.stopPropagation();
+      setSidebarHidden(true);
+    },
+  }, icon('chevronLeft'));
+
+  const sidebar = h('aside', { class: 'app-sidebar', 'aria-hidden': String(sidebarHidden) },
     h('div', { class: 'sidebar-head', onclick: () => navigate('/') },
-      h('div', { class: 'sidebar-brand-row' },
-        sidebarBrandLogoEl,
-        h('div', { class: 'sidebar-title-wrap' },
-          h('span', { class: 'sidebar-brand-name' }, 'HHF'),
-          h('span', { class: 'sidebar-brand-sub' }, 'Registro de Consumibles · Taller de Reparaciones'),
+      h('div', { class: 'sidebar-head-top' },
+        h('div', { class: 'sidebar-brand-row' },
+          sidebarBrandLogoEl,
+          h('div', { class: 'sidebar-title-wrap' },
+            h('span', { class: 'sidebar-brand-name' }, 'HHF'),
+            h('span', { class: 'sidebar-brand-sub' }, 'Registro de Consumibles · Taller de Reparaciones'),
+          ),
         ),
+        sidebarCollapseBtn,
       ),
       sidebarPlatformBadge,
     ),
@@ -197,44 +220,76 @@ export async function bootstrapApp(): Promise<void> {
     { path: '/ajustes', label: 'Ajustes', iconName: 'gear', testId: 'workflow-settings' },
   ];
 
+  const sidebarToggleLabel = h('span', { class: 'sidebar-toggle-label' }, sidebarHidden ? 'Panel' : '');
+  const sidebarToggleBtn = h('button', {
+    class: 'sidebar-toggle-btn',
+    type: 'button',
+    'data-testid': 'sidebar-toggle-btn',
+    'aria-expanded': String(!sidebarHidden),
+    title: sidebarHidden ? 'Mostrar panel lateral (Ctrl+B)' : 'Ocultar panel lateral (Ctrl+B)',
+    'aria-label': sidebarHidden ? 'Mostrar panel lateral' : 'Ocultar panel lateral',
+    onclick: () => setSidebarHidden(!sidebarHidden),
+  }, icon('panel'), sidebarToggleLabel);
+
+  function setSidebarHidden(next: boolean): void {
+    sidebarHidden = next;
+    appEl.setAttribute('data-sidebar-hidden', String(next));
+    sidebar.setAttribute('aria-hidden', String(next));
+    sidebarToggleBtn.setAttribute('aria-expanded', String(!next));
+    sidebarToggleBtn.setAttribute('title', next ? 'Mostrar panel lateral (Ctrl+B)' : 'Ocultar panel lateral (Ctrl+B)');
+    sidebarToggleBtn.setAttribute('aria-label', next ? 'Mostrar panel lateral' : 'Ocultar panel lateral');
+    sidebarToggleLabel.textContent = next ? 'Panel' : '';
+    try {
+      localStorage.setItem(SIDEBAR_STORAGE_KEY, next ? '1' : '0');
+    } catch {
+      // ignore storage errors
+    }
+  }
+  appEl.setAttribute('data-sidebar-hidden', String(sidebarHidden));
+
   const workflowBar = h('nav', {
     class: 'workflow-bar',
     'aria-label': 'Flujo de trabajo del inventario',
     'data-testid': 'workflow-bar',
   },
-  h('div', { class: 'workflow-steps' },
-    WORKFLOW_PRIMARY.map((item, idx) => {
-      const btn = h('button', {
-        class: 'workflow-step',
-        type: 'button',
-        'data-path': item.path,
-        'data-testid': item.testId,
-        onclick: () => navigate(item.path),
-      },
-      h('span', { class: 'workflow-step-num' }, item.step),
-      h('span', null, item.label),
-      );
-      allNavElements.push({ path: item.path, el: btn });
-      return idx > 0
-        ? [h('span', { class: 'workflow-arrow', 'aria-hidden': 'true' }, '›'), btn]
-        : [btn];
-    }).flat(),
-  ),
-  h('div', { class: 'workflow-tools' },
-    WORKFLOW_TOOLS.map((tool) => {
-      const btn = h('button', {
-        class: 'workflow-tool-pill',
-        type: 'button',
-        'data-path': tool.path,
-        'data-testid': tool.testId,
-        onclick: () => navigate(tool.path),
-      },
-      icon(tool.iconName),
-      h('span', null, tool.label),
-      );
-      allNavElements.push({ path: tool.path, el: btn });
-      return btn;
-    }),
+  h('div', { class: 'workflow-bar-inner' },
+    h('div', { class: 'workflow-bar-left' },
+      sidebarToggleBtn,
+      h('div', { class: 'workflow-steps' },
+        WORKFLOW_PRIMARY.map((item, idx) => {
+          const btn = h('button', {
+            class: 'workflow-step',
+            type: 'button',
+            'data-path': item.path,
+            'data-testid': item.testId,
+            onclick: () => navigate(item.path),
+          },
+          h('span', { class: 'workflow-step-num' }, item.step),
+          h('span', null, item.label),
+          );
+          allNavElements.push({ path: item.path, el: btn });
+          return idx > 0
+            ? [h('span', { class: 'workflow-arrow', 'aria-hidden': 'true' }, '›'), btn]
+            : [btn];
+        }).flat(),
+      ),
+    ),
+    h('div', { class: 'workflow-tools' },
+      WORKFLOW_TOOLS.map((tool) => {
+        const btn = h('button', {
+          class: 'workflow-tool-pill',
+          type: 'button',
+          'data-path': tool.path,
+          'data-testid': tool.testId,
+          onclick: () => navigate(tool.path),
+        },
+        icon(tool.iconName),
+        h('span', null, tool.label),
+        );
+        allNavElements.push({ path: tool.path, el: btn });
+        return btn;
+      }),
+    ),
   ),
   );
 
@@ -460,6 +515,11 @@ export async function bootstrapApp(): Promise<void> {
       (e.target instanceof HTMLElement && e.target.isContentEditable) ||
       document.querySelector('dialog[open]')
     ) {
+      return;
+    }
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'b' && window.innerWidth >= 900) {
+      e.preventDefault();
+      setSidebarHidden(!sidebarHidden);
       return;
     }
     if (e.altKey && e.key >= '1' && e.key <= '7') {
