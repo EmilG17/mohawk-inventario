@@ -1,4 +1,5 @@
 import { allProducts, clearProducts, getDB } from '../db/db';
+import { L, detectDeviceLang, type LangPref } from '../i18n/i18n';
 import { buildCatalogFile, buildCatalogWorkbook } from '../io/exportResults';
 import { reconcileCatalogProducts } from '../io/mergeCounts';
 import { loadSampleCatalog } from '../sampleData';
@@ -14,6 +15,7 @@ import {
   testFirebaseConnection,
   triggerBackgroundSync,
 } from '../sync/cloudSync';
+import { notifyLanguageChanged } from './app';
 import { importCatalogFlow } from './catalog';
 import { isMobileCatalogReadOnly, isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
 import {
@@ -25,7 +27,7 @@ let settingsMounted = false;
 let settingsRenderSeq = 0;
 
 export const settingsView: View = {
-  title: 'Ajustes',
+  title: () => L('Ajustes', 'Settings'),
   async render(root, params) {
     settingsMounted = true;
     const seq = ++settingsRenderSeq;
@@ -41,7 +43,7 @@ export const settingsView: View = {
     const nameInput = h('input', {
       class: 'input input-sm',
       value: s.counterName,
-      placeholder: 'Ej. Juan Pérez',
+      placeholder: L('Ej. Juan Pérez', 'e.g. Jane Doe'),
     }) as HTMLInputElement;
     const currInput = h('input', {
       class: 'input input-sm',
@@ -49,6 +51,15 @@ export const settingsView: View = {
       maxlength: 5,
       placeholder: 'MXN',
     }) as HTMLInputElement;
+    const deviceLangName = detectDeviceLang() === 'en' ? 'English' : 'Español';
+    const langSelect = h('select', {
+      class: 'input input-sm',
+      'data-testid': 'settings-language-select',
+    },
+    h('option', { value: 'auto', selected: (s.language ?? 'auto') === 'auto' }, L(`Automático (${deviceLangName})`, `Automatic (${deviceLangName})`)),
+    h('option', { value: 'es', selected: s.language === 'es' }, 'Español'),
+    h('option', { value: 'en', selected: s.language === 'en' }, 'English'),
+    ) as HTMLSelectElement;
 
     const beepCheck = h('input', { type: 'checkbox', checked: s.beep }) as HTMLInputElement;
     const vibCheck = h('input', { type: 'checkbox', checked: s.vibrate }) as HTMLInputElement;
@@ -71,7 +82,7 @@ export const settingsView: View = {
     const syncRoomInput = h('input', {
       class: 'input input-sm',
       value: s.syncRoomCode,
-      placeholder: 'Ej. MHK-PLANTA-1',
+      placeholder: L('Ej. MHK-PLANTA-1', 'e.g. MHK-PLANT-1'),
     }) as HTMLInputElement;
     const syncEndpointInput = h('input', {
       class: 'input input-sm',
@@ -87,6 +98,9 @@ export const settingsView: View = {
       syncRoomInput.value = cleanRoom;
       syncEndpointInput.value = cleanEndpoint;
 
+      const prevLang = s.language ?? 'auto';
+      const nextLang = (langSelect.value as LangPref) || 'auto';
+
       await saveSettings({
         counterName: nameInput.value.trim(),
         onlineLookup: lookupCheck.checked,
@@ -101,6 +115,7 @@ export const settingsView: View = {
         syncRoomCode: cleanRoom,
         syncEndpointUrl: cleanEndpoint,
         supervisorMode: supervisorCheck.checked,
+        language: nextLang,
       });
 
       document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
@@ -111,7 +126,8 @@ export const settingsView: View = {
       } else {
         stopLiveCloudSync();
       }
-      if (!silent) toast('Ajustes guardados', 'ok');
+      if (prevLang !== nextLang) notifyLanguageChanged();
+      if (!silent) toast(L('Ajustes guardados', 'Settings saved'), 'ok');
     };
 
     // Auto-save toggles immediately so the user doesn't forget to hit save
@@ -121,11 +137,20 @@ export const settingsView: View = {
       });
     });
 
+    langSelect.addEventListener('change', () => {
+      void (async () => {
+        const nextLang = (langSelect.value as LangPref) || 'auto';
+        await saveSettings({ language: nextLang });
+        notifyLanguageChanged();
+        toast(L('Idioma actualizado', 'Language updated'), 'ok');
+      })();
+    });
+
     supervisorCheck.addEventListener('change', () => {
       void (async () => {
         await saveSettings({ supervisorMode: supervisorCheck.checked });
         document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
-        toast(supervisorCheck.checked ? 'Modo Supervisor activado en móvil' : 'Vista Técnico móvil activada', 'ok');
+        toast(supervisorCheck.checked ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
         rerender();
       })();
     });
@@ -145,36 +170,36 @@ export const settingsView: View = {
     clear(root,
       h('div', { class: 'settings-header-bar' },
         h('div', null,
-          h('h2', { style: 'margin:0; font-size:18px; font-weight:700' }, 'Ajustes y Catálogo'),
+          h('h2', { style: 'margin:0; font-size:18px; font-weight:700' }, L('Ajustes y Catálogo', 'Settings & Catalog')),
         ),
         h('button', {
           class: 'btn primary small',
           onclick: () => persistSettings(false),
-        }, icon('check'), 'Guardar cambios'),
+        }, icon('check'), L('Guardar cambios', 'Save changes')),
       ),
 
       h('div', { class: 'settings-compact-grid' },
         /* TARJETA 1: GESTIÓN Y CONCILIACIÓN DE CATÁLOGO */
         h('section', { class: 'card settings-card' },
           h('div', { class: 'settings-card-head' },
-            h('h3', { class: 'settings-card-title' }, 'Catálogo y Conciliación'),
-            h('span', { class: 'badge info' }, `${fmtNum(totalProds)} ítems`),
+            h('h3', { class: 'settings-card-title' }, L('Catálogo y Conciliación', 'Catalog & Reconciliation')),
+            h('span', { class: 'badge info' }, `${fmtNum(totalProds)} ${L('ítems', 'items')}`),
           ),
 
           h('div', { class: 'settings-stat-strip' },
             h('div', { class: 'settings-stat-pill' },
-              h('span', { class: 'muted small' }, 'Catalogados'),
+              h('span', { class: 'muted small' }, L('Catalogados', 'Cataloged')),
               h('b', null, fmtNum(officialCount)),
             ),
             h('div', { class: 'settings-stat-pill' },
-              h('span', { class: 'muted small' }, 'Sin catalogar'),
+              h('span', { class: 'muted small' }, L('Sin catalogar', 'Uncataloged')),
               h('b', { class: uncatalogedCount > 0 ? 'warn-text' : '' }, fmtNum(uncatalogedCount)),
             ),
             h('button', {
               class: 'btn ghost small',
               style: 'margin-left:auto',
               onclick: () => navigate('/catalogo'),
-            }, 'Ver lista →'),
+            }, L('Ver lista →', 'View list →')),
           ),
 
           h('div', { class: 'settings-action-grid' },
@@ -184,14 +209,14 @@ export const settingsView: View = {
                   class: 'btn primary small',
                   'data-testid': 'settings-import-catalog-btn',
                   onclick: () => importCatalogFlow(rerender),
-                }, icon('upload'), 'Importar Excel / CSV / JSON'),
+                }, icon('upload'), L('Importar Excel / CSV / JSON', 'Import Excel / CSV / JSON')),
 
             h('button', {
               class: readOnlyMobile ? 'btn primary small' : 'btn small',
               'data-testid': 'settings-sync-catalog-btn',
               onclick: async () => {
                 try {
-                  toast('Conciliando catálogo y lecturas…', 'info', 1800);
+                  toast(L('Conciliando catálogo y lecturas…', 'Reconciling catalog and scans…'), 'info', 1800);
                   const currentProds = await allProducts();
                   const officialProds = currentProds.filter((p) => !p.uncataloged);
                   const localRec = await reconcileCatalogProducts(officialProds);
@@ -207,16 +232,19 @@ export const settingsView: View = {
                   }
                   const afterProds = await allProducts();
                   toast(
-                    `Catálogo conciliado (${afterProds.length} productos, ${localRec.updated} actualizados${cloudSynced ? ' · sincronizado con BD' : ''})`,
+                    L(
+                      `Catálogo conciliado (${afterProds.length} productos, ${localRec.updated} actualizados${cloudSynced ? ' · sincronizado con BD' : ''})`,
+                      `Catalog reconciled (${afterProds.length} products, ${localRec.updated} updated${cloudSynced ? ' · synced with DB' : ''})`,
+                    ),
                     'ok',
                     3500,
                   );
                   rerender();
                 } catch (e) {
-                  toast('Error al conciliar: ' + (e as Error).message, 'error', 4000);
+                  toast(L('Error al conciliar: ', 'Reconciliation error: ') + (e as Error).message, 'error', 4000);
                 }
               },
-            }, icon('refresh'), readOnlyMobile ? 'Sincronizar / Conciliar con BD' : 'Conciliar catálogo ahora'),
+            }, icon('refresh'), readOnlyMobile ? L('Sincronizar / Conciliar con BD', 'Sync / Reconcile with DB') : L('Conciliar catálogo ahora', 'Reconcile catalog now')),
 
             supervisorUI
               ? h('button', {
@@ -229,10 +257,10 @@ export const settingsView: View = {
                       JSON.stringify(file, null, 2),
                       'catalogo_consumibles.json',
                       MIME.json,
-                      'Catálogo de consumibles',
+                      L('Catálogo de consumibles', 'Consumables catalog'),
                     );
                   },
-                }, icon('share'), 'Compartir (.json)')
+                }, icon('share'), L('Compartir (.json)', 'Share (.json)'))
               : null,
 
             supervisorUI
@@ -243,9 +271,9 @@ export const settingsView: View = {
                     const currentProds = await allProducts();
                     const bytes = buildCatalogWorkbook(currentProds);
                     downloadFile(bytes, 'catalogo_consumibles.xlsx', MIME.xlsx);
-                    toast('Catálogo exportado a Excel', 'ok');
+                    toast(L('Catálogo exportado a Excel', 'Catalog exported to Excel'), 'ok');
                   },
-                }, icon('download'), 'Exportar (.xlsx)')
+                }, icon('download'), L('Exportar (.xlsx)', 'Export (.xlsx)'))
               : null,
           ),
 
@@ -253,7 +281,10 @@ export const settingsView: View = {
             ? h(
                 'div',
                 { class: 'catalog-readonly-banner', 'data-testid': 'settings-catalog-readonly-note' },
-                'En móvil el catálogo es de solo lectura: puedes sincronizar y conciliar con la BD o exportar archivos; importar o vaciar el catálogo solo está disponible en PC.',
+                L(
+                  'En móvil el catálogo es de solo lectura: puedes sincronizar y conciliar con la BD o exportar archivos; importar o vaciar el catálogo solo está disponible en PC.',
+                  'On mobile the catalog is read-only: you can sync and reconcile with the DB or export files; importing or clearing the catalog is only available on desktop.',
+                ),
               )
             : null,
 
@@ -263,28 +294,31 @@ export const settingsView: View = {
               onclick: async () => {
                 const count = await loadSampleCatalog();
                 if (!readOnlyMobile) triggerBackgroundSync();
-                toast(`${count} consumibles de ejemplo cargados`, 'ok');
+                toast(L(`${count} consumibles de ejemplo cargados`, `${count} sample items loaded`), 'ok');
                 navigate('/catalogo');
               },
-            }, 'Cargar catálogo de ejemplo'),
+            }, L('Cargar catálogo de ejemplo', 'Load sample catalog')),
             !readOnlyMobile && totalProds > 0
               ? h('button', {
                 class: 'btn ghost danger small',
                 'data-testid': 'settings-clear-catalog-btn',
                 onclick: async () => {
                   if (await confirmDialog(
-                    'Vaciar catálogo',
-                    `Se eliminarán los ${totalProds} productos del catálogo local (tus conteos se conservan). ¿Continuar?`,
-                    'Vaciar',
+                    L('Vaciar catálogo', 'Clear catalog'),
+                    L(
+                      `Se eliminarán los ${totalProds} productos del catálogo local (tus conteos se conservan). ¿Continuar?`,
+                      `All ${totalProds} products will be removed from the local catalog (your counts are kept). Continue?`,
+                    ),
+                    L('Vaciar', 'Clear'),
                     true,
                   )) {
                     await clearProducts();
                     triggerBackgroundSync();
-                    toast('Catálogo vaciado', 'info');
+                    toast(L('Catálogo vaciado', 'Catalog cleared'), 'info');
                     rerender();
                   }
                 },
-              }, icon('trash'), 'Vaciar catálogo')
+              }, icon('trash'), L('Vaciar catálogo', 'Clear catalog'))
               : null,
           ),
         ),
@@ -292,55 +326,60 @@ export const settingsView: View = {
         /* TARJETA 2: PERFIL Y COMPORTAMIENTO DE ESCANEO */
         h('section', { class: 'card settings-card' },
           h('div', { class: 'settings-card-head' },
-            h('h3', { class: 'settings-card-title' }, 'Perfil y Escaneo'),
+            h('h3', { class: 'settings-card-title' }, L('Perfil y Escaneo', 'Profile & Scanning')),
           ),
 
           h('div', { class: 'settings-row-2col' },
             h('label', { class: 'field compact-field' },
-              h('span', null, 'Nombre del técnico / contador'),
+              h('span', null, L('Nombre del técnico / contador', 'Technician / Counter name')),
               nameInput,
             ),
             supervisorUI
               ? h('label', { class: 'field compact-field' },
-                  h('span', null, 'Moneda (Reporte)'),
+                  h('span', null, L('Moneda (Reporte)', 'Currency (Report)')),
                   currInput,
                 )
               : null,
           ),
 
+          h('label', { class: 'field compact-field' },
+            h('span', null, L('Idioma de la aplicación', 'Application language')),
+            langSelect,
+          ),
+
           h('div', { class: 'settings-switch-grid' },
             mobileViewport
-              ? compactToggle('Modo Supervisor en móvil', 'Muestra controles de auditoría y reportes en este teléfono', supervisorCheck)
+              ? compactToggle(L('Modo Supervisor en móvil', 'Mobile Supervisor Mode'), L('Muestra controles de auditoría y reportes en este teléfono', 'Show audit and report controls on this phone'), supervisorCheck)
               : null,
-            compactToggle('Pitido', 'Sonido al escanear', beepCheck),
-            compactToggle('Vibración', 'Respuesta háptica', vibCheck),
-            compactToggle('Modo rápido (+1)', 'Suma 1 sin preguntar', quickCheck),
-            supervisorUI ? compactToggle('Mostrar teórico / ideal', 'Ver inventario ideal al contar', showExpCheck) : null,
-            supervisorUI ? compactToggle('Buscar en internet', 'Autocompletar descripciones', lookupCheck) : null,
+            compactToggle(L('Pitido', 'Beep'), L('Sonido al escanear', 'Sound on scan'), beepCheck),
+            compactToggle(L('Vibración', 'Vibration'), L('Respuesta háptica', 'Haptic feedback'), vibCheck),
+            compactToggle(L('Modo rápido (+1)', 'Quick mode (+1)'), L('Suma 1 sin preguntar', 'Add 1 without prompting'), quickCheck),
+            supervisorUI ? compactToggle(L('Mostrar teórico / ideal', 'Show ideal stock'), L('Ver inventario ideal al contar', 'Show ideal inventory while counting'), showExpCheck) : null,
+            supervisorUI ? compactToggle(L('Buscar en internet', 'Online lookup'), L('Autocompletar descripciones', 'Autocomplete descriptions'), lookupCheck) : null,
           ),
         ),
 
         /* TARJETA 3: SINCRONIZACIÓN EN LÍNEA (FIREBASE / EQUIPO) */
         h('section', { class: 'card settings-card settings-card-wide' },
           h('div', { class: 'settings-card-head' },
-            h('h3', { class: 'settings-card-title' }, 'Sincronización en Línea (Firebase Realtime DB)'),
+            h('h3', { class: 'settings-card-title' }, L('Sincronización en Línea (Firebase Realtime DB)', 'Live Cloud Sync (Firebase Realtime DB)')),
             h('span', {
               class: `sup-live-pill ${cloudState.state === 'connected' ? 'live' : cloudState.state === 'error' ? 'error' : 'local'}`,
-            }, cloudState.state === 'connected' ? '● En vivo' : cloudState.state === 'error' ? '● Error' : '● Local'),
+            }, cloudState.state === 'connected' ? L('● En vivo', '● Live') : cloudState.state === 'error' ? L('● Error', '● Error') : L('● Local', '● Local')),
           ),
 
           h('div', { class: 'settings-switch-grid settings-switch-grid-2' },
-            compactToggle('Activar sincronización en línea', 'Habilita sala compartida en vivo', syncEnabledCheck),
-            compactToggle('Auto-sincronizar al escanear', 'Envía cada lectura automáticamente', syncAutoCheck),
+            compactToggle(L('Activar sincronización en línea', 'Enable live sync'), L('Habilita sala compartida en vivo', 'Enable live shared room'), syncEnabledCheck),
+            compactToggle(L('Auto-sincronizar al escanear', 'Auto-sync on scan'), L('Envía cada lectura automáticamente', 'Send each scan automatically'), syncAutoCheck),
           ),
 
           h('div', { class: 'settings-row-2col', style: 'margin-top:8px' },
             h('label', { class: 'field compact-field' },
-              h('span', null, 'Código de Sala compartida'),
+              h('span', null, L('Código de Sala compartida', 'Shared room code')),
               syncRoomInput,
             ),
             h('label', { class: 'field compact-field' },
-              h('span', null, 'URL de Firebase Realtime DB'),
+              h('span', null, L('URL de Firebase Realtime DB', 'Firebase Realtime DB URL')),
               syncEndpointInput,
             ),
           ),
@@ -349,23 +388,23 @@ export const settingsView: View = {
             h('button', {
               class: 'btn primary small',
               onclick: () => persistSettings(false),
-            }, icon('check'), 'Guardar y conectar'),
+            }, icon('check'), L('Guardar y conectar', 'Save & connect')),
             h('button', {
               class: 'btn small',
               onclick: async () => {
                 diagBox.style.display = 'block';
                 diagBox.className = 'sup-diag-box info';
-                diagBox.textContent = 'Probando conexión con Firebase…';
+                diagBox.textContent = L('Probando conexión con Firebase…', 'Testing Firebase connection…');
                 const res = await testFirebaseConnection(syncEndpointInput.value, syncRoomInput.value);
                 diagBox.className = `sup-diag-box ${res.ok ? 'ok' : 'error'}`;
                 diagBox.textContent = res.message;
                 syncEndpointInput.value = normalizeEndpointBaseUrl(syncEndpointInput.value);
               },
-            }, icon('refresh'), 'Probar conexión'),
+            }, icon('refresh'), L('Probar conexión', 'Test connection')),
             h('button', {
               class: 'btn ghost small',
               onclick: () => navigate('/equipo'),
-            }, 'Ir al Monitor de Supervisor →'),
+            }, L('Ir al Monitor de Supervisor →', 'Go to Supervisor Monitor →')),
           ),
           diagBox,
         ),
@@ -375,27 +414,27 @@ export const settingsView: View = {
       supervisorUI
         ? h('details', { class: 'card settings-advanced' },
             h('summary', { class: 'settings-advanced-summary' },
-              h('span', null, 'Opciones avanzadas y restablecimiento de fábrica'),
-              h('span', { class: 'muted small' }, 'Proxy UPC · Borrar datos locales'),
+              h('span', null, L('Opciones avanzadas y restablecimiento de fábrica', 'Advanced options & factory reset')),
+              h('span', { class: 'muted small' }, L('Proxy UPC · Borrar datos locales', 'UPC Proxy · Clear local data')),
             ),
             h('div', { class: 'settings-advanced-body' },
               h('label', { class: 'field compact-field', style: 'max-width:420px' },
-                h('span', null, 'Ruta del proxy UPCitemdb'),
+                h('span', null, L('Ruta del proxy UPCitemdb', 'UPCitemdb proxy path')),
                 proxyInput,
-                h('span', { class: 'muted small' }, 'Por defecto "api/upc". Deja en blanco para consultar solo Open Facts directo.'),
+                h('span', { class: 'muted small' }, L('Por defecto "api/upc". Deja en blanco para consultar solo Open Facts directo.', 'Default "api/upc". Leave blank to query Open Facts directly.')),
               ),
               h('div', { class: 'settings-danger-bar' },
                 h('div', null,
-                  h('b', { style: 'color:var(--danger)' }, 'Reiniciar aplicación en este dispositivo'),
-                  h('div', { class: 'muted small' }, 'Elimina el catálogo, las sesiones y todos los conteos guardados en este navegador.'),
+                  h('b', { style: 'color:var(--danger)' }, L('Reiniciar aplicación en este dispositivo', 'Reset app on this device')),
+                  h('div', { class: 'muted small' }, L('Elimina el catálogo, las sesiones y todos los conteos guardados en este navegador.', 'Deletes catalog, sessions, and all counts stored in this browser.')),
                 ),
                 h('button', {
                   class: 'btn danger ghost small',
                   onclick: async () => {
                     if (await confirmDialog(
-                      'Reiniciar todo',
-                      'Se borrarán el catálogo, todas las sesiones y todos los conteos guardados en este dispositivo. ¿Estás seguro?',
-                      'Borrar todo',
+                      L('Reiniciar todo', 'Reset everything'),
+                      L('Se borrarán el catálogo, todas las sesiones y todos los conteos guardados en este dispositivo. ¿Estás seguro?', 'Catalog, all sessions, and all counts stored on this device will be erased. Are you sure?'),
+                      L('Borrar todo', 'Erase all'),
                       true,
                     )) {
                       const db = await getDB();
@@ -403,11 +442,11 @@ export const settingsView: View = {
                       await db.clear('counts');
                       await db.clear('sessions');
                       await db.clear('meta');
-                      toast('Datos borrados');
+                      toast(L('Datos borrados', 'Data cleared'));
                       location.reload();
                     }
                   },
-                }, icon('trash'), 'Borrar todos los datos'),
+                }, icon('trash'), L('Borrar todos los datos', 'Erase all data')),
               ),
             ),
           )

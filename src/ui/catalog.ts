@@ -1,3 +1,4 @@
+import { L } from '../i18n/i18n';
 import {
   allProducts, bulkModifyProducts, bulkPutProducts, clearProducts, deleteProducts,
   type MassProductPatch, type Product,
@@ -33,18 +34,21 @@ let lastCatalogDataFp = '';
 
 export async function syncCatalogWithDbFlow(onCompleted?: () => void): Promise<void> {
   try {
-    toast('Sincronizando catálogo con la BD…', 'info', 2000);
+    toast(L('Sincronizando catálogo con la BD…', 'Syncing catalog with DB…'), 'info', 2000);
     const res = await syncCatalogWithDb();
     toast(
-      `Catálogo sincronizado (${res.totalLocalProducts} productos · ${res.transport === 'remote' ? 'Firebase' : 'Sala local'})`,
+      L(
+        `Catálogo sincronizado (${res.totalLocalProducts} productos · ${res.transport === 'remote' ? 'Firebase' : 'Sala local'})`,
+        `Catalog synced (${res.totalLocalProducts} products · ${res.transport === 'remote' ? 'Firebase' : 'Local room'})`,
+      ),
       'ok',
       3500,
     );
     if (onCompleted) onCompleted();
   } catch (err) {
-    const msg = (err as Error).message || 'No se pudo sincronizar con la BD';
+    const msg = (err as Error).message || L('No se pudo sincronizar con la BD', 'Could not sync with DB');
     if (/Código de Sala/i.test(msg)) {
-      toast('Configura primero un Código de Sala en Ajustes para sincronizar con la BD.', 'warn', 4000);
+      toast(L('Configura primero un Código de Sala en Ajustes para sincronizar con la BD.', 'Configure a Room Code in Settings first to sync with DB.'), 'warn', 4000);
     } else {
       toast(msg, 'error', 4000);
     }
@@ -53,7 +57,7 @@ export async function syncCatalogWithDbFlow(onCompleted?: () => void): Promise<v
 
 export async function importCatalogFlow(onCompleted?: () => void): Promise<void> {
   if (isMobileCatalogReadOnly()) {
-    toast('La importación o edición del catálogo está restringida a PC. Usa "Sincronizar con BD" en móvil.', 'warn', 4000);
+    toast(L('La importación o edición del catálogo está restringida a PC. Usa "Sincronizar con BD" en móvil.', 'Catalog import or editing is restricted to desktop. Use "Sync with DB" on mobile.'), 'warn', 4000);
     return;
   }
   const [file] = await pickFiles('.xlsx,.xls,.csv,.txt,.json,application/json');
@@ -63,11 +67,17 @@ export async function importCatalogFlow(onCompleted?: () => void): Promise<void>
     if (/\.json$/i.test(file.name)) {
       const f = parseAppFile(new TextDecoder().decode(buf));
       if (f.kind !== 'catalogo') {
-        toast('Ese es un archivo de conteo; impórtalo en la pestaña Supervisor.', 'warn', 4000);
+        toast(L('Ese es un archivo de conteo; impórtalo en la pestaña Supervisor.', 'That is a count file; import it in the Supervisor tab.'), 'warn', 4000);
         return;
       }
-      const replace = await confirmDialog('Importar catálogo',
-        `El archivo trae ${f.products.length} productos. ¿Reemplazar el catálogo actual? (Cancelar = combinar y conciliar)`, 'Reemplazar');
+      const replace = await confirmDialog(
+        L('Importar catálogo', 'Import catalog'),
+        L(
+          `El archivo trae ${f.products.length} productos. ¿Reemplazar el catálogo actual? (Cancelar = combinar y conciliar)`,
+          `File contains ${f.products.length} products. Replace current catalog? (Cancel = merge and reconcile)`,
+        ),
+        L('Reemplazar', 'Replace'),
+      );
       const now = Date.now();
       const stampedProducts = f.products.map((p) => ({ ...p, updatedAt: now }));
       let n = 0;
@@ -81,7 +91,7 @@ export async function importCatalogFlow(onCompleted?: () => void): Promise<void>
         n = rec.added + rec.updated;
       }
       triggerBackgroundSync();
-      toast(`${n || stampedProducts.length} productos importados y conciliados`, 'ok');
+      toast(L(`${n || stampedProducts.length} productos importados y conciliados`, `${n || stampedProducts.length} products imported and reconciled`), 'ok');
       if (onCompleted) onCompleted();
       else navigate('/catalogo');
       return;
@@ -90,7 +100,7 @@ export async function importCatalogFlow(onCompleted?: () => void): Promise<void>
     mappingDialog(wb, file.name, onCompleted);
   } catch (e) {
     console.error(e);
-    toast('No se pudo leer el archivo: ' + (e as Error).message, 'error', 5000);
+    toast(L('No se pudo leer el archivo: ', 'Could not read file: ') + (e as Error).message, 'error', 5000);
   }
 }
 
@@ -616,7 +626,7 @@ export function openMassActionsDialog(
 }
 
 export const catalogView: View = {
-  title: 'Catálogo',
+  title: () => L('Catálogo', 'Catalog'),
   async render(root, params = new URLSearchParams()) {
     catalogMounted = true;
     const seq = ++catalogRenderSeq;
@@ -635,7 +645,7 @@ export const catalogView: View = {
     };
     const massBar = h('div', { class: 'mass-bar', hidden: true });
     const selectAllCheck = h('input', { type: 'checkbox', class: 'item-check' }) as HTMLInputElement;
-    const selectAllLabel = h('span', null, 'Seleccionar visibles');
+    const selectAllLabel = h('span', null, L('Seleccionar visibles', 'Select visible'));
     const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
     const visibleProducts = () => {
@@ -666,14 +676,14 @@ export const catalogView: View = {
 
       const selCount = selected.size;
       countEl.textContent = selCount > 0
-        ? `${items.length} de ${products.length} · ${selCount} seleccionado(s)`
-        : `${items.length} de ${products.length}`;
+        ? `${items.length} ${L('de', 'of')} ${products.length} · ${selCount} ${L('seleccionado(s)', 'selected')}`
+        : `${items.length} ${L('de', 'of')} ${products.length}`;
 
       const allSelected = items.length > 0 && items.every((p) => selected.has(p.barcode));
       selectAllCheck.checked = allSelected;
       selectAllCheck.indeterminate = !allSelected && items.some((p) => selected.has(p.barcode));
       selectAllCheck.disabled = items.length === 0;
-      selectAllLabel.textContent = `Seleccionar visibles (${items.length})`;
+      selectAllLabel.textContent = `${L('Seleccionar visibles', 'Select visible')} (${items.length})`;
 
       selectAllCheck.onchange = () => {
         if (selectAllCheck.checked) {
@@ -688,7 +698,7 @@ export const catalogView: View = {
         massBar.hidden = false;
         massBar.setAttribute('data-testid', 'catalog-mass-bar');
         clear(massBar,
-          h('div', { class: 'mass-info' }, icon('check'), `${selCount} seleccionado(s)`),
+          h('div', { class: 'mass-info' }, icon('check'), `${selCount} ${L('seleccionado(s)', 'selected')}`),
           h('div', { class: 'row wrap' },
             h('button', {
               class: 'btn sm',
@@ -697,41 +707,41 @@ export const catalogView: View = {
                 const sel = products.filter((p) => selected.has(p.barcode));
                 openBarcodeSheetDialog(sel);
               },
-            }, icon('scan'), 'Etiquetas'),
+            }, icon('scan'), L('Etiquetas', 'Labels')),
             h('button', {
               class: 'btn sm ghost',
               'data-testid': 'catalog-mass-queue-btn',
-              title: 'Añadir productos seleccionados a la cola de impresión de etiquetas',
+              title: L('Añadir productos seleccionados a la cola de impresión de etiquetas', 'Add selected products to label print queue'),
               onclick: () => {
                 const sel = products.filter((p) => selected.has(p.barcode));
                 for (const p of sel) addToPrintQueue(p, 1);
                 const total = getPrintQueueTotalCount();
                 updateQueueBadge();
-                toast(`${sel.length} producto(s) añadidos a la cola (${total} etiquetas totales)`, 'ok');
+                toast(L(`${sel.length} producto(s) añadidos a la cola (${total} etiquetas totales)`, `${sel.length} product(s) added to queue (${total} total labels)`), 'ok');
               },
-            }, icon('plus'), 'Añadir a cola'),
+            }, icon('plus'), L('Añadir a cola', 'Add to queue')),
             readOnlyMobile
               ? null
               : h('button', {
                   class: 'btn primary sm',
                   'data-testid': 'catalog-mass-edit-btn',
                   onclick: () => openMassModifyDialog(Array.from(selected), refreshData),
-                }, icon('edit'), 'Modificar'),
+                }, icon('edit'), L('Modificar', 'Edit')),
             readOnlyMobile
               ? null
               : h('button', {
                   class: 'btn danger sm',
                   'data-testid': 'catalog-mass-delete-btn',
                   onclick: async () => {
-                    if (await confirmDialog('Eliminar seleccionados', `¿Eliminar los ${selCount} productos seleccionados del catálogo?`, 'Eliminar', true)) {
+                    if (await confirmDialog(L('Eliminar seleccionados', 'Delete selected'), L(`¿Eliminar los ${selCount} productos seleccionados del catálogo?`, `Delete ${selCount} selected products from catalog?`), L('Eliminar', 'Delete'), true)) {
                       const n = await deleteProducts(Array.from(selected));
                       triggerBackgroundSync();
-                      toast(`${n} productos eliminados`, 'ok');
+                      toast(L(`${n} productos eliminados`, `${n} products deleted`), 'ok');
                       selected.clear();
                       await refreshData();
                     }
                   },
-                }, icon('trash'), 'Eliminar'),
+                }, icon('trash'), L('Eliminar', 'Delete')),
             h('button', { class: 'btn ghost sm', onclick: () => { selected.clear(); draw(); } }, '✕'),
           ),
         );
@@ -740,7 +750,7 @@ export const catalogView: View = {
       }
 
       clear(list,
-        items.length === 0 ? h('li', { class: 'empty' }, products.length ? 'Sin coincidencias' : 'Catálogo vacío') : null,
+        items.length === 0 ? h('li', { class: 'empty' }, products.length ? L('Sin coincidencias', 'No matches') : L('Catálogo vacío', 'Catalog is empty')) : null,
         items.slice(0, 250).map((p) => {
           const isSel = selected.has(p.barcode);
           const chk = h('input', {
@@ -779,26 +789,26 @@ export const catalogView: View = {
           },
           chk,
           h('div', { class: 'grow' },
-            h('div', { class: 'rec-desc' }, p.description || h('i', { class: 'muted' }, 'Sin descripción')),
+            h('div', { class: 'rec-desc' }, p.description || h('i', { class: 'muted' }, L('Sin descripción', 'No description'))),
             h('div', { class: 'rec-meta' },
               p.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(p.barcode)),
               p.sku ? ` · ${p.sku}` : '', p.unit ? ` · ${p.unit}` : '', p.brand ? ` · ${p.brand}` : ''),
             h('div', { class: 'pc-badges' },
               sourceBadge(p),
-              p.uncataloged ? h('span', { class: 'badge warn' }, 'No catalogado') : null,
+              p.uncataloged ? h('span', { class: 'badge warn' }, L('No catalogado', 'Uncataloged')) : null,
               idealVal !== undefined
                 ? h(
                     'span',
-                    { class: 'badge info', 'data-testid': 'catalog-ideal-badge', title: 'Inventario Ideal' },
+                    { class: 'badge info', 'data-testid': 'catalog-ideal-badge', title: L('Inventario Ideal', 'Ideal Stock') },
                     `Ideal: ${fmtNum(idealVal)}`,
                   )
                 : null,
             ),
           ),
-          idealVal !== undefined ? h('div', { class: 'rec-qty small', title: 'Inventario Ideal' }, fmtNum(idealVal)) : null,
+          idealVal !== undefined ? h('div', { class: 'rec-qty small', title: L('Inventario Ideal', 'Ideal Stock') }, fmtNum(idealVal)) : null,
           );
         }),
-        items.length > 250 ? h('li', { class: 'empty' }, `Mostrando 250 de ${items.length}. Usa la búsqueda para filtrar.`) : null,
+        items.length > 250 ? h('li', { class: 'empty' }, L(`Mostrando 250 de ${items.length}. Usa la búsqueda para filtrar.`, `Showing 250 of ${items.length}. Use search to filter.`)) : null,
       );
     };
 
@@ -813,17 +823,17 @@ export const catalogView: View = {
         onclick: () => {
           openMassActionsDialog(visibleProducts(), Array.from(selected), products, refreshData);
         },
-      }, icon('edit'), 'Acciones masivas'),
+      }, icon('edit'), L('Acciones masivas', 'Bulk actions')),
     );
 
     clear(root,
       h('section', { class: 'card' },
-        h('div', { class: 'card-head' }, h('h2', null, 'Catálogo'), countEl),
+        h('div', { class: 'card-head' }, h('h2', null, L('Catálogo', 'Catalog')), countEl),
         readOnlyMobile
           ? h(
               'div',
               { class: 'catalog-readonly-banner', 'data-testid': 'catalog-mobile-readonly-badge' },
-              'Solo lectura en móvil: sincroniza con BD o imprime etiquetas. Edición disponible en PC.',
+              L('Solo lectura en móvil: sincroniza con BD o imprime etiquetas. Edición disponible en PC.', 'Read-only on mobile: sync with DB or print labels. Editing available on desktop.'),
             )
           : null,
         h('div', { class: 'toolbar-compact-row' },
@@ -839,7 +849,7 @@ export const catalogView: View = {
                       await refreshData();
                     }
                   },
-                }, icon('scan'), 'Nuevo producto'),
+                }, icon('scan'), L('Nuevo producto', 'New product')),
             readOnlyMobile
               ? null
               : h('button', {
@@ -847,23 +857,23 @@ export const catalogView: View = {
                   type: 'button',
                   'data-testid': 'catalog-import-btn',
                   onclick: () => void importCatalogFlow(() => { void refreshData(); }),
-                }, icon('upload'), 'Importar Excel / CSV'),
+                }, icon('upload'), L('Importar Excel / CSV', 'Import Excel / CSV')),
             h('button', {
               class: readOnlyMobile ? 'btn primary sm' : 'btn sm',
               type: 'button',
               'data-testid': 'catalog-sync-db-btn',
               onclick: () => void syncCatalogWithDbFlow(() => { void refreshData(); }),
-            }, icon('refresh'), 'Sincronizar con BD'),
+            }, icon('refresh'), L('Sincronizar con BD', 'Sync with DB')),
             h('button', {
               class: 'btn sm',
               'data-testid': 'catalog-queue-btn',
-              title: 'Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja',
+              title: L('Ver y gestionar la cola de impresión para imprimir distintos productos en la misma hoja', 'View and manage the print queue to print multiple products on one sheet'),
               onclick: () => openBarcodeSheetDialog(),
-            }, icon('scan'), 'Cola de rótulos', queueBadgeEl),
+            }, icon('scan'), L('Cola de rótulos', 'Label queue'), queueBadgeEl),
           ),
         ),
         h('details', { class: 'ui-disclosure' },
-          h('summary', { class: 'ui-disclosure-summary' }, 'Más herramientas (rótulos y ajustes)'),
+          h('summary', { class: 'ui-disclosure-summary' }, L('Más herramientas (rótulos y ajustes)', 'More tools (labels & settings)')),
           h('div', { class: 'ui-disclosure-body' },
             h('div', { class: 'row wrap', style: 'gap: 6px;' },
               h('button', {
@@ -874,23 +884,23 @@ export const catalogView: View = {
                   const visible = visibleProducts();
                   openBarcodeSheetDialog(visible.length ? visible : products);
                 },
-              }, icon('scan'), 'Rótulos y hojas'),
+              }, icon('scan'), L('Rótulos y hojas', 'Labels & sheets')),
               !readOnlyMobile && noDesc > 0
                 ? h('button', {
                     class: 'btn sm',
                     onclick: async () => {
-                      toast('Buscando descripciones…');
+                      toast(L('Buscando descripciones…', 'Looking up descriptions…'));
                       const n = await processPending();
-                      toast(`${n} descripción(es) encontradas`, n ? 'ok' : 'warn');
+                      toast(L(`${n} descripción(es) encontradas`, `${n} description(s) found`), n ? 'ok' : 'warn');
                       await refreshData();
                     },
-                  }, icon('globe'), `Buscar en internet (${noDesc})`)
+                  }, icon('globe'), `${L('Buscar en internet', 'Look up online')} (${noDesc})`)
                 : null,
               h('button', {
                 class: 'btn ghost sm',
                 'data-testid': 'catalog-settings-link',
                 onclick: () => navigate('/ajustes'),
-              }, icon('gear'), readOnlyMobile ? 'Ajustes / Sala en la nube' : 'Ajustes de catálogo'),
+              }, icon('gear'), readOnlyMobile ? L('Ajustes / Sala en la nube', 'Settings / Cloud room') : L('Ajustes de catálogo', 'Catalog settings')),
             ),
           ),
         ),
@@ -898,17 +908,17 @@ export const catalogView: View = {
       h('section', { class: 'card list-card' },
         h('div', { class: 'filter-bar-row' },
           h('input', {
-            class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: 'Buscar por descripción, código o No. de parte', value: query,
+            class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: L('Buscar por descripción, código o No. de parte', 'Search by description, barcode, or Part #'), value: query,
             oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; draw(); },
           }),
-          h('div', { class: 'chips' }, chip('todos', 'Todos'), chip('sin_desc', `Sin descripción (${noDesc})`), chip('no_cat', 'No catalogados')),
+          h('div', { class: 'chips' }, chip('todos', L('Todos', 'All')), chip('sin_desc', `${L('Sin descripción', 'No description')} (${noDesc})`), chip('no_cat', L('No catalogados', 'Uncataloged'))),
         ),
         selectToolbar,
         massBar,
         h('div', { class: 'plist-table-head', 'aria-hidden': 'true' },
           h('span', null),
-          h('span', null, 'Producto / Código / SKU'),
-          h('span', null, 'Inventario Ideal'),
+          h('span', null, L('Producto / Código / SKU', 'Product / Code / SKU')),
+          h('span', null, L('Inventario Ideal', 'Ideal Stock')),
         ),
         list,
       ),

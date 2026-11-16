@@ -1,3 +1,4 @@
+import { L } from '../i18n/i18n';
 import {
   allProducts,
   allSessions,
@@ -81,14 +82,14 @@ let teamRenderSeq = 0;
 let teamRoomTimer: ReturnType<typeof setTimeout> | null = null;
 
 function fmtRelativeAgo(ts: number | null | undefined): string {
-  if (!ts) return 'Sin actividad';
+  if (!ts) return L('Sin actividad', 'No activity');
   const diffSec = Math.max(0, Math.floor((Date.now() - ts) / 1000));
-  if (diffSec < 5) return 'Justo ahora';
-  if (diffSec < 60) return `Hace ${diffSec} s`;
+  if (diffSec < 5) return L('Justo ahora', 'Just now');
+  if (diffSec < 60) return L(`Hace ${diffSec} s`, `${diffSec}s ago`);
   const mins = Math.floor(diffSec / 60);
-  if (mins < 60) return `Hace ${mins} min`;
+  if (mins < 60) return L(`Hace ${mins} min`, `${mins}m ago`);
   const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `Hace ${hrs} h`;
+  if (hrs < 24) return L(`Hace ${hrs} h`, `${hrs}h ago`);
   return fmtDateTime(ts);
 }
 
@@ -117,14 +118,14 @@ function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
       onclick: async () => {
         try {
           await navigator.clipboard.writeText(inviteUrl);
-          toast('Enlace de invitación copiado al portapapeles', 'ok');
+          toast(L('Enlace de invitación copiado al portapapeles', 'Invite link copied to clipboard'), 'ok');
         } catch {
           urlInput.select();
-          toast('Selecciona y copia el enlace', 'info');
+          toast(L('Selecciona y copia el enlace', 'Select and copy the link'), 'info');
         }
       },
     },
-    icon('copy'), 'Copiar enlace para WhatsApp',
+    icon('copy'), L('Copiar enlace para WhatsApp', 'Copy link for WhatsApp'),
   );
 
   const body = h(
@@ -133,18 +134,21 @@ function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
     h(
       'div',
       { class: 'badge ok', style: 'align-self: center;' },
-      `Sala en Vivo: ${roomCode}`,
+      `${L('Sala en Vivo:', 'Live Room:')} ${roomCode}`,
     ),
     h(
       'p',
       { class: 'muted small', style: 'margin: 0;' },
-      'Pide a los técnicos que escaneen este código QR con la cámara de su teléfono o envíales el enlace directo. Su aplicación configurará Firebase y el Código de Sala automáticamente.',
+      L(
+        'Pide a los técnicos que escaneen este código QR con la cámara de su teléfono o envíales el enlace directo. Su aplicación configurará Firebase y el Código de Sala automáticamente.',
+        'Ask technicians to scan this QR code with their phone camera or send them the direct link. Their app will configure Firebase and the Room Code automatically.',
+      ),
     ),
     qrBox,
     h('div', { class: 'row', style: 'gap: 6px;' }, urlInput, copyBtn),
   );
 
-  openDialog(`Invitar Técnicos · Sala ${roomCode}`, body, [{ label: 'Cerrar' }]);
+  openDialog(`${L('Invitar Técnicos · Sala', 'Invite Technicians · Room')} ${roomCode}`, body, [{ label: L('Cerrar', 'Close') }]);
 }
 
 function openShowMyQrDialog(session: Session, counts: CountEntry[]): void {
@@ -259,7 +263,7 @@ function openReceiveQrDialog(activeSession: Session, onMerged: () => void): void
 }
 
 export const teamView: View = {
-  title: 'Monitor de Supervisor en Vivo',
+  title: () => L('Monitor de Supervisor en Vivo', 'Live Supervisor Monitor'),
   async render(root) {
     teamMounted = true;
     const mountSeq = ++teamRenderSeq;
@@ -382,19 +386,19 @@ export const teamView: View = {
       const roomCode = status.roomCode || s.syncRoomCode || 'SIN-SALA';
 
       let pillClass = 'sup-live-pill off';
-      let pillLabel = '● Sin sala activa';
+      let pillLabel = L('● Sin sala activa', '● No active room');
       if (status.state === 'connected' && hasFirebase) {
         pillClass = 'sup-live-pill live';
-        pillLabel = `● EN VIVO · Firebase (${status.lastLatencyMs ?? 80} ms)`;
+        pillLabel = `● ${L('EN VIVO', 'LIVE')} · Firebase (${status.lastLatencyMs ?? 80} ms)`;
       } else if (status.state === 'connecting') {
         pillClass = 'sup-live-pill connecting';
-        pillLabel = '◌ Conectando con Firebase...';
+        pillLabel = L('◌ Conectando con Firebase...', '◌ Connecting to Firebase...');
       } else if (status.state === 'error') {
         pillClass = 'sup-live-pill error';
-        pillLabel = '● Error de conexión Firebase';
+        pillLabel = L('● Error de conexión Firebase', '● Firebase connection error');
       } else if (s.syncRoomCode) {
         pillClass = 'sup-live-pill local';
-        pillLabel = '● Sala Local (Mismo dispositivo / sin URL Firebase)';
+        pillLabel = L('● Sala Local (Mismo dispositivo / sin URL Firebase)', '● Local Room (Same device / no Firebase URL)');
       }
 
       clear(
@@ -410,20 +414,20 @@ export const teamView: View = {
               { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
               h('span', { class: pillClass }, pillLabel),
               s.syncRoomCode
-                ? h('span', { class: 'badge info', style: 'font-weight: 800;' }, `SALA: ${roomCode}`)
+                ? h('span', { class: 'badge info', style: 'font-weight: 800;' }, `${L('SALA:', 'ROOM:')} ${roomCode}`)
                 : null,
               status.lastSyncedAt
                 ? h(
                     'span',
                     { class: 'muted small', id: 'sup-last-sync-ago', 'data-ts': String(status.lastSyncedAt) },
-                    `Actualizado: ${fmtRelativeAgo(status.lastSyncedAt)}`,
+                    `${L('Actualizado:', 'Updated:')} ${fmtRelativeAgo(status.lastSyncedAt)}`,
                   )
                 : null,
             ),
             h(
               'h2',
               { style: 'margin: 4px 0 0 0; font-size: 18px;' },
-              'Centro de Monitoreo del Supervisor',
+              L('Centro de Monitoreo del Supervisor', 'Supervisor Monitoring Center'),
             ),
           ),
           h(
@@ -442,10 +446,10 @@ export const teamView: View = {
                       s = await loadSettings();
                       document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
                       renderStatusHeader(getCloudConnectionStatus());
-                      toast(next ? 'Modo Supervisor activado en móvil' : 'Vista Técnico móvil activada', 'ok');
+                      toast(next ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
                     },
                   },
-                  s.supervisorMode ? 'Modo Supervisor: ON' : 'Vista Técnico (Supervisor OFF)',
+                  s.supervisorMode ? L('Modo Supervisor: ON', 'Supervisor Mode: ON') : L('Vista Técnico (Supervisor OFF)', 'Technician View (Supervisor OFF)'),
                 )
               : null,
             s.syncRoomCode
@@ -457,7 +461,7 @@ export const teamView: View = {
                     onclick: () => openRoomInviteQrDialog(s.syncRoomCode, s.syncEndpointUrl),
                   },
                   icon('scan'),
-                  'Invitar Técnicos (QR / Link)',
+                  L('Invitar Técnicos (QR / Link)', 'Invite Technicians (QR / Link)'),
                 )
               : null,
             h(
@@ -468,7 +472,7 @@ export const teamView: View = {
                 onclick: connectAndSync,
               },
               icon('globe'),
-              'Sincronizar ahora',
+              L('Sincronizar ahora', 'Sync now'),
             ),
             h(
               'button',
@@ -482,7 +486,7 @@ export const teamView: View = {
                 },
               },
               icon('gear'),
-              configExpanded ? 'Ocultar configuración' : 'Configurar Firebase',
+              configExpanded ? L('Ocultar configuración', 'Hide settings') : L('Configurar Firebase', 'Configure Firebase'),
             ),
           ),
         ),
@@ -539,7 +543,7 @@ export const teamView: View = {
           h(
             'div',
             { class: 'card-head wrap', style: 'gap: 8px;' },
-            h('h3', { style: 'margin: 0;' }, 'Configuración de Sala y Enlace Firebase'),
+            h('h3', { style: 'margin: 0;' }, L('Configuración de Sala y Enlace Firebase', 'Room & Firebase Link Configuration')),
           ),
           h(
             'div',
@@ -547,7 +551,7 @@ export const teamView: View = {
             h(
               'label',
               { class: 'field' },
-              h('span', null, '1. Código de Sala compartida'),
+              h('span', null, L('1. Código de Sala compartida', '1. Shared Room Code')),
               h(
                 'div',
                 { class: 'row', style: 'gap: 6px;' },
@@ -561,14 +565,14 @@ export const teamView: View = {
                       roomInput.value = generateRoomCode('MHK');
                     },
                   },
-                  'Generar',
+                  L('Generar', 'Generate'),
                 ),
               ),
             ),
             h(
               'label',
               { class: 'field' },
-              h('span', null, '2. Enlace de Firebase Realtime Database'),
+              h('span', null, L('2. Enlace de Firebase Realtime Database', '2. Firebase Realtime Database URL')),
               h(
                 'div',
                 { class: 'row', style: 'gap: 6px;' },
@@ -580,7 +584,7 @@ export const teamView: View = {
                     type: 'button',
                     onclick: runFirebaseTest,
                   },
-                  'Probar',
+                  L('Probar', 'Test'),
                 ),
               ),
             ),
@@ -596,7 +600,7 @@ export const teamView: View = {
               'label',
               { class: 'check-inline small' },
               autoCheck,
-              h('span', null, 'Sincronizar escaneos y movimientos en tiempo real'),
+              h('span', null, L('Sincronizar escaneos y movimientos en tiempo real', 'Sync scans and movements in real time')),
             ),
             h(
               'div',
@@ -614,14 +618,14 @@ export const teamView: View = {
                         void connectAndSync();
                       },
                     },
-                    'Conectar HHF-1114',
+                    L('Conectar HHF-1114', 'Connect HHF-1114'),
                   )
                 : null,
               h(
                 'button',
                 { class: 'btn primary', type: 'button', onclick: connectAndSync },
                 icon('globe'),
-                'Guardar y Conectar en Vivo',
+                L('Guardar y Conectar en Vivo', 'Save & Connect Live'),
               ),
             ),
           ),
@@ -844,14 +848,14 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, 'Técnicos Participantes'),
+          h('div', { class: 'sup-kpi-label' }, L('Técnicos Participantes', 'Participating Technicians')),
           h('div', { class: 'sup-kpi-value' }, `${techList.length}`),
           h(
             'div',
             { class: 'sup-kpi-sub' },
             activeNowCount > 0
-              ? `● ${activeNowCount} activo(s) en los últimos 5 min`
-              : `${curCounts.length} lecturas acumuladas`,
+              ? L(`● ${activeNowCount} activo(s) en los últimos 5 min`, `● ${activeNowCount} active in last 5 min`)
+              : `${curCounts.length} ${L('lecturas acumuladas', 'total scans')}`,
           ),
         ),
         h(
@@ -864,12 +868,12 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, 'Avance de Conteo Físico'),
+          h('div', { class: 'sup-kpi-label' }, L('Avance de Conteo Físico', 'Physical Count Progress')),
           h('div', { class: 'sup-kpi-value' }, `${fmtNum(totalUnitsCounted)} u.`),
           h(
             'div',
             { class: 'sup-kpi-sub' },
-            `${countedSkusCount} de ${totalCatalogSkus} SKUs contados (${progressPct}%)`,
+            L(`${countedSkusCount} de ${totalCatalogSkus} SKUs contados (${progressPct}%)`, `${countedSkusCount} of ${totalCatalogSkus} SKUs counted (${progressPct}%)`),
           ),
           h(
             'div',
@@ -887,14 +891,14 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, 'Flujo Kardex (Entradas / Salidas)'),
+          h('div', { class: 'sup-kpi-label' }, L('Flujo Kardex (Entradas / Salidas)', 'Kardex Flow (In / Out)')),
           h(
             'div',
             { class: 'sup-kpi-value', style: 'display: flex; gap: 10px; align-items: baseline;' },
             h('span', { style: 'color: var(--success);' }, `+${fmtNum(totalInUnits)}`),
             h('span', { style: 'color: var(--danger);' }, `−${fmtNum(totalOutUnits)}`),
           ),
-          h('div', { class: 'sup-kpi-sub' }, `${movements.length} movimiento(s) en bitácora`),
+          h('div', { class: 'sup-kpi-sub' }, `${movements.length} ${L('movimiento(s) en bitácora', 'movement(s) logged')}`),
         ),
         h(
           'div',
@@ -906,7 +910,7 @@ export const teamView: View = {
               void refreshDashboard();
             },
           },
-          h('div', { class: 'sup-kpi-label' }, 'Alertas vs. Inventario Ideal'),
+          h('div', { class: 'sup-kpi-label' }, L('Alertas vs. Inventario Ideal', 'Alerts vs. Ideal Stock')),
           h(
             'div',
             {
@@ -918,7 +922,7 @@ export const teamView: View = {
           h(
             'div',
             { class: 'sup-kpi-sub' },
-            `${criticalCount} críticos · ${deficitCount} en déficit`,
+            L(`${criticalCount} críticos · ${deficitCount} en déficit`, `${criticalCount} critical · ${deficitCount} deficit`),
           ),
         ),
       );
@@ -937,10 +941,10 @@ export const teamView: View = {
 
       // 2. Renderizar barra de pestañas limpias del Supervisor
       const tabs: { id: SupervisorTab; label: string }[] = [
-        { id: 'techs', label: `Técnicos en Vivo (${techList.length})` },
-        { id: 'feed', label: `Feed en Tiempo Real (${curCounts.length + movements.length})` },
-        { id: 'matrix', label: `Matriz de Avance por SKU (${reportLines.length})` },
-        { id: 'sessions', label: `Sesiones y Archivos (${sessions.length})` },
+        { id: 'techs', label: `${L('Técnicos en Vivo', 'Live Techs')} (${techList.length})` },
+        { id: 'feed', label: `${L('Feed en Tiempo Real', 'Live Feed')} (${curCounts.length + movements.length})` },
+        { id: 'matrix', label: `${L('Matriz de Avance por SKU', 'SKU Progress Matrix')} (${reportLines.length})` },
+        { id: 'sessions', label: `${L('Sesiones y Archivos', 'Sessions & Files')} (${sessions.length})` },
       ];
 
       clear(
@@ -957,13 +961,16 @@ export const teamView: View = {
               h(
                 'div',
                 null,
-                h('h2', { style: 'margin: 0 0 2px 0; font-size: 16px;' }, 'Sin sesión activa'),
+                h('h2', { style: 'margin: 0 0 2px 0; font-size: 16px;' }, L('Sin sesión activa', 'No active session')),
                 h(
                   'div',
                   { class: 'muted small' },
                   roomState && (hasLiveRoomData || products.length > 0)
-                    ? `Monitoreando en vivo Sala ${roomState.roomCode} (${roomState.sessionName || 'Remota'}) · ${curCounts.length} lectura(s) · ${products.length} SKUs`
-                    : 'Inicia o reabre una sesión para activar el conteo de piso.',
+                    ? L(
+                        `Monitoreando en vivo Sala ${roomState.roomCode} (${roomState.sessionName || 'Remota'}) · ${curCounts.length} lectura(s) · ${products.length} SKUs`,
+                        `Monitoring live Room ${roomState.roomCode} (${roomState.sessionName || 'Remote'}) · ${curCounts.length} scan(s) · ${products.length} SKUs`,
+                      )
+                    : L('Inicia o reabre una sesión para activar el conteo de piso.', 'Start or reopen a session to enable floor counting.'),
                 ),
               ),
               h(
@@ -977,7 +984,7 @@ export const teamView: View = {
                   },
                 },
                 icon('scan'),
-                'Iniciar nueva sesión',
+                L('Iniciar nueva sesión', 'Start new session'),
               ),
             )
           : null,
@@ -1198,13 +1205,13 @@ export const teamView: View = {
                     'div',
                     null,
                     h('div', { style: 'font-weight: 800; font-size: 15px;' }, t.name),
-                    h('div', { class: 'muted small' }, `${t.skusTouched.size} SKU(s) distintos atendidos`),
+                    h('div', { class: 'muted small' }, `${t.skusTouched.size} ${L('SKU(s) distintos atendidos', 'distinct SKU(s) handled')}`),
                   ),
                 ),
                 h(
                   'span',
                   { class: `badge ${isOnline ? 'ok' : 'info'}` },
-                  isOnline ? `● Activo (${fmtRelativeAgo(t.lastSeen)})` : fmtRelativeAgo(t.lastSeen),
+                  isOnline ? `● ${L('Activo', 'Active')} (${fmtRelativeAgo(t.lastSeen)})` : fmtRelativeAgo(t.lastSeen),
                 ),
               ),
               t.liveScanner && (t.liveScanner.status === 'pending_confirm' || t.liveScanner.status === 'scanning')
@@ -1216,8 +1223,8 @@ export const teamView: View = {
                         'margin: 6px 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--warning-bg); border: 1px solid rgba(217, 119, 6, 0.35);',
                     },
                     t.liveScanner.status === 'pending_confirm'
-                      ? `En pantalla: ${t.liveScanner.sku || t.liveScanner.barcode || ''} · Cant: ${fmtNum(t.liveScanner.qty ?? 1)}`
-                      : 'Cámara encendida buscando código...',
+                      ? `${L('En pantalla:', 'On screen:')} ${t.liveScanner.sku || t.liveScanner.barcode || ''} · ${L('Cant:', 'Qty:')} ${fmtNum(t.liveScanner.qty ?? 1)}`
+                      : L('Cámara encendida buscando código...', 'Camera active scanning barcode...'),
                   )
                 : null,
               h(
@@ -1226,19 +1233,19 @@ export const teamView: View = {
                 h(
                   'div',
                   { class: 'sup-tech-metric' },
-                  h('span', { class: 'muted small' }, 'Escaneos'),
+                  h('span', { class: 'muted small' }, L('Escaneos', 'Scans')),
                   h('b', null, fmtNum(t.scans)),
                 ),
                 h(
                   'div',
                   { class: 'sup-tech-metric' },
-                  h('span', { class: 'muted small' }, 'Unidades contadas'),
+                  h('span', { class: 'muted small' }, L('Unidades contadas', 'Units counted')),
                   h('b', null, fmtNum(t.units)),
                 ),
                 h(
                   'div',
                   { class: 'sup-tech-metric' },
-                  h('span', { class: 'muted small' }, 'Movs. Kardex'),
+                  h('span', { class: 'muted small' }, L('Movs. Kardex', 'Kardex Txns')),
                   h('b', null, fmtNum(t.movementsCount)),
                 ),
               ),
@@ -1250,7 +1257,7 @@ export const teamView: View = {
               h(
                 'div',
                 { class: 'sup-tech-last' },
-                h('span', { class: 'muted small' }, 'Última acción: '),
+                h('span', { class: 'muted small' }, L('Última acción: ', 'Last action: ')),
                 h('span', { style: 'font-weight: 600;' }, t.lastActionLabel),
               ),
               h(
@@ -1267,7 +1274,7 @@ export const teamView: View = {
                       void refreshDashboard();
                     },
                   },
-                  'Ver su historial en vivo →',
+                  L('Ver su historial en vivo →', 'View live history →'),
                 ),
               ),
             );
@@ -1285,7 +1292,7 @@ export const teamView: View = {
                   onclick: () => navigate(`/reporte?session=${current.id}`),
                 },
                 icon('chart'),
-                'Abrir Reporte Consolidado Completo',
+                L('Abrir Reporte Consolidado Completo', 'Open Full Consolidated Report'),
               ),
             )
           : null,
@@ -1776,31 +1783,33 @@ export const teamView: View = {
           'section',
           { class: 'card' },
           h(
-            'div',
-            { class: 'card-head' },
-            h('h3', null, 'Sesiones de inventario guardadas'),
-            h(
-              'button',
-              {
-                class: 'btn primary sm',
-                onclick: async () => {
-                  if (await newSessionFlow()) navigate('/contar');
+                'div',
+                {
+                  class: 'card-head',
                 },
-              },
-              'Nueva sesión',
-            ),
-          ),
-          h(
-            'ul',
-            { class: 'session-list' },
-            sessions.length === 0 ? h('li', { class: 'empty' }, 'No hay sesiones registradas.') : null,
-            sessions.map((sess) => {
-              const isCur = current?.id === sess.id;
-              const statusBadge = isCur
-                ? h('span', { class: 'badge ok' }, 'Activa')
-                : sess.closed
-                  ? h('span', { class: 'badge info' }, 'Cerrada')
-                  : h('span', { class: 'badge warn' }, 'Abierta');
+                h('h3', null, L('Sesiones de inventario guardadas', 'Saved Inventory Sessions')),
+                h(
+                  'button',
+                  {
+                    class: 'btn primary sm',
+                    onclick: async () => {
+                      if (await newSessionFlow()) navigate('/contar');
+                    },
+                  },
+                  L('Nueva sesión', 'New session'),
+                ),
+              ),
+              h(
+                'ul',
+                { class: 'session-list' },
+                sessions.length === 0 ? h('li', { class: 'empty' }, L('No hay sesiones registradas.', 'No sessions recorded.')) : null,
+                sessions.map((sess) => {
+                  const isCur = current?.id === sess.id;
+                  const statusBadge = isCur
+                    ? h('span', { class: 'badge ok' }, L('Activa', 'Active'))
+                    : sess.closed
+                      ? h('span', { class: 'badge info' }, L('Cerrada', 'Closed'))
+                      : h('span', { class: 'badge warn' }, L('Abierta', 'Open'));
 
               return h(
                 'li',

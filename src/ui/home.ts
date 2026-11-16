@@ -7,6 +7,7 @@ import {
   getActiveSession,
   reopenSession,
 } from '../db/db';
+import { L, getLocaleTag } from '../i18n/i18n';
 import { getAllMovements } from '../db/movements';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
@@ -35,10 +36,10 @@ import { openUnifyReportsDialog } from './unifyReportsDialog';
 export async function askCounterName(force = false): Promise<string | null> {
   const s = await loadSettings();
   if (s.counterName && !force) return s.counterName;
-  const name = await promptDialog('¿Quién está contando?', 'Tu nombre', s.counterName, {
+  const name = await promptDialog(L('¿Quién está contando?', 'Who is counting?'), L('Tu nombre', 'Your name'), s.counterName, {
     autocomplete: 'name',
     maxlength: 40,
-    placeholder: 'Ej. Juan Pérez',
+    placeholder: L('Ej. Juan Pérez', 'e.g. Jane Doe'),
   });
   if (name && name.trim()) {
     await saveSettings({ counterName: name.trim() });
@@ -50,17 +51,17 @@ export async function askCounterName(force = false): Promise<string | null> {
 export async function newSessionFlow(): Promise<boolean> {
   const counter = await askCounterName();
   if (!counter) {
-    toast('Captura tu nombre para iniciar', 'warn');
+    toast(L('Captura tu nombre para iniciar', 'Enter your name to start'), 'warn');
     return false;
   }
   const d = new Date();
-  const def = `Inventario ${d.toLocaleDateString('es-MX')} ${counter.split(' ')[0]}`;
-  const name = await promptDialog('Nueva sesión de conteo', 'Nombre de la sesión', def, {
+  const def = `${L('Inventario', 'Inventory')} ${d.toLocaleDateString(getLocaleTag())} ${counter.split(' ')[0]}`;
+  const name = await promptDialog(L('Nueva sesión de conteo', 'New counting session'), L('Nombre de la sesión', 'Session name'), def, {
     maxlength: 60,
   });
   if (!name) return false;
   await createSession(name.trim() || def, counter);
-  toast('Sesión creada', 'ok');
+  toast(L('Sesión creada', 'Session created'), 'ok');
   return true;
 }
 
@@ -104,7 +105,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
     const install = installState();
     const supervisorUI = isSupervisorModeEnabled();
 
-    const todayStr = new Intl.DateTimeFormat('es-MX', {
+    const todayStr = new Intl.DateTimeFormat(getLocaleTag(), {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
@@ -136,8 +137,8 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   h(
                     'div',
                     null,
-                    h('div', { class: 'muted xsmall' }, `Operador · ${todayStr}`),
-                    h('div', { class: 'big' }, s.counterName || 'Sin asignar'),
+                    h('div', { class: 'muted xsmall' }, `${L('Operador', 'Operator')} · ${todayStr}`),
+                    h('div', { class: 'big' }, s.counterName || L('Sin asignar', 'Unassigned')),
                   ),
                   h(
                     'button',
@@ -149,7 +150,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                       },
                     },
                     icon('gear'),
-                    'Cambiar',
+                    L('Cambiar', 'Change'),
                   ),
                 ),
                 h(
@@ -157,20 +158,20 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   { class: 'dash-tag-row' },
                   h('span', { class: 'badge info' }, platform.label),
                   cloudStatus.roomCode && cloudStatus.state === 'connected'
-                    ? h('span', { class: 'badge ok' }, `Sala: ${cloudStatus.roomCode}`)
+                    ? h('span', { class: 'badge ok' }, `${L('Sala', 'Room')}: ${cloudStatus.roomCode}`)
                     : cloudStatus.roomCode
-                      ? h('span', { class: 'badge warn' }, `Sala: ${cloudStatus.roomCode}`)
+                      ? h('span', { class: 'badge warn' }, `${L('Sala', 'Room')}: ${cloudStatus.roomCode}`)
                       : h('span', { class: 'badge default' }, 'Local'),
                   h(
                     'span',
                     { class: navigator.onLine ? 'badge ok' : 'badge warn' },
-                    navigator.onLine ? 'En línea' : 'Sin conexión',
+                    navigator.onLine ? L('En línea', 'Online') : L('Sin conexión', 'Offline'),
                   ),
                   !session
                     ? h(
                         'h2',
                         { class: 'badge warn dash-idle-pill', 'data-testid': 'home-idle-badge', style: 'margin:0; font-weight:700;' },
-                        'Sin sesión activa',
+                        L('Sin sesión activa', 'No active session'),
                       )
                     : null,
                 ),
@@ -194,10 +195,10 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
             h(
               'div',
               { class: 'dash-kpi-header' },
-              h('span', { class: 'dash-kpi-label' }, 'Sesión'),
+              h('span', { class: 'dash-kpi-label' }, L('Sesión', 'Session')),
               session
-                ? h('span', { class: 'badge ok' }, 'Activa')
-                : h('span', { class: 'badge default' }, 'Inactiva'),
+                ? h('span', { class: 'badge ok' }, L('Activa', 'Active'))
+                : h('span', { class: 'badge default' }, L('Inactiva', 'Inactive')),
             ),
             h(
               'div',
@@ -208,8 +209,8 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               'div',
               { class: 'dash-kpi-sub' },
               session
-                ? `${session.name} · ${fmtNum(units)} pzas (${counts.length})`
-                : 'Sin sesión activa',
+                ? `${session.name} · ${fmtNum(units)} ${L('pzas', 'pcs')} (${counts.length})`
+                : L('Sin sesión activa', 'No active session'),
             ),
           ),
 
@@ -220,14 +221,14 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
             h(
               'div',
               { class: 'dash-kpi-header' },
-              h('span', { class: 'dash-kpi-label' }, 'Catálogo'),
+              h('span', { class: 'dash-kpi-label' }, L('Catálogo', 'Catalog')),
               h('span', { class: 'badge info' }, `${fmtNum(catalogCount)} SKUs`),
             ),
             h('div', { class: 'dash-kpi-value' }, fmtNum(catalogCount)),
             h(
               'div',
               { class: 'dash-kpi-sub' },
-              `${fmtNum(withExpected)} con ideal${uncatalogedCount > 0 ? ` · ${uncatalogedCount} nuevos` : ''}`,
+              `${fmtNum(withExpected)} ${L('con ideal', 'with ideal')}${uncatalogedCount > 0 ? ` · ${uncatalogedCount} ${L('nuevos', 'new')}` : ''}`,
             ),
           ),
 
@@ -239,7 +240,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               'div',
               { class: 'dash-kpi-header' },
               h('span', { class: 'dash-kpi-label' }, 'Kardex'),
-              h('span', { class: 'badge ok' }, `${totalMovements} movs`),
+              h('span', { class: 'badge ok' }, `${totalMovements} ${L('movs', 'txns')}`),
             ),
             h(
               'div',
@@ -248,7 +249,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               ' / ',
               h('span', { class: 'out-text' }, `-${fmtNum(Math.round(totalOut))}`),
             ),
-            h('div', { class: 'dash-kpi-sub' }, 'Entradas / salidas'),
+            h('div', { class: 'dash-kpi-sub' }, L('Entradas / salidas', 'Stock in / out')),
           ),
 
           // KPI 4: Equipo y Nube
@@ -262,18 +263,18 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               h(
                 'span',
                 { class: cloudStatus.state === 'connected' ? 'badge ok' : 'badge default' },
-                cloudStatus.state === 'connected' ? 'En vivo' : 'Local',
+                cloudStatus.state === 'connected' ? L('En vivo', 'Live') : 'Local',
               ),
             ),
             h(
               'div',
               { class: 'dash-kpi-value' },
-              cloudStatus.state === 'connected' ? 'Conectado' : 'Local',
+              cloudStatus.state === 'connected' ? L('Conectado', 'Connected') : 'Local',
             ),
             h(
               'div',
               { class: 'dash-kpi-sub' },
-              cloudStatus.roomCode ? `Sala ${cloudStatus.roomCode}` : 'Solo este equipo',
+              cloudStatus.roomCode ? `${L('Sala', 'Room')} ${cloudStatus.roomCode}` : L('Solo este equipo', 'This device only'),
             ),
           ),
         ),
@@ -294,7 +295,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   onclick: () => navigate('/contar'),
                 },
                 icon('scan'),
-                'Continuar conteo físico',
+                L('Continuar conteo físico', 'Resume physical count'),
               ),
               h(
                 'div',
@@ -308,7 +309,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                         onclick: () => navigate('/reporte'),
                       },
                       icon('chart'),
-                      'Ver reporte de diferencias',
+                      L('Ver reporte de diferencias', 'View discrepancy report'),
                     )
                   : null,
                 supervisorUI
@@ -321,7 +322,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                           if (await newSessionFlow()) navigate('/contar');
                         },
                       },
-                      'Crear sesión',
+                      L('Crear sesión', 'Create session'),
                     )
                   : null,
                 h(
@@ -331,20 +332,23 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                     'data-testid': 'home-close-session-btn',
                     onclick: async () => {
                       const ok = await confirmDialog(
-                        'Finalizar sesión de conteo',
-                        `¿Deseas finalizar la sesión "${session.name}"? Los datos quedarán guardados y listos para consulta o reporte.`,
-                        'Finalizar sesión',
+                        L('Finalizar sesión de conteo', 'Close counting session'),
+                        L(
+                          `¿Deseas finalizar la sesión "${session.name}"? Los datos quedarán guardados y listos para consulta o reporte.`,
+                          `Finish session "${session.name}"? Your data will stay saved and ready for reports.`,
+                        ),
+                        L('Finalizar sesión', 'Close session'),
                         true,
                       );
                       if (ok) {
                         await closeSession(session.id);
-                        toast('Sesión finalizada con éxito', 'ok');
+                        toast(L('Sesión finalizada con éxito', 'Session closed'), 'ok');
                         navigate('/');
                       }
                     },
                   },
                   icon('check'),
-                  'Finalizar sesión',
+                  L('Finalizar sesión', 'Close session'),
                 ),
               ),
             )
@@ -361,7 +365,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   },
                 },
                 icon('scan'),
-                'Iniciar nueva sesión de conteo',
+                L('Iniciar nueva sesión de conteo', 'Start new counting session'),
               ),
             ),
 
@@ -371,7 +375,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
           h(
             'div',
             { class: 'dash-flow-section' },
-            h('span', { class: 'dash-flow-label muted xsmall uppercase' }, 'Accesos rápidos'),
+            h('span', { class: 'dash-flow-label muted xsmall uppercase' }, L('Accesos rápidos', 'Quick actions')),
             h(
               'div',
               { class: 'dash-flow-actions' },
@@ -384,7 +388,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   onclick: () => navigate('/movimientos?action=in'),
                 },
                 icon('plus'),
-                'Entrada Kardex',
+                L('Entrada Kardex', 'Stock In'),
               ),
               h(
                 'button',
@@ -395,7 +399,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   onclick: () => navigate('/movimientos?action=out'),
                 },
                 icon('swap'),
-                'Salida Kardex',
+                L('Salida Kardex', 'Stock Out'),
               ),
               supervisorUI
                 ? h(
@@ -407,7 +411,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                       onclick: () => void openUnifyReportsDialog((sid) => navigate(`/reporte?session=${sid}`)),
                     },
                     icon('users'),
-                    'Unificar Reportes',
+                    L('Unificar Reportes', 'Merge Reports'),
                   )
                 : null,
               supervisorUI
@@ -420,7 +424,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                       onclick: () => openBarcodeSheetDialog(),
                     },
                     icon('scan'),
-                    'Cola de Rótulos',
+                    L('Cola de Rótulos', 'Label Queue'),
                   )
                 : null,
               h(
@@ -442,7 +446,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                   },
                 },
                 icon(isMobileCatalogReadOnly() ? 'refresh' : 'upload'),
-                isMobileCatalogReadOnly() ? 'Sincronizar Catálogo' : 'Importar Catálogo',
+                isMobileCatalogReadOnly() ? L('Sincronizar Catálogo', 'Sync Catalog') : L('Importar Catálogo', 'Import Catalog'),
               ),
             ),
           ),
@@ -466,7 +470,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               h(
                 'div',
                 { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, 'Sesiones de Conteo'),
+                h('h3', { class: 'dash-card-title' }, L('Sesiones de Conteo', 'Counting Sessions')),
                 h(
                   'button',
                   {
@@ -477,7 +481,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                     },
                   },
                   icon('plus'),
-                  'Crear sesión',
+                  L('Crear sesión', 'Create session'),
                 ),
               ),
               pastSessions.length > 0
@@ -497,8 +501,8 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                           ps.name,
                           ' ',
                           ps.closed
-                            ? h('span', { class: 'badge info' }, 'Cerrada')
-                            : h('span', { class: 'badge ok' }, 'Abierta'),
+                            ? h('span', { class: 'badge info' }, L('Cerrada', 'Closed'))
+                            : h('span', { class: 'badge ok' }, L('Abierta', 'Open')),
                         ),
                         h(
                           'div',
@@ -516,7 +520,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                             onclick: () => navigate(`/reporte?session=${ps.id}`),
                           },
                           icon('chart'),
-                          'Reporte',
+                          L('Reporte', 'Report'),
                         ),
                         ps.closed
                           ? h(
@@ -525,11 +529,11 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                               class: 'btn sm ghost',
                               onclick: async () => {
                                 await reopenSession(ps.id);
-                                toast('Sesión reabierta y activada', 'ok');
+                                toast(L('Sesión reabierta y activada', 'Session reopened and activated'), 'ok');
                                 navigate('/contar');
                               },
                             },
-                            'Reabrir',
+                            L('Reabrir', 'Reopen'),
                           )
                           : h(
                             'button',
@@ -537,11 +541,11 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                               class: 'btn sm primary',
                               onclick: async () => {
                                 await reopenSession(ps.id);
-                                toast(`Sesión activa: ${ps.name}`, 'ok');
+                                toast(`${L('Sesión activa', 'Active session')}: ${ps.name}`, 'ok');
                                 navigate('/contar');
                               },
                             },
-                            'Continuar',
+                            L('Continuar', 'Resume'),
                           ),
                       ),
                     ),
@@ -550,7 +554,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                 : h(
                   'p',
                   { class: 'muted small' },
-                  'Aún no hay sesiones previas registradas en este equipo.',
+                  L('Aún no hay sesiones previas registradas en este equipo.', 'No previous sessions recorded on this device yet.'),
                 ),
             ),
           ),
@@ -567,11 +571,11 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               h(
                 'div',
                 { class: 'card-head' },
-                h('h3', { class: 'dash-card-title' }, 'Actividad Reciente de Kardex'),
+                h('h3', { class: 'dash-card-title' }, L('Actividad Reciente de Kardex', 'Recent Kardex Activity')),
                 h(
                   'button',
                   { class: 'btn ghost sm', onclick: () => navigate('/movimientos') },
-                  'Abrir Kardex →',
+                  L('Abrir Kardex →', 'Open Kardex →'),
                 ),
               ),
               recentMovements.length > 0
@@ -585,7 +589,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                       h(
                         'span',
                         { class: `dash-mini-badge ${m.type === 'IN' ? 'in' : 'out'}` },
-                        m.type === 'IN' ? 'Entrada' : 'Salida',
+                        m.type === 'IN' ? L('Entrada', 'In') : L('Salida', 'Out'),
                       ),
                       h('b', { class: 'dash-mini-sku' }, m.sku),
                       h(
@@ -601,7 +605,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                     ),
                   ),
                 )
-                : h('p', { class: 'muted small' }, 'Sin movimientos recientes en bitácora.'),
+                : h('p', { class: 'muted small' }, L('Sin movimientos recientes en bitácora.', 'No recent movements logged.')),
               (pending > 0 || !catalogCount)
                 ? h(
                   'div',
@@ -610,13 +614,13 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                     'span',
                     { class: 'warn-text small' },
                     !catalogCount
-                      ? 'Sin catálogo cargado.'
-                      : `${pending} producto(s) pendiente(s) de descripción.`,
+                      ? L('Sin catálogo cargado.', 'No catalog loaded.')
+                      : L(`${pending} producto(s) pendiente(s) de descripción.`, `${pending} product(s) pending description.`),
                   ),
                   h(
                     'button',
                     { class: 'btn ghost sm', onclick: () => navigate('/catalogo') },
-                    'Ir a Catálogo →',
+                    L('Ir a Catálogo →', 'Go to Catalog →'),
                   ),
                 )
                 : null,
@@ -627,30 +631,30 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
               ? h(
                 'section',
                 { class: 'card accent dash-section-card' },
-                h('h3', { class: 'dash-card-title' }, 'Instalar Aplicación'),
+                h('h3', { class: 'dash-card-title' }, L('Instalar Aplicación', 'Install App')),
                 h(
                   'p',
                   { class: 'small' },
-                  'Instala la app en tu dispositivo para acceso directo y uso offline.',
+                  L('Instala la app en tu dispositivo para acceso directo y uso offline.', 'Install the app on your device for direct access and offline use.'),
                 ),
                 h(
                   'button',
                   { class: 'btn primary sm', onclick: promptInstall },
-                  'Instalar PWA',
+                  L('Instalar PWA', 'Install PWA'),
                 ),
               )
               : install.iosHint
                 ? h(
                   'section',
                   { class: 'card accent dash-section-card' },
-                  h('h3', { class: 'dash-card-title' }, 'Instalar en iPhone'),
+                  h('h3', { class: 'dash-card-title' }, L('Instalar en iPhone', 'Install on iPhone')),
                   h(
                     'p',
                     { class: 'small' },
-                    'En Safari toca ',
-                    h('b', null, 'Compartir'),
-                    ' y ',
-                    h('b', null, '“Agregar a pantalla de inicio”'),
+                    L('En Safari toca ', 'In Safari tap '),
+                    h('b', null, L('Compartir', 'Share')),
+                    L(' y ', ' and '),
+                    h('b', null, L('“Agregar a pantalla de inicio”', '“Add to Home Screen”')),
                     '.',
                   ),
                 )
@@ -663,7 +667,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
 }
 
 export const homeView: View = {
-  title: 'Inicio',
+  title: () => L('Inicio', 'Home'),
   async render(root) {
     currentRoot = root;
     const seq = ++homeRenderSeq;

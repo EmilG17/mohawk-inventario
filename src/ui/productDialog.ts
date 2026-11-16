@@ -1,3 +1,4 @@
+import { L } from '../i18n/i18n';
 import { deleteProduct, getProduct, putProduct, type Product } from '../db/db';
 import { getIdealLevels, setIdealLevels } from '../db/movements';
 import { resolveDescription } from '../lookup/lookup';
@@ -25,7 +26,17 @@ export const SOURCE_LABEL: Record<Product['source'], string> = {
 
 export function sourceBadge(p: Product) {
   const cls = p.source === 'pendiente' ? 'badge warn' : p.source === 'catalogo' ? 'badge ok' : 'badge info';
-  return h('span', { class: cls }, SOURCE_LABEL[p.source]);
+  const label =
+    p.source === 'catalogo'
+      ? L('Catálogo', 'Catalog')
+      : p.source === 'UPCitemdb'
+        ? 'Internet (UPCitemdb)'
+        : p.source === 'OpenFacts'
+          ? 'Internet (Open Facts)'
+          : p.source === 'manual'
+            ? L('Captura manual', 'Manual entry')
+            : L('Sin descripción', 'No description');
+  return h('span', { class: cls }, label);
 }
 
 export type EditProductResult = Product | 'deleted' | null;
@@ -35,7 +46,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
   return new Promise(async (resolve) => {
     const readOnly = isMobileCatalogReadOnly();
     if (readOnly && !code && !initial) {
-      toast('El catálogo es de solo lectura en la versión móvil. Usa una PC para crear productos.', 'warn');
+      toast(L('El catálogo es de solo lectura en la versión móvil. Usa una PC para crear productos.', 'The catalog is read-only on mobile. Use a desktop PC to create products.'), 'warn');
       resolve(null);
       return;
     }
@@ -60,7 +71,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       name: 'barcode',
       id: 'p-barcode',
       value: initialCodeVal,
-      placeholder: 'Ej. 079567011002 o MHK-123456',
+      placeholder: L('Ej. 079567011002 o MHK-123456', 'e.g. 079567011002 or MHK-123456'),
     }) as HTMLInputElement;
 
     const barcodePreview = h('div', { class: 'barcode-preview' });
@@ -77,7 +88,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         const svgEl = barcodePreview.querySelector('svg');
         if (svgEl) svgEl.classList.add('barcode');
       } catch {
-        barcodePreview.innerHTML = '<span class="muted small">Código no compatible</span>';
+        barcodePreview.innerHTML = `<span class="muted small">${L('Código no compatible', 'Unsupported barcode')}</span>`;
       }
     };
 
@@ -85,15 +96,15 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
     updatePreview();
 
     const f = {
-      description: h('textarea', { class: 'input', rows: 2, maxlength: 200, placeholder: 'Ej. Guantes de nitrilo talla M, caja 100 pzas' }),
+      description: h('textarea', { class: 'input', rows: 2, maxlength: 200, placeholder: L('Ej. Guantes de nitrilo talla M, caja 100 pzas', 'e.g. Nitrile gloves size M, box of 100') }),
       sku: h('input', { class: 'input', maxlength: 40 }),
-      unit: h('input', { class: 'input', maxlength: 15, placeholder: 'PZA, CJA, LT…' }),
+      unit: h('input', { class: 'input', maxlength: 15, placeholder: L('PZA, CJA, LT…', 'EA, BOX, L…') }),
       expected: h('input', {
         class: 'input',
         inputmode: 'decimal',
         type: 'text',
         'data-testid': 'product-ideal-qty-input',
-        placeholder: 'Ej. 50 (meta ideal)',
+        placeholder: L('Ej. 50 (meta ideal)', 'e.g. 50 (ideal target)'),
       }),
       cost: h('input', { class: 'input', inputmode: 'decimal', type: 'text' }),
     };
@@ -128,9 +139,9 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         const newCode = generateInternalCode();
         barcodeInput.value = newCode;
         updatePreview();
-        toast(`Código generado: ${newCode}`, 'ok');
+        toast(`${L('Código generado:', 'Code generated:')} ${newCode}`, 'ok');
       },
-    }, icon('scan'), 'Generar código interno');
+    }, icon('scan'), L('Generar código interno', 'Generate internal code'));
 
     const btProfileInit = getSavedBartenderProfile();
     const savedTplInit = typeof localStorage !== 'undefined' ? localStorage.getItem('mohawk_preferred_label_template') : null;
@@ -214,7 +225,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
             : 'thermal-4x2',
         });
       },
-    }, icon('scan'), 'Imprimir etiqueta');
+    }, icon('scan'), L('Imprimir etiqueta', 'Print label'));
 
     const dlSvgBtn = h('button', {
       class: 'btn sm ghost',
@@ -222,9 +233,9 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       onclick: () => {
         const c = barcodeInput.value.trim() || p.barcode;
         downloadSvg(getCurrentSvg(), `${c}_etiqueta`);
-        toast('SVG descargado', 'ok');
+        toast(L('SVG descargado', 'SVG downloaded'), 'ok');
       },
-    }, icon('download'), 'Descargar SVG');
+    }, icon('download'), L('Descargar SVG', 'Download SVG'));
 
     const dlPngBtn = h('button', {
       class: 'btn sm ghost',
@@ -232,14 +243,14 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       onclick: async () => {
         const c = barcodeInput.value.trim() || p.barcode;
         await downloadPng(getCurrentSvg(), `${c}_etiqueta`, 3);
-        toast('PNG (300 DPI) descargado', 'ok');
+        toast(L('PNG (300 DPI) descargado', 'PNG (300 DPI) downloaded'), 'ok');
       },
-    }, icon('download'), 'Descargar PNG');
+    }, icon('download'), L('Descargar PNG', 'Download PNG'));
 
     const addQueueBtn = h('button', {
       class: 'btn sm ghost',
       type: 'button',
-      title: 'Añadir este producto a la cola para imprimirlo junto con otros productos en la misma hoja',
+      title: L('Añadir este producto a la cola para imprimirlo junto con otros productos en la misma hoja', 'Add this product to the queue to print with other products on the same sheet'),
       onclick: () => {
         const tempProd: Product = {
           ...p,
@@ -250,9 +261,9 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         };
         addToPrintQueue(tempProd, 1);
         const total = getPrintQueueTotalCount();
-        toast(`Añadido a la cola (${total} etiquetas en cola)`, 'ok');
+        toast(L(`Añadido a la cola (${total} etiquetas en cola)`, `Added to queue (${total} labels queued)`), 'ok');
       },
-    }, icon('plus'), 'Añadir a cola');
+    }, icon('plus'), L('Añadir a cola', 'Add to queue'));
 
     const sheetBtn = h('button', {
       class: 'btn sm',
@@ -265,33 +276,33 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
           sku: f.sku.value.trim() || p.sku,
           unit: f.unit.value.trim() || p.unit,
         };
-        openBarcodeSheetDialog([tempProd], `Hoja de etiquetas`);
+        openBarcodeSheetDialog([tempProd], L('Hoja de etiquetas', 'Label sheet'));
       },
-    }, icon('tag'), 'Hoja de etiquetas / Cola');
+    }, icon('tag'), L('Hoja de etiquetas / Cola', 'Label sheet / Queue'));
 
-    const status = h('div', { class: 'muted small' }, sourceBadge(p), p.brand ? ` · Marca: ${p.brand}` : '');
+    const status = h('div', { class: 'muted small' }, sourceBadge(p), p.brand ? ` · ${L('Marca:', 'Brand:')} ${p.brand}` : '');
     const lookupBtn = h('button', {
       class: 'btn sm', type: 'button',
       onclick: async () => {
         lookupBtn.disabled = true;
-        lookupBtn.textContent = 'Buscando…';
+        lookupBtn.textContent = L('Buscando…', 'Searching…');
         try {
           const currentCode = barcodeInput.value.trim() || code;
           const r = await resolveDescription(currentCode, { forceOnline: true });
           if (r.status === 'encontrado') {
             p = { ...p, description: r.product.description, brand: r.product.brand, imageUrl: r.product.imageUrl, source: r.product.source };
             f.description.value = p.description;
-            status.replaceChildren(sourceBadge(p), p.brand ? ` · Marca: ${p.brand}` : '');
-            toast('Descripción encontrada', 'ok');
+            status.replaceChildren(sourceBadge(p), p.brand ? ` · ${L('Marca:', 'Brand:')} ${p.brand}` : '');
+            toast(L('Descripción encontrada', 'Description found'), 'ok');
           } else {
-            toast(r.status === 'sin_conexion' ? 'Sin conexión: se intentará más tarde' : 'No se encontró en las bases públicas', 'warn');
+            toast(r.status === 'sin_conexion' ? L('Sin conexión: se intentará más tarde', 'Offline: will retry later') : L('No se encontró en las bases públicas', 'Not found in public databases'), 'warn');
           }
         } finally {
           lookupBtn.disabled = false;
-          lookupBtn.textContent = 'Buscar descripción en internet';
+          lookupBtn.textContent = L('Buscar descripción en internet', 'Look up description online');
         }
       },
-    }, 'Buscar descripción en internet');
+    }, L('Buscar descripción en internet', 'Look up description online'));
 
     const btUploadInput = h('input', {
       type: 'file',
@@ -305,9 +316,9 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
           saveBartenderProfile(profile);
           includeFooterCheck.checked = profile.includeFooter;
           updatePreview();
-          toast(`Formato BarTender "${file.name}" aplicado (${profile.labelWidthIn}"×${profile.labelHeightIn}")`, 'ok');
+          toast(L(`Formato BarTender "${file.name}" aplicado (${profile.labelWidthIn}"×${profile.labelHeightIn}")`, `BarTender format "${file.name}" applied (${profile.labelWidthIn}"×${profile.labelHeightIn}")`), 'ok');
         } catch {
-          toast('No se pudo leer el archivo BarTender', 'error');
+          toast(L('No se pudo leer el archivo BarTender', 'Could not read BarTender file'), 'error');
         }
       },
     }) as HTMLInputElement;
@@ -315,20 +326,23 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
     const btUploadBtn = h('button', {
       class: 'btn sm ghost',
       type: 'button',
-      title: 'Cargar archivo BarTender (.btw) para calibrar etiqueta',
+      title: L('Cargar archivo BarTender (.btw) para calibrar etiqueta', 'Load BarTender (.btw) file to calibrate label'),
       onclick: () => btUploadInput.click(),
-    }, icon('upload'), 'Cargar .btw', btUploadInput);
+    }, icon('upload'), L('Cargar .btw', 'Load .btw'), btUploadInput);
 
     const body = h('div', { class: 'form' },
       readOnly
         ? h(
             'div',
             { class: 'catalog-readonly-banner', 'data-testid': 'product-dialog-readonly-notice' },
-            'Modo solo lectura en móvil: puedes consultar o imprimir la etiqueta de este producto, pero la edición del catálogo está restringida a PC.',
+            L(
+              'Modo solo lectura en móvil: puedes consultar o imprimir la etiqueta de este producto, pero la edición del catálogo está restringida a PC.',
+              'Read-only mode on mobile: you can view or print this product label, but catalog editing is restricted to desktop.',
+            ),
           )
         : null,
       h('label', { class: 'field' },
-        h('span', null, 'Código de barras'),
+        h('span', null, L('Código de barras', 'Barcode')),
         h('div', { class: 'row' }, barcodeInput, readOnly ? null : genBtn),
       ),
       barcodePreview,
@@ -337,39 +351,39 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         'label',
         { class: 'check-inline muted small', style: 'margin: 2px 0 2px 0;' },
         precut3in1Check,
-        h('span', null, 'Imprimir formato Etiqueta Pre-Cortada 3-en-1 BarTender (Principal + Mini + QR · 3.25" × 2.00")'),
+        h('span', null, L('Imprimir formato Etiqueta Pre-Cortada 3-en-1 BarTender (Principal + Mini + QR · 3.25" × 2.00")', 'Print BarTender 3-in-1 Pre-Cut Label format (Main + Mini + QR · 3.25" × 2.00")')),
       ),
       h(
         'label',
         { class: 'check-inline muted small', style: 'margin: 0 0 4px 0;' },
         includeFooterCheck,
-        h('span', null, 'Incluir SKU, Unidad y Marca debajo del código (para etiquetas simples)'),
+        h('span', null, L('Incluir SKU, Unidad y Marca debajo del código (para etiquetas simples)', 'Include SKU, Unit, and Brand below barcode (simple labels)')),
       ),
       status,
-      h('label', { class: 'field' }, h('span', null, 'Descripción'), f.description),
+      h('label', { class: 'field' }, h('span', null, L('Descripción', 'Description')), f.description),
       readOnly ? null : lookupBtn,
       h('div', { class: 'grid2' },
-        h('label', { class: 'field' }, h('span', null, 'No. de parte / SKU'), f.sku),
-        h('label', { class: 'field' }, h('span', null, 'Unidad'), f.unit),
-        h('label', { class: 'field' }, h('span', null, 'Inventario Ideal'), f.expected),
-        h('label', { class: 'field' }, h('span', null, 'Costo unitario'), f.cost),
+        h('label', { class: 'field' }, h('span', null, L('No. de parte / SKU', 'Part # / SKU')), f.sku),
+        h('label', { class: 'field' }, h('span', null, L('Unidad', 'Unit')), f.unit),
+        h('label', { class: 'field' }, h('span', null, L('Inventario Ideal', 'Ideal Stock')), f.expected),
+        h('label', { class: 'field' }, h('span', null, L('Costo unitario', 'Unit cost')), f.cost),
       ),
     );
 
     const dlg = openDialog(
-      readOnly ? 'Detalle de producto (Solo lectura)' : 'Producto',
+      readOnly ? L('Detalle de producto (Solo lectura)', 'Product Details (Read-only)') : L('Producto', 'Product'),
       body,
       readOnly
-        ? [{ label: 'Cancelar' }]
+        ? [{ label: L('Cancelar', 'Cancel') }]
         : [
             {
-              label: 'Eliminar', kind: 'danger',
+              label: L('Eliminar', 'Delete'), kind: 'danger',
               onClick: async () => {
-                if (code && await confirmDialog('Eliminar del catálogo', `¿Eliminar "${p.description || code}" del catálogo?`, 'Eliminar', true)) {
+                if (code && await confirmDialog(L('Eliminar del catálogo', 'Delete from catalog'), L(`¿Eliminar "${p.description || code}" del catálogo?`, `Delete "${p.description || code}" from catalog?`), L('Eliminar', 'Delete'), true)) {
                   await deleteProduct(code);
                   triggerBackgroundSync();
                   result = 'deleted';
-                  toast('Producto eliminado');
+                  toast(L('Producto eliminado', 'Product deleted'));
                 } else if (!code) {
                   result = 'deleted';
                 } else {
@@ -377,9 +391,9 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
                 }
               },
             },
-            { label: 'Cancelar' },
+            { label: L('Cancelar', 'Cancel') },
             {
-              label: 'Guardar', kind: 'primary',
+              label: L('Guardar', 'Save'), kind: 'primary',
               onClick: async () => {
                 const rawBarcodeInput = barcodeInput.value.trim();
                 const newBarcode =
@@ -387,7 +401,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
                     ? (code || p.barcode)
                     : (rawBarcodeInput || code || p.barcode);
                 if (!newBarcode) {
-                  toast('El producto debe tener un código de barras', 'error');
+                  toast(L('El producto debe tener un código de barras', 'Product must have a barcode'), 'error');
                   return true;
                 }
                 const desc = f.description.value.trim();
@@ -424,7 +438,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
                 }
                 triggerBackgroundSync();
                 result = next;
-                toast('Producto guardado', 'ok');
+                toast(L('Producto guardado', 'Product saved'), 'ok');
               },
             },
           ],

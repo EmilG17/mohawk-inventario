@@ -10,8 +10,24 @@ import {
 import {
   buildCountFile, buildReportCsv, buildReportWorkbook, safeFileName,
 } from '../io/exportResults';
+import { L, getLocaleTag } from '../i18n/i18n';
 import { displayBarcode } from '../io/normalize';
-import { buildReport, STATUS_LABEL, summarize, type ReportRow, type RowStatus } from '../report';
+import { buildReport, summarize, type ReportRow, type RowStatus } from '../report';
+
+function statusLabel(status: RowStatus): string {
+  switch (status) {
+    case 'ok':
+      return L('Correcto', 'Match');
+    case 'faltante':
+      return L('Faltante', 'Short');
+    case 'sobrante':
+      return L('Sobrante', 'Over');
+    case 'no_contado':
+      return L('No contado', 'Not counted');
+    case 'no_catalogado':
+      return L('No catalogado', 'Uncataloged');
+  }
+}
 import {
   clear, confirmDialog, downloadFile, fmtDateTime, fmtMoney, fmtNum, h, icon, MIME, openDialog, shareOrDownload, toast,
 } from './dom';
@@ -57,10 +73,10 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
 
   if (!session) {
     clear(root, h('section', { class: 'card' },
-      h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesiones'),
-      h('h2', null, 'No hay sesiones'),
-      h('p', { class: 'muted' }, 'Aún no se ha registrado ninguna sesión de conteo.'),
-      h('button', { class: 'btn primary', onclick: () => navigate('/') }, 'Ir al inicio'),
+      h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, L('Sin sesiones', 'No sessions')),
+      h('h2', null, L('No hay sesiones', 'No sessions')),
+      h('p', { class: 'muted' }, L('Aún no se ha registrado ninguna sesión de conteo.', 'No counting session has been recorded yet.')),
+      h('button', { class: 'btn primary', onclick: () => navigate('/') }, L('Ir al inicio', 'Go to home')),
     ));
     return;
   }
@@ -104,9 +120,9 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
         const hay = norm(`${r.description} ${r.sku} ${displayBarcode(r.barcode)} ${r.counters.join(' ')}`);
         return words.every((w) => hay.includes(w));
       });
-    countEl.textContent = `${rows.length} de ${allRows.length}`;
+    countEl.textContent = `${rows.length} ${L('de', 'of')} ${allRows.length}`;
     clear(list,
-      rows.length === 0 ? h('li', { class: 'empty' }, 'No hay productos con este filtro.') : null,
+      rows.length === 0 ? h('li', { class: 'empty' }, L('No hay productos con este filtro.', 'No products match this filter.')) : null,
       rows.slice(0, 150).map((r) => {
         const badgeClass = r.status === 'ok' ? 'badge ok' : r.status === 'faltante' ? 'badge error' : r.status === 'sobrante' ? 'badge info' : 'badge warn';
         const idealVal = r.idealQty ?? r.expected;
@@ -118,7 +134,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
         },
         h('div', { class: 'r-head' },
           h('div', { class: 'grow' },
-            h('div', { class: 'rec-desc' }, r.description || h('i', { class: 'muted' }, 'Sin descripción')),
+            h('div', { class: 'rec-desc' }, r.description || h('i', { class: 'muted' }, L('Sin descripción', 'No description'))),
             h('div', { class: 'rec-meta' },
               r.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(r.barcode)),
               r.sku ? ` · ${r.sku}` : '',
@@ -131,22 +147,22 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
             r.needsReorder
               ? h(
                   'span',
-                  { class: 'badge warn', title: `Bajo stock mínimo (${fmtNum(r.minQty)})` },
-                  `Pedir +${fmtNum(r.suggestedOrderQty)}`,
+                  { class: 'badge warn', title: `${L('Bajo stock mínimo', 'Below min stock')} (${fmtNum(r.minQty)})` },
+                  `${L('Pedir', 'Order')} +${fmtNum(r.suggestedOrderQty)}`,
                 )
               : null,
-            h('span', { class: badgeClass }, STATUS_LABEL[r.status]),
+            h('span', { class: badgeClass }, statusLabel(r.status)),
           ),
         ),
         h('div', { class: 'r-nums' },
           h('span', null, 'Ideal: ', h('b', null, fmtNum(idealVal))),
-          h('span', null, 'Contado: ', h('b', null, fmtNum(r.counted))),
-          idealDiff !== undefined ? h('span', { class: `diff ${idealDiff < 0 ? 'neg' : idealDiff > 0 ? 'pos' : ''}` }, 'Dif: ', h('b', null, idealDiffText)) : null,
+          h('span', null, L('Contado: ', 'Counted: '), h('b', null, fmtNum(r.counted))),
+          idealDiff !== undefined ? h('span', { class: `diff ${idealDiff < 0 ? 'neg' : idealDiff > 0 ? 'pos' : ''}` }, L('Dif: ', 'Diff: '), h('b', null, idealDiffText)) : null,
           r.diffValue !== undefined && r.diffValue !== 0 ? h('span', { class: 'muted small' }, fmtMoney(r.diffValue)) : null,
         ),
         );
       }),
-      rows.length > 150 ? h('li', { class: 'empty' }, `Mostrando 150 de ${rows.length}. Usa el buscador.`) : null,
+      rows.length > 150 ? h('li', { class: 'empty' }, L(`Mostrando 150 de ${rows.length}. Usa el buscador.`, `Showing 150 of ${rows.length}. Use search.`)) : null,
     );
   };
 
@@ -159,13 +175,13 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
   const chipsWrap = h('div', { class: 'chips' });
   const updateChips = () => {
     clear(chipsWrap,
-      chip('todos', 'Todos', allRows.length),
-      chip('por_pedir', 'Por pedir', summary.reorderCount),
-      chip('faltante', 'Faltantes', summary.short),
-      chip('sobrante', 'Sobrantes', summary.over),
-      chip('no_contado', 'No contados', summary.notCounted),
-      chip('no_catalogado', 'No catalogados', summary.uncataloged),
-      chip('ok', 'Correctos', summary.ok),
+      chip('todos', L('Todos', 'All'), allRows.length),
+      chip('por_pedir', L('Por pedir', 'Reorder'), summary.reorderCount),
+      chip('faltante', L('Faltantes', 'Short'), summary.short),
+      chip('sobrante', L('Sobrantes', 'Over'), summary.over),
+      chip('no_contado', L('No contados', 'Not counted'), summary.notCounted),
+      chip('no_catalogado', L('No catalogados', 'Uncataloged'), summary.uncataloged),
+      chip('ok', L('Correctos', 'Match'), summary.ok),
     );
   };
   updateChips();
@@ -187,16 +203,16 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
       idealLevels: currentIdealLevels,
     });
     downloadFile(bytes, `${baseName}.xlsx`, MIME.xlsx);
-    toast('Excel generado', 'ok');
+    toast(L('Excel generado', 'Excel generated'), 'ok');
   };
   const doExportCsv = () => {
     const csv = buildReportCsv(allRows);
     downloadFile(csv, `${baseName}.csv`, MIME.csv);
-    toast('CSV generado', 'ok');
+    toast(L('CSV generado', 'CSV generated'), 'ok');
   };
   const doShareCount = async () => {
     const cf = buildCountFile(session, counts, products, deviceId);
-    await shareOrDownload(JSON.stringify(cf, null, 2), `${baseName}.conteo.json`, MIME.json, `Conteo ${session.name}`);
+    await shareOrDownload(JSON.stringify(cf, null, 2), `${baseName}.conteo.json`, MIME.json, `${L('Conteo', 'Count')} ${session.name}`);
   };
 
   const sessionSelect = h('select', {
@@ -214,29 +230,29 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
       h('option', {
         value: s.id,
         selected: s.id === session!.id,
-      }, `${s.name} (${s.closed ? 'Cerrada' : activeSession?.id === s.id ? 'Activa' : 'Abierta'})`),
+      }, `${s.name} (${s.closed ? L('Cerrada', 'Closed') : activeSession?.id === s.id ? L('Activa', 'Active') : L('Abierta', 'Open')})`),
     ),
   );
 
   const statusBadge = isCur
-    ? h('span', { class: 'badge ok' }, 'Activa')
+    ? h('span', { class: 'badge ok' }, L('Activa', 'Active'))
     : isClosed
-      ? h('span', { class: 'badge info' }, 'Cerrada')
-      : h('span', { class: 'badge warn' }, 'Abierta');
+      ? h('span', { class: 'badge info' }, L('Cerrada', 'Closed'))
+      : h('span', { class: 'badge warn' }, L('Abierta', 'Open'));
 
   const secondaryItems: (HTMLElement | null)[] = [
     summary.shortValue || summary.overValue || summary.reorderValue
       ? h('div', { class: 'row values-row wrap', style: 'margin: 0;' },
-        h('span', { class: 'small' }, 'Faltante: ', h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
-        h('span', { class: 'small' }, 'Sobrante: ', h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
-        h('span', { class: 'small' }, 'Neto: ', h('b', null, fmtMoney(summary.netValue))),
-        summary.reorderValue ? h('span', { class: 'small' }, 'Est. Compra: ', h('b', null, fmtMoney(summary.reorderValue))) : null,
+        h('span', { class: 'small' }, L('Faltante: ', 'Shortage: '), h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
+        h('span', { class: 'small' }, L('Sobrante: ', 'Overage: '), h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
+        h('span', { class: 'small' }, L('Neto: ', 'Net: '), h('b', null, fmtMoney(summary.netValue))),
+        summary.reorderValue ? h('span', { class: 'small' }, L('Est. Compra: ', 'Est. Purchase: '), h('b', null, fmtMoney(summary.reorderValue))) : null,
       )
       : null,
     (() => {
       const techStats = new Map<string, { scans: number; units: number; products: Set<string> }>();
       for (const c of counts) {
-        const name = c.counter?.trim() || session.counter || 'Técnico';
+        const name = c.counter?.trim() || session.counter || L('Técnico', 'Technician');
         const st = techStats.get(name) ?? { scans: 0, units: 0, products: new Set<string>() };
         st.scans++;
         st.units += c.qty;
@@ -247,7 +263,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
       return h(
         'div',
         null,
-        h('div', { class: 'muted xsmall bold uppercase', style: 'margin-bottom: 4px;' }, `Participación (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
+        h('div', { class: 'muted xsmall bold uppercase', style: 'margin-bottom: 4px;' }, L(`Participación (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`, `Participation (${techStats.size} contributor${techStats.size === 1 ? '' : 's'})`)),
         h(
           'ul',
           { class: 'contributor-list' },
@@ -259,7 +275,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
               h(
                 'span',
                 { class: 'muted small' },
-                `${info.products.size} prod. · ${info.scans} escaneo(s) · ${fmtNum(info.units)} u.`,
+                `${info.products.size} ${L('prod.', 'items')} · ${info.scans} ${L('escaneo(s)', 'scan(s)')} · ${fmtNum(info.units)} ${L('u.', 'u.')}`,
               ),
             ),
           ),
@@ -274,7 +290,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
           navigate(`/reporte?session=${session.id}`);
         },
       }),
-      h('span', null, 'Incluir productos del catálogo no contados'),
+      h('span', null, L('Incluir productos del catálogo no contados', 'Include uncounted catalog products')),
     ),
   ];
 
@@ -290,21 +306,21 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
           ),
           h('div', { class: 'muted xsmall' },
             `${session.counter} · ${fmtDateTime(session.createdAt)}`,
-            session.closed && session.closedAt ? ` · Finalizada: ${fmtDateTime(session.closedAt)}` : '',
+            session.closed && session.closedAt ? ` · ${L('Finalizada:', 'Closed:')} ${fmtDateTime(session.closedAt)}` : '',
           ),
         ),
         sessionSelect,
       ),
       h('div', { class: 'kpis' },
-        kpi(`${summary.accuracy}%`, 'Exactitud', summary.accuracy >= 95 ? 'good' : summary.accuracy >= 80 ? 'warn' : 'bad'),
-        kpi(fmtNum(summary.counted), 'Contados'),
-        kpi(fmtNum(summary.short), 'Faltantes', summary.short ? 'bad' : ''),
-        kpi(fmtNum(summary.over), 'Sobrantes', summary.over ? 'warn' : ''),
-        kpi(fmtNum(summary.notCounted), 'No contados'),
-        kpi(fmtNum(summary.reorderCount), 'Por pedir', summary.reorderCount ? 'warn' : ''),
+        kpi(`${summary.accuracy}%`, L('Exactitud', 'Accuracy'), summary.accuracy >= 95 ? 'good' : summary.accuracy >= 80 ? 'warn' : 'bad'),
+        kpi(fmtNum(summary.counted), L('Contados', 'Counted')),
+        kpi(fmtNum(summary.short), L('Faltantes', 'Short'), summary.short ? 'bad' : ''),
+        kpi(fmtNum(summary.over), L('Sobrantes', 'Over'), summary.over ? 'warn' : ''),
+        kpi(fmtNum(summary.notCounted), L('No contados', 'Not counted')),
+        kpi(fmtNum(summary.reorderCount), L('Por pedir', 'Reorder'), summary.reorderCount ? 'warn' : ''),
       ),
       h('div', { class: 'row wrap rep-actions-row', style: 'gap: 6px;' },
-        h('button', { class: 'btn primary sm', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
+        h('button', { class: 'btn primary sm', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), L('Exportar Excel (.xlsx)', 'Export Excel (.xlsx)')),
         h('button', { class: 'btn sm', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
         h('button', {
           class: 'btn sm',
@@ -313,7 +329,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
             selectedSessionId = sid;
             navigate(`/reporte?session=${sid}`);
           }),
-        }, icon('users'), 'Unificar reportes de técnicos'),
+        }, icon('users'), L('Unificar reportes de técnicos', 'Merge technician reports')),
         h('button', {
           class: 'btn sm',
           'data-testid': 'report-print-labels',
@@ -326,57 +342,57 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
             openBarcodeSheetDialog({
               products: sessionProducts.length ? sessionProducts : products,
               initialQuantities,
-              defaultTitle: `Etiquetas de sesión: ${session.name}`,
+              defaultTitle: `${L('Etiquetas de sesión', 'Session labels')}: ${session.name}`,
             });
           },
-        }, icon('scan'), 'Imprimir etiquetas de sesión'),
-        h('button', { class: 'btn ghost sm', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
+        }, icon('scan'), L('Imprimir etiquetas de sesión', 'Print session labels')),
+        h('button', { class: 'btn ghost sm', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), L('Compartir conteo', 'Share count')),
         isClosed
           ? h('button', {
             class: 'btn sm',
             onclick: async () => {
               await reopenSession(session.id);
-              toast('Sesión reabierta y activada', 'ok');
+              toast(L('Sesión reabierta y activada', 'Session reopened and activated'), 'ok');
               navigate(`/reporte?session=${session.id}`);
             },
-          }, 'Reabrir sesión')
+          }, L('Reabrir sesión', 'Reopen session'))
           : isCur
             ? h('button', {
               class: 'btn danger ghost sm',
               onclick: async () => {
-                const ok = await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión "${session.name}"?`, 'Finalizar', true);
+                const ok = await confirmDialog(L('Finalizar sesión', 'Close session'), L(`¿Deseas finalizar la sesión "${session.name}"?`, `Finish session "${session.name}"?`), L('Finalizar', 'Close'), true);
                 if (ok) {
                   await closeSession(session.id);
-                  toast('Sesión finalizada con éxito', 'ok');
+                  toast(L('Sesión finalizada con éxito', 'Session closed'), 'ok');
                   navigate(`/reporte?session=${session.id}`);
                 }
               },
-            }, 'Finalizar sesión')
+            }, L('Finalizar sesión', 'Close session'))
             : h('button', {
               class: 'btn sm',
               onclick: async () => {
                 await setActiveSession(session.id);
-                toast(`Sesión activa: ${session.name}`, 'ok');
+                toast(`${L('Sesión activa', 'Active session')}: ${session.name}`, 'ok');
                 navigate(`/reporte?session=${session.id}`);
               },
-            }, 'Activar sesión'),
+            }, L('Activar sesión', 'Activate session')),
       ),
       h('details', { class: 'ui-disclosure' },
-        h('summary', { class: 'ui-disclosure-summary' }, 'Desglose financiero, técnicos y opciones'),
+        h('summary', { class: 'ui-disclosure-summary' }, L('Desglose financiero, técnicos y opciones', 'Financial breakdown, technicians & options')),
         h('div', { class: 'ui-disclosure-body' }, ...secondaryItems),
       ),
     ),
     h('section', { class: 'card list-card' },
       h('div', { class: 'filter-bar-row' },
         h('input', {
-          class: 'input', type: 'search', placeholder: 'Buscar por descripción, código o responsable', value: query,
+          class: 'input', type: 'search', placeholder: L('Buscar por descripción, código o responsable', 'Search by description, code, or counter'), value: query,
           oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; drawList(); },
         }),
         chipsWrap,
       ),
       h('div', { class: 'rlist-table-head', 'aria-hidden': 'true' },
-        h('span', null, 'Producto / Estado'),
-        h('span', null, 'Ideal · Contado · Diferencia'),
+        h('span', null, L('Producto / Estado', 'Product / Status')),
+        h('span', null, L('Ideal · Contado · Diferencia', 'Ideal · Counted · Variance')),
       ),
       list,
     ),
@@ -385,7 +401,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
 }
 
 export const reportView: View = {
-  title: 'Reporte',
+  title: () => L('Reporte', 'Report'),
   async render(root, params) {
     reportMounted = true;
     const seq = ++reportRenderSeq;
@@ -439,31 +455,31 @@ function kpi(val: string, label: string, tone = '') {
 
 function rowDetailDialog(r: ReportRow, rowCounts: CountEntry[]) {
   const body = h('div', { class: 'form' },
-    h('div', null, h('b', null, r.description || 'Sin descripción')),
+    h('div', null, h('b', null, r.description || L('Sin descripción', 'No description'))),
     h('div', { class: 'muted small' },
       r.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(r.barcode)),
-      r.sku ? ` · No. parte: ${r.sku}` : '',
-      r.unit ? ` · Unidad: ${r.unit}` : '',
+      r.sku ? ` · ${L('No. parte:', 'Part #:')} ${r.sku}` : '',
+      r.unit ? ` · ${L('Unidad:', 'Unit:')} ${r.unit}` : '',
     ),
     h('div', { class: 'grid2' },
-      infoBox('Inventario ideal', fmtNum(r.idealQty ?? r.expected)),
-      infoBox('Físico contado', fmtNum(r.counted)),
-      infoBox('Diferencia', r.diff === undefined ? '—' : (r.diff > 0 ? `+${fmtNum(r.diff)}` : fmtNum(r.diff))),
-      infoBox('Valor diferencia', fmtMoney(r.diffValue)),
+      infoBox(L('Inventario ideal', 'Ideal stock'), fmtNum(r.idealQty ?? r.expected)),
+      infoBox(L('Físico contado', 'Physical counted'), fmtNum(r.counted)),
+      infoBox(L('Diferencia', 'Variance'), r.diff === undefined ? '—' : (r.diff > 0 ? `+${fmtNum(r.diff)}` : fmtNum(r.diff))),
+      infoBox(L('Valor diferencia', 'Variance value'), fmtMoney(r.diffValue)),
     ),
-    h('h4', null, `Escaneos registrados (${rowCounts.length})`),
+    h('h4', null, `${L('Escaneos registrados', 'Recorded scans')} (${rowCounts.length})`),
     h('ul', { class: 'rec-sub' },
-      rowCounts.length === 0 ? h('li', { class: 'empty' }, 'No fue escaneado') : null,
+      rowCounts.length === 0 ? h('li', { class: 'empty' }, L('No fue escaneado', 'Not scanned')) : null,
       rowCounts.map((c) => h('li', null,
         h('span', null, `${fmtNum(c.qty)} · ${c.counter}`),
-        h('span', { class: 'muted small' }, new Date(c.timestamp).toLocaleTimeString('es-MX', { hour12: false })),
+        h('span', { class: 'muted small' }, new Date(c.timestamp).toLocaleTimeString(getLocaleTag(), { hour12: false })),
       )),
     ),
   );
-  openDialog('Detalle del producto', body, [
-    { label: 'Cerrar' },
+  openDialog(L('Detalle del producto', 'Product details'), body, [
+    { label: L('Cerrar', 'Close') },
     {
-      label: isMobileCatalogReadOnly() ? 'Ver etiqueta / Producto' : 'Editar producto',
+      label: isMobileCatalogReadOnly() ? L('Ver etiqueta / Producto', 'View label / Product') : L('Editar producto', 'Edit product'),
       onClick: async () => {
         const saved = await editProductDialog(r.barcode);
         if (saved) navigate(selectedSessionId ? `/reporte?session=${selectedSessionId}` : '/reporte');

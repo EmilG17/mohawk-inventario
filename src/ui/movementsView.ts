@@ -1,3 +1,4 @@
+import { L } from '../i18n/i18n';
 import {
   allProducts,
   countsForSession,
@@ -129,7 +130,7 @@ export async function findProductByCode(code: string): Promise<Product | undefin
  * Vista de Entradas / Salidas (Kardex) y Conciliación con Inventario Ideal
  */
 export const movementsView: View = {
-  title: 'Entradas / Salidas e Inventario Ideal',
+  title: () => L('Entradas / Salidas e Inventario Ideal', 'Stock In/Out & Ideal Inventory'),
 
   async render(root: HTMLElement, params: URLSearchParams): Promise<void> {
     viewRootEl = root;
@@ -406,7 +407,7 @@ async function renderMainView(): Promise<void> {
     rows.push({
       sku,
       barcode: p?.barcode || '',
-      description: p?.description || (p?.uncataloged ? 'Producto no catalogado' : 'Sin descripción'),
+      description: p?.description || (p?.uncataloged ? L('Producto no catalogado', 'Uncataloged product') : L('Sin descripción', 'No description')),
       unit: p?.unit || 'PZA',
       currentStock,
       totalIn,
@@ -426,7 +427,7 @@ async function renderMainView(): Promise<void> {
   // 1. KPIs en Vivo
   const kpiSection = h('section', { class: 'card' },
     h('div', { class: 'card-head wrap' },
-      h('h2', null, 'Control de Movimientos y Existencia Ideal'),
+      h('h2', null, L('Control de Movimientos y Existencia Ideal', 'Movements & Ideal Stock Control')),
       h('div', { class: 'row wrap', style: 'gap: 6px;' },
         h('button', {
           class: 'btn sm dash-flow-in',
@@ -437,7 +438,7 @@ async function renderMainView(): Promise<void> {
               await renderMainView();
             });
           },
-        }, '+ Entrada'),
+        }, L('+ Entrada', '+ Stock In')),
         h('button', {
           class: 'btn sm dash-flow-out',
           type: 'button',
@@ -447,7 +448,7 @@ async function renderMainView(): Promise<void> {
               await renderMainView();
             });
           },
-        }, '− Salida'),
+        }, L('− Salida', '− Stock Out')),
         h('button', {
           class: 'btn ghost sm',
           'data-testid': 'movements-register-btn',
@@ -456,17 +457,17 @@ async function renderMainView(): Promise<void> {
               await renderMainView();
             });
           },
-        }, icon('swap'), 'Registrar Movimiento'),
+        }, icon('swap'), L('Registrar Movimiento', 'Log Movement')),
       ),
     ),
     h('div', { class: 'kpis kpis-4' },
       h('div', { class: 'kpi good', id: 'kpi-card-in' },
         h('div', { class: 'kpi-v', id: 'kpi-in' }, `+${fmtNum(totalEntriesQty)}`),
-        h('div', { class: 'kpi-l' }, 'Total Entradas'),
+        h('div', { class: 'kpi-l' }, L('Total Entradas', 'Total In')),
       ),
       h('div', { class: 'kpi warn', id: 'kpi-card-out' },
         h('div', { class: 'kpi-v', id: 'kpi-out' }, `−${fmtNum(totalExitsQty)}`),
-        h('div', { class: 'kpi-l' }, 'Total Salidas'),
+        h('div', { class: 'kpi-l' }, L('Total Salidas', 'Total Out')),
       ),
       h('div', { class: 'kpi', id: 'kpi-card-net' },
         h('div', {
@@ -474,13 +475,13 @@ async function renderMainView(): Promise<void> {
           id: 'kpi-net',
           style: netMovementsBalance >= 0 ? 'color: var(--success);' : 'color: var(--danger);',
         }, `${netMovementsBalance >= 0 ? '+' : ''}${fmtNum(netMovementsBalance)}`),
-        h('div', { class: 'kpi-l' }, 'Balance Neto'),
+        h('div', { class: 'kpi-l' }, L('Balance Neto', 'Net Balance')),
       ),
       h('div', {
         class: 'kpi bad',
         id: 'kpi-card-deficit',
         style: 'cursor: pointer;',
-        title: 'Click para ver SKUs en déficit o críticos',
+        title: L('Click para ver SKUs en déficit o críticos', 'Click to view deficit or critical SKUs'),
         onclick: () => {
           activeSubTab = 'comparative';
           tableFilter = 'deficit_critical';
@@ -488,7 +489,7 @@ async function renderMainView(): Promise<void> {
         },
       },
       h('div', { class: 'kpi-v', id: 'kpi-deficit' }, `${deficitOrCriticalCount} SKUs`),
-      h('div', { class: 'kpi-l' }, 'En Déficit / Críticos'),
+      h('div', { class: 'kpi-l' }, L('En Déficit / Críticos', 'Deficit / Critical')),
       ),
     ),
   );
@@ -501,14 +502,14 @@ async function renderMainView(): Promise<void> {
         activeSubTab = 'comparative';
         void renderMainView();
       },
-    }, 'Conciliación e Ideal'),
+    }, L('Conciliación e Ideal', 'Reconciliation & Ideal')),
     h('button', {
       class: `chip sup-tab-btn ${activeSubTab === 'bitacora' ? 'active' : ''}`,
       onclick: () => {
         activeSubTab = 'bitacora';
         void renderMainView();
       },
-    }, `Bitácora de Consumo (${movements.length})`),
+    }, `${L('Bitácora de Consumo', 'Movement Log')} (${movements.length})`),
   );
 
   // 3. Contenedor Activo
@@ -537,7 +538,7 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
   const searchInput = h('input', {
     class: 'input',
     type: 'search',
-    placeholder: 'Buscar por SKU o descripción...',
+    placeholder: L('Buscar por SKU o descripción...', 'Search by SKU or description...'),
     value: tableSearchQuery,
     oninput: (e: Event) => {
       tableSearchQuery = (e.target as HTMLInputElement).value;
@@ -549,23 +550,23 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
     h('button', {
       class: `chip ${tableFilter === 'todos' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'todos'; updateChips(); updateTableRows(); },
-    }, `Todos (${rows.length})`),
+    }, `${L('Todos', 'All')} (${rows.length})`),
     h('button', {
       class: `chip ${tableFilter === 'deficit_critical' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'deficit_critical'; updateChips(); updateTableRows(); },
-    }, `Déficit / Críticos (${deficitCount})`),
+    }, `${L('Déficit / Críticos', 'Deficit / Critical')} (${deficitCount})`),
     h('button', {
       class: `chip ${tableFilter === 'optimal' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'optimal'; updateChips(); updateTableRows(); },
-    }, `Óptimos (${optimalCount})`),
+    }, `${L('Óptimos', 'Optimal')} (${optimalCount})`),
     h('button', {
       class: `chip ${tableFilter === 'excess' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'excess'; updateChips(); updateTableRows(); },
-    }, `Exceso (${excessCount})`),
+    }, `${L('Exceso', 'Excess')} (${excessCount})`),
     h('button', {
       class: `chip ${tableFilter === 'with_movements' ? 'active' : ''}`,
       onclick: () => { tableFilter = 'with_movements'; updateChips(); updateTableRows(); },
-    }, `Con Movimientos (${withMovementsCount})`),
+    }, `${L('Con Movimientos', 'With Movements')} (${withMovementsCount})`),
   );
 
   const updateChips = () => {
@@ -585,23 +586,23 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
     h('table', { class: 'comp-table' },
       h('thead', null,
         h('tr', null,
-          h('th', null, 'SKU / Código'),
-          h('th', null, 'Descripción'),
-          h('th', { style: 'text-align: right;' }, 'Físico'),
-          h('th', { style: 'text-align: right;' }, 'Entradas'),
-          h('th', { style: 'text-align: right;' }, 'Salidas'),
-          h('th', { style: 'text-align: right;' }, 'Dinámico'),
-          h('th', { style: 'text-align: right;' }, 'Ideal'),
-          h('th', { style: 'text-align: right;' }, 'Brecha'),
-          h('th', { style: 'text-align: center;' }, 'Estado'),
-          h('th', { style: 'text-align: center;' }, 'Acciones'),
+          h('th', null, L('SKU / Código', 'SKU / Code')),
+          h('th', null, L('Descripción', 'Description')),
+          h('th', { style: 'text-align: right;' }, L('Físico', 'Physical')),
+          h('th', { style: 'text-align: right;' }, L('Entradas', 'In')),
+          h('th', { style: 'text-align: right;' }, L('Salidas', 'Out')),
+          h('th', { style: 'text-align: right;' }, L('Dinámico', 'Dynamic')),
+          h('th', { style: 'text-align: right;' }, L('Ideal', 'Ideal')),
+          h('th', { style: 'text-align: right;' }, L('Brecha', 'Gap')),
+          h('th', { style: 'text-align: center;' }, L('Estado', 'Status')),
+          h('th', { style: 'text-align: center;' }, L('Acciones', 'Actions')),
         ),
       ),
       tableBody,
     ),
   );
 
-  const emptyMsg = h('p', { class: 'muted center', style: 'padding: 20px 0; display: none;' }, 'No se encontraron productos coincidentes.');
+  const emptyMsg = h('p', { class: 'muted center', style: 'padding: 20px 0; display: none;' }, L('No se encontraron productos coincidentes.', 'No matching products found.'));
 
   const updateTableRows = () => {
     clear(tableBody);
@@ -716,16 +717,16 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
 
     // Badge
     let badgeCls = 'badge ok';
-    let label = 'Óptimo';
+    let label = L('Óptimo', 'Optimal');
     if (row.status === 'deficit') {
       badgeCls = 'badge warn';
-      label = 'Déficit';
+      label = L('Déficit', 'Deficit');
     } else if (row.status === 'critical') {
       badgeCls = 'badge error';
-      label = 'Crítico';
+      label = L('Crítico', 'Critical');
     } else if (row.status === 'excess') {
       badgeCls = 'badge info';
-      label = 'Exceso';
+      label = L('Exceso', 'Excess');
     }
     clear(statusCell, h('span', { class: badgeCls }, label));
   };
@@ -754,7 +755,7 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
     });
 
     renderGapAndStatus();
-    toast(`Inventario ideal de ${row.sku} actualizado a ${newQty}`, 'ok', 1400);
+    toast(L(`Inventario ideal de ${row.sku} actualizado a ${newQty}`, `Ideal stock for ${row.sku} updated to ${newQty}`), 'ok', 1400);
 
     // Actualizar live KPI card si está en DOM
     updateLiveDeficitKpi();
@@ -770,7 +771,7 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
     h('button', {
       class: 'btn sm good',
       style: 'padding: 4px 8px; margin-right: 4px; font-weight: 700;',
-      title: `Registrar entrada de ${row.sku}`,
+      title: L(`Registrar entrada de ${row.sku}`, `Log stock in for ${row.sku}`),
       onclick: async () => {
         await openMovementRegistrationModal(row.sku, 'IN', async () => {
           await renderMainView();
@@ -780,7 +781,7 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
     h('button', {
       class: 'btn sm warn',
       style: 'padding: 4px 8px; font-weight: 700;',
-      title: `Registrar salida de ${row.sku}`,
+      title: L(`Registrar salida de ${row.sku}`, `Log stock out for ${row.sku}`),
       onclick: async () => {
         await openMovementRegistrationModal(row.sku, 'OUT', async () => {
           await renderMainView();
@@ -837,7 +838,7 @@ function renderBitacoraSection(
   const searchInput = h('input', {
     class: 'input',
     type: 'search',
-    placeholder: 'Buscar en bitácora (SKU, folio, notas, técnico)...',
+    placeholder: L('Buscar en bitácora (SKU, folio, notas, técnico)...', 'Search log (SKU, ref, notes, technician)...'),
     value: bitacoraSearch,
     oninput: (e: Event) => {
       bitacoraSearch = (e.target as HTMLInputElement).value;
@@ -847,7 +848,7 @@ function renderBitacoraSection(
 
   const techInput = h('input', {
     class: 'input sm',
-    placeholder: 'Filtrar por técnico/proveedor...',
+    placeholder: L('Filtrar por técnico/proveedor...', 'Filter by technician/supplier...'),
     value: bitacoraTech,
     oninput: (e: Event) => {
       bitacoraTech = (e.target as HTMLInputElement).value;
@@ -857,7 +858,7 @@ function renderBitacoraSection(
 
   const areaInput = h('input', {
     class: 'input sm',
-    placeholder: 'Filtrar por máquina/área...',
+    placeholder: L('Filtrar por máquina/área...', 'Filter by machine/area...'),
     value: bitacoraArea,
     oninput: (e: Event) => {
       bitacoraArea = (e.target as HTMLInputElement).value;
@@ -869,34 +870,34 @@ function renderBitacoraSection(
     h('button', {
       class: `chip ${bitacoraType === 'ALL' ? 'active' : ''}`,
       onclick: () => { bitacoraType = 'ALL'; updateTypeChips(); renderMovementList(); },
-    }, 'Todos los tipos'),
+    }, L('Todos los tipos', 'All types')),
     h('button', {
       class: `chip ${bitacoraType === 'IN' ? 'active' : ''}`,
       onclick: () => { bitacoraType = 'IN'; updateTypeChips(); renderMovementList(); },
-    }, 'Solo Entradas (IN)'),
+    }, L('Solo Entradas (IN)', 'Stock In Only (IN)')),
     h('button', {
       class: `chip ${bitacoraType === 'OUT' ? 'active' : ''}`,
       onclick: () => { bitacoraType = 'OUT'; updateTypeChips(); renderMovementList(); },
-    }, 'Solo Salidas (OUT)'),
+    }, L('Solo Salidas (OUT)', 'Stock Out Only (OUT)')),
   );
 
   const dateChips = h('div', { class: 'chips' },
     h('button', {
       class: `chip ${bitacoraDateRange === 'all' ? 'active' : ''}`,
       onclick: () => { bitacoraDateRange = 'all'; updateDateChips(); renderMovementList(); },
-    }, 'Todo el historial'),
+    }, L('Todo el historial', 'All history')),
     h('button', {
       class: `chip ${bitacoraDateRange === 'today' ? 'active' : ''}`,
       onclick: () => { bitacoraDateRange = 'today'; updateDateChips(); renderMovementList(); },
-    }, 'Hoy'),
+    }, L('Hoy', 'Today')),
     h('button', {
       class: `chip ${bitacoraDateRange === '7days' ? 'active' : ''}`,
       onclick: () => { bitacoraDateRange = '7days'; updateDateChips(); renderMovementList(); },
-    }, 'Últimos 7 días'),
+    }, L('Últimos 7 días', 'Last 7 days')),
     h('button', {
       class: `chip ${bitacoraDateRange === 'month' ? 'active' : ''}`,
       onclick: () => { bitacoraDateRange = 'month'; updateDateChips(); renderMovementList(); },
-    }, 'Este mes'),
+    }, L('Este mes', 'This month')),
   );
 
   const updateTypeChips = () => {
@@ -960,7 +961,7 @@ function renderBitacoraSection(
 
     if (filtered.length === 0) {
       listContainer.appendChild(
-        h('div', { class: 'empty' }, 'No hay movimientos que coincidan con los filtros seleccionados.'),
+        h('div', { class: 'empty' }, L('No hay movimientos que coincidan con los filtros seleccionados.', 'No movements match the selected filters.')),
       );
       return;
     }
@@ -972,7 +973,7 @@ function renderBitacoraSection(
       const itemCard = h('div', { class: `m-item ${isEntry ? 'in' : 'out'}` },
         h('div', { class: 'm-head' },
           h('div', { style: 'display: flex; align-items: center; gap: 8px;' },
-            h('span', { class: `badge ${isEntry ? 'ok' : 'warn'}` }, isEntry ? 'ENTRADA' : 'SALIDA'),
+            h('span', { class: `badge ${isEntry ? 'ok' : 'warn'}` }, isEntry ? L('ENTRADA', 'IN') : L('SALIDA', 'OUT')),
             h('span', { class: `m-qty ${isEntry ? 'in' : 'out'}` },
               `${isEntry ? '+' : '−'}${fmtNum(m.quantity)} ${prod?.unit || 'PZA'}`,
             ),
@@ -982,20 +983,20 @@ function renderBitacoraSection(
         h('div', { class: 'm-body' },
           h('div', { class: 'm-desc' },
             h('span', { style: 'font-weight: 800; margin-right: 6px;' }, m.sku),
-            prod?.description || 'Producto',
+            prod?.description || L('Producto', 'Product'),
           ),
           h('div', { class: 'm-meta' },
             m.technicianOrSupplier
-              ? h('span', null, h('b', null, isEntry ? 'Proveedor: ' : 'Técnico: '), m.technicianOrSupplier)
+              ? h('span', null, h('b', null, isEntry ? L('Proveedor: ', 'Supplier: ') : L('Técnico: ', 'Technician: ')), m.technicianOrSupplier)
               : null,
             m.machineOrArea
-              ? h('span', null, h('b', null, 'Área/Máq: '), m.machineOrArea)
+              ? h('span', null, h('b', null, L('Área/Máq: ', 'Area/Machine: ')), m.machineOrArea)
               : null,
-            m.folio ? h('span', null, h('b', null, 'Folio: '), m.folio) : null,
+            m.folio ? h('span', null, h('b', null, L('Folio: ', 'Ref: ')), m.folio) : null,
           ),
           m.notes
             ? h('div', { class: 'small muted', style: 'margin-top: 4px; font-style: italic;' },
-              `Notas: ${m.notes}`,
+              `${L('Notas:', 'Notes:')} ${m.notes}`,
             )
             : null,
         ),
@@ -1004,19 +1005,22 @@ function renderBitacoraSection(
             class: 'btn sm danger ghost',
             onclick: async () => {
               const ok = await confirmDialog(
-                'Eliminar movimiento',
-                `¿Deseas revertir y eliminar este movimiento de ${isEntry ? 'Entrada' : 'Salida'} (${m.quantity} ${m.sku})?`,
-                'Eliminar',
+                L('Eliminar movimiento', 'Delete movement'),
+                L(
+                  `¿Deseas revertir y eliminar este movimiento de ${isEntry ? 'Entrada' : 'Salida'} (${m.quantity} ${m.sku})?`,
+                  `Revert and delete this ${isEntry ? 'Stock In' : 'Stock Out'} movement (${m.quantity} ${m.sku})?`,
+                ),
+                L('Eliminar', 'Delete'),
                 true,
               );
               if (ok) {
                 await deleteMovement(m.id);
                 triggerBackgroundSync();
-                toast('Movimiento eliminado correctamente', 'ok');
+                toast(L('Movimiento eliminado correctamente', 'Movement deleted'), 'ok');
                 await renderMainView();
               }
             },
-          }, icon('trash'), 'Eliminar'),
+          }, icon('trash'), L('Eliminar', 'Delete')),
         ),
       );
 
@@ -1028,14 +1032,14 @@ function renderBitacoraSection(
 
   clear(container,
     h('div', { class: 'card-head' },
-      h('h3', null, 'Bitácora de Consumo y Trazabilidad'),
+      h('h3', null, L('Bitácora de Consumo y Trazabilidad', 'Consumption & Traceability Log')),
     ),
     h('div', { class: 'filter-bar-row' },
       searchInput,
       typeChips,
     ),
     h('details', { class: 'ui-disclosure', style: 'margin-bottom: 10px;' },
-      h('summary', { class: 'ui-disclosure-summary' }, 'Filtros avanzados (técnico, área y periodo)'),
+      h('summary', { class: 'ui-disclosure-summary' }, L('Filtros avanzados (técnico, área y periodo)', 'Advanced filters (technician, area & date)')),
       h('div', { class: 'ui-disclosure-body' },
         h('div', { style: 'display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 8px;' },
           techInput,
@@ -1094,7 +1098,7 @@ export async function openMovementRegistrationModal(
         movementType = 'IN';
         updateSegmentedStyles();
       },
-    }, 'Entrada (IN)');
+    }, L('Entrada (IN)', 'Stock In (IN)'));
 
     const exitBtn = h('button', {
       class: `segmented-btn ${movementType === 'OUT' ? 'active out' : ''}`,
@@ -1104,26 +1108,28 @@ export async function openMovementRegistrationModal(
         movementType = 'OUT';
         updateSegmentedStyles();
       },
-    }, 'Salida (OUT)');
+    }, L('Salida (OUT)', 'Stock Out (OUT)'));
 
     const segmentedSwitch = h('div', { class: 'segmented-switch' }, entryBtn, exitBtn);
 
-    const actorLabelSpan = h('span', null, movementType === 'IN' ? 'Proveedor / Origen' : 'Técnico / Solicitante');
+    const actorLabelSpan = h('span', null, movementType === 'IN' ? L('Proveedor / Origen', 'Supplier / Source') : L('Técnico / Solicitante', 'Technician / Requester'));
+    const defaultAreaIn = L('Almacén Central', 'Central Warehouse');
+    const defaultAreaOut = L('Línea de Producción', 'Production Line');
 
     const updateSegmentedStyles = () => {
       if (movementType === 'IN') {
         entryBtn.className = 'segmented-btn active in';
         exitBtn.className = 'segmented-btn';
-        actorLabelSpan.textContent = 'Proveedor / Origen';
-        if (!areaInput.value || areaInput.value === 'Línea de Producción') {
-          areaInput.value = 'Almacén Central';
+        actorLabelSpan.textContent = L('Proveedor / Origen', 'Supplier / Source');
+        if (!areaInput.value || areaInput.value === defaultAreaOut) {
+          areaInput.value = defaultAreaIn;
         }
       } else {
         entryBtn.className = 'segmented-btn';
         exitBtn.className = 'segmented-btn active out';
-        actorLabelSpan.textContent = 'Técnico / Solicitante';
-        if (!areaInput.value || areaInput.value === 'Almacén Central') {
-          areaInput.value = 'Línea de Producción';
+        actorLabelSpan.textContent = L('Técnico / Solicitante', 'Technician / Requester');
+        if (!areaInput.value || areaInput.value === defaultAreaIn) {
+          areaInput.value = defaultAreaOut;
         }
       }
     };
@@ -1133,20 +1139,20 @@ export async function openMovementRegistrationModal(
       id: 'm-sku-input',
       'data-testid': 'movements-sku-input',
       class: 'input',
-      placeholder: 'Código de barras o SKU (ej. MHK-001)...',
+      placeholder: L('Código de barras o SKU (ej. MHK-001)...', 'Barcode or SKU (e.g. MHK-001)...'),
       autocomplete: 'off',
     }) as HTMLInputElement;
 
   const camToggleBtn = h('button', {
     class: 'btn ghost sm',
     type: 'button',
-    title: 'Escanear con cámara',
+    title: L('Escanear con cámara', 'Scan with camera'),
     onclick: () => void toggleCamera(),
-  }, icon('camera'), 'Cámara');
+  }, icon('camera'), L('Cámara', 'Camera'));
 
   const skuField = h('div', { style: 'margin-bottom: 10px;' },
     h('label', { class: 'field' },
-      h('span', null, 'Código de barras o SKU *'),
+      h('span', null, L('Código de barras o SKU *', 'Barcode or SKU *')),
       h('div', { style: 'display: flex; gap: 6px;' },
         skuInput,
         cameraAvailable() ? camToggleBtn : null,
@@ -1166,7 +1172,7 @@ export async function openMovementRegistrationModal(
         await activeModalScanner.setTorch(torchState);
       }
     },
-  }, icon('torch'), 'Linterna');
+  }, icon('torch'), L('Linterna', 'Flashlight'));
 
   let torchState = false;
   const camBox = h('div', { class: 'cam-box', style: 'display: none;' },
@@ -1185,7 +1191,7 @@ export async function openMovementRegistrationModal(
     }
     cameraRunning = false;
     camBox.style.display = 'none';
-    camToggleBtn.replaceChildren(icon('camera'), 'Cámara');
+    camToggleBtn.replaceChildren(icon('camera'), L('Cámara', 'Camera'));
     torchBtn.style.display = 'none';
     torchState = false;
   };
@@ -1196,7 +1202,7 @@ export async function openMovementRegistrationModal(
       return;
     }
     camBox.style.display = 'flex';
-    camToggleBtn.replaceChildren(icon('stop'), 'Detener');
+    camToggleBtn.replaceChildren(icon('stop'), L('Detener', 'Stop'));
     cameraRunning = true;
 
     try {
@@ -1261,16 +1267,16 @@ export async function openMovementRegistrationModal(
         : (detectedProduct as any)?.idealQty ?? detectedProduct?.maxQty ?? detectedProduct?.expectedQty ?? 0;
 
     clear(previewCard,
-      h('div', { class: 'title' }, detectedProduct?.description || 'Producto no catalogado'),
+      h('div', { class: 'title' }, detectedProduct?.description || L('Producto no catalogado', 'Uncataloged product')),
       h('div', { class: 'meta' },
         h('span', null, h('b', null, 'SKU: '), skuUpper),
-        detectedProduct?.barcode ? h('span', null, h('b', null, 'Barras: '), displayBarcode(detectedProduct.barcode)) : null,
-        h('span', null, h('b', null, 'Unidad: '), detectedProduct?.unit || 'PZA'),
+        detectedProduct?.barcode ? h('span', null, h('b', null, L('Barras: ', 'Barcode: ')), displayBarcode(detectedProduct.barcode)) : null,
+        h('span', null, h('b', null, L('Unidad: ', 'Unit: ')), detectedProduct?.unit || 'PZA'),
       ),
       h('div', { class: 'meta', style: 'margin-top: 6px; font-weight: 600;' },
-        h('span', null, 'Stock Físico: ', h('span', { style: 'color: var(--primary);' }, fmtNum(initialStock))),
-        h('span', null, 'Stock Dinámico: ', h('span', { style: 'color: var(--text);' }, fmtNum(dynamicStock))),
-        h('span', null, 'Inventario Ideal: ', h('span', { style: 'color: var(--info);' }, fmtNum(idealStock))),
+        h('span', null, L('Stock Físico: ', 'Physical Stock: '), h('span', { style: 'color: var(--primary);' }, fmtNum(initialStock))),
+        h('span', null, L('Stock Dinámico: ', 'Dynamic Stock: '), h('span', { style: 'color: var(--text);' }, fmtNum(dynamicStock))),
+        h('span', null, L('Inventario Ideal: ', 'Ideal Stock: '), h('span', { style: 'color: var(--info);' }, fmtNum(idealStock))),
       ),
     );
   };
@@ -1341,28 +1347,28 @@ export async function openMovementRegistrationModal(
   // 5. Técnico / Proveedor
   const actorInput = h('input', {
     class: 'input',
-    placeholder: 'Nombre de persona o empresa...',
+    placeholder: L('Nombre de persona o empresa...', 'Person or company name...'),
     value: session?.counter || '',
   }) as HTMLInputElement;
 
   // 6. Área / Máquina
   const areaInput = h('input', {
     class: 'input',
-    placeholder: 'Ej. Línea 1, Taller Mecánico, Almacén Central...',
-    value: movementType === 'IN' ? 'Almacén Central' : 'Línea de Producción',
+    placeholder: L('Ej. Línea 1, Taller Mecánico, Almacén Central...', 'e.g. Line 1, Machine Shop, Central Warehouse...'),
+    value: movementType === 'IN' ? defaultAreaIn : defaultAreaOut,
   }) as HTMLInputElement;
 
   // 7. Folio
   const folioInput = h('input', {
     class: 'input',
-    placeholder: 'Ej. REQ-2045 o Factura 182...',
+    placeholder: L('Ej. REQ-2045 o Factura 182...', 'e.g. REQ-2045 or Invoice 182...'),
   }) as HTMLInputElement;
 
   // 8. Notas
   const notesInput = h('textarea', {
     class: 'input',
     rows: 2,
-    placeholder: 'Observaciones o motivo del movimiento...',
+    placeholder: L('Observaciones o motivo del movimiento...', 'Notes or movement reason...'),
   }) as HTMLTextAreaElement;
 
   // Cuerpo del Formulario
@@ -1372,7 +1378,7 @@ export async function openMovementRegistrationModal(
     camBox,
     previewCard,
     h('label', { class: 'field' },
-      h('span', null, 'Cantidad *'),
+      h('span', null, L('Cantidad *', 'Quantity *')),
       stepperWrap,
     ),
     h('label', { class: 'field' },
@@ -1380,15 +1386,15 @@ export async function openMovementRegistrationModal(
       actorInput,
     ),
     h('label', { class: 'field' },
-      h('span', null, 'Área o Máquina de Destino/Origen'),
+      h('span', null, L('Área o Máquina de Destino/Origen', 'Target/Source Area or Machine')),
       areaInput,
     ),
     h('label', { class: 'field' },
-      h('span', null, 'Folio o Referencia'),
+      h('span', null, L('Folio o Referencia', 'Reference / Slip #')),
       folioInput,
     ),
     h('label', { class: 'field' },
-      h('span', null, 'Notas adicionales'),
+      h('span', null, L('Notas adicionales', 'Additional notes')),
       notesInput,
     ),
   );
@@ -1397,14 +1403,14 @@ export async function openMovementRegistrationModal(
   const saveEntry = async (keepOpen = false): Promise<boolean> => {
     const rawSku = skuInput.value.trim().toUpperCase();
     if (!rawSku) {
-      toast('Captura o escanea el SKU del producto', 'warn');
+      toast(L('Captura o escanea el SKU del producto', 'Enter or scan the product SKU'), 'warn');
       skuInput.focus();
       return false;
     }
 
     const qty = parseFloat(qtyInput.value);
     if (isNaN(qty) || qty <= 0) {
-      toast('Ingresa una cantidad válida mayor a 0', 'warn');
+      toast(L('Ingresa una cantidad válida mayor a 0', 'Enter a valid quantity greater than 0'), 'warn');
       qtyInput.focus();
       return false;
     }
@@ -1435,7 +1441,7 @@ export async function openMovementRegistrationModal(
       beep('ok');
       vibrate('ok');
       toast(
-        `Movimiento registrado: ${movementType === 'IN' ? '+' : '−'}${qty} ${rawSku}`,
+        `${L('Movimiento registrado:', 'Movement recorded:')} ${movementType === 'IN' ? '+' : '−'}${qty} ${rawSku}`,
         'ok',
         1800,
       );
@@ -1459,7 +1465,7 @@ export async function openMovementRegistrationModal(
       return true;
     } catch (e) {
       console.error(e);
-      toast('Error al guardar movimiento: ' + (e as Error).message, 'error');
+      toast(L('Error al guardar movimiento: ', 'Failed to save movement: ') + (e as Error).message, 'error');
       return false;
     }
   };
@@ -1473,14 +1479,14 @@ export async function openMovementRegistrationModal(
         stopCameraStream();
         dlg.close();
       },
-    }, 'Cancelar'),
+    }, L('Cancelar', 'Cancel')),
     h('button', {
       class: 'btn',
       type: 'button',
       onclick: async () => {
         await saveEntry(true);
       },
-    }, 'Guardar y Nuevo'),
+    }, L('Guardar y Nuevo', 'Save & New')),
     h('button', {
       class: 'btn primary',
       type: 'button',
@@ -1492,11 +1498,11 @@ export async function openMovementRegistrationModal(
           dlg.close();
         }
       },
-    }, 'Guardar Movimiento'),
+    }, L('Guardar Movimiento', 'Save Movement')),
   );
 
   clear(dlg,
-    h('h3', null, 'Registrar Movimiento de Inventario'),
+    h('h3', null, L('Registrar Movimiento de Inventario', 'Record Inventory Movement')),
     h('div', { class: 'dlg-body' }, formBody),
     actionsDiv,
   );

@@ -1,4 +1,5 @@
 import { getMeta, setMeta } from './db/db';
+import type { LangPref } from './i18n/i18n';
 
 export interface Settings {
   counterName: string;
@@ -23,6 +24,8 @@ export interface Settings {
   syncAuto: boolean;
   /** Modo Supervisor en móvil: habilita controles administrativos y de auditoría en pantallas móviles */
   supervisorMode?: boolean;
+  /** Preferencia de idioma ('auto' sigue al idioma del dispositivo) */
+  language?: LangPref;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -39,6 +42,7 @@ export const DEFAULT_SETTINGS: Settings = {
   syncEndpointUrl: '',
   syncAuto: true,
   supervisorMode: false,
+  language: 'auto',
 };
 
 let cache: Settings | null = null;

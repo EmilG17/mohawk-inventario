@@ -1,3 +1,4 @@
+import { L, getLocaleTag } from '../i18n/i18n';
 import { settingsSync } from '../settings';
 
 type Child = Node | string | number | null | undefined | false | Child[];
@@ -85,11 +86,11 @@ export function openDialog(title: string, body: Child, actions: { label: string;
   return dlg;
 }
 
-export function confirmDialog(title: string, msg: string, okLabel = 'Aceptar', danger = false): Promise<boolean> {
+export function confirmDialog(title: string, msg: string, okLabel = L('Aceptar', 'OK'), danger = false): Promise<boolean> {
   return new Promise((resolve) => {
     let ok = false;
     const d = openDialog(title, h('p', null, msg), [
-      { label: 'Cancelar' },
+      { label: L('Cancelar', 'Cancel') },
       { label: okLabel, kind: danger ? 'danger' : 'primary', onClick: () => { ok = true; } },
     ]);
     d.addEventListener('close', () => resolve(ok));
@@ -103,8 +104,8 @@ export function promptDialog(title: string, label: string, value = '', inputAttr
     const form = h('form', { onsubmit: (e: Event) => { e.preventDefault(); result = input.value; d.close(); } },
       h('label', { class: 'field' }, h('span', null, label), input));
     const d = openDialog(title, form, [
-      { label: 'Cancelar' },
-      { label: 'Aceptar', kind: 'primary', onClick: () => { result = input.value; } },
+      { label: L('Cancelar', 'Cancel') },
+      { label: L('Aceptar', 'OK'), kind: 'primary', onClick: () => { result = input.value; } },
     ]);
     d.addEventListener('close', () => resolve(result));
     setTimeout(() => { input.focus(); input.select(); }, 50);
@@ -160,21 +161,21 @@ export function pickFiles(accept: string, multiple = false): Promise<File[]> {
 
 export function fmtNum(n: number | undefined, dec = 2): string {
   if (n === undefined || n === null || Number.isNaN(n)) return '—';
-  return n.toLocaleString('es-MX', { maximumFractionDigits: dec });
+  return n.toLocaleString(getLocaleTag(), { maximumFractionDigits: dec });
 }
 export function fmtMoney(n: number | undefined): string {
   if (n === undefined) return '—';
   try {
-    return n.toLocaleString('es-MX', { style: 'currency', currency: settingsSync().currency || 'MXN', maximumFractionDigits: 2 });
+    return n.toLocaleString(getLocaleTag(), { style: 'currency', currency: settingsSync().currency || 'MXN', maximumFractionDigits: 2 });
   } catch {
-    return n.toLocaleString('es-MX', { maximumFractionDigits: 2 });
+    return n.toLocaleString(getLocaleTag(), { maximumFractionDigits: 2 });
   }
 }
 export function fmtDateTime(t: number): string {
-  return new Date(t).toLocaleString('es-MX', { dateStyle: 'short', timeStyle: 'short', hour12: false });
+  return new Date(t).toLocaleString(getLocaleTag(), { dateStyle: 'short', timeStyle: 'short', hour12: false });
 }
 export function fmtTime(t: number): string {
-  return new Date(t).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: false });
+  return new Date(t).toLocaleTimeString(getLocaleTag(), { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
 export function icon(name: string): SVGSVGElement {

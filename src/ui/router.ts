@@ -1,5 +1,7 @@
+import { L } from '../i18n/i18n';
+
 export interface View {
-  title: string;
+  title: string | (() => string);
   render(root: HTMLElement, params: URLSearchParams): void | Promise<void>;
   /** Se llama al salir de la pantalla (p. ej. apagar la cámara) */
   destroy?(): void | Promise<void>;
@@ -44,7 +46,7 @@ async function render(): Promise<void> {
   } catch (e) {
     if (seq === navSeq) {
       console.error(e);
-      root.textContent = 'Ocurrió un error: ' + (e as Error).message;
+      root.textContent = L('Ocurrió un error: ', 'An error occurred: ') + (e as Error).message;
     }
   }
 }

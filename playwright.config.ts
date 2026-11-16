@@ -11,6 +11,7 @@ export default defineConfig({
   },
   use: {
     baseURL: 'http://localhost:4173',
+    locale: 'es-MX',
     trace: 'off',
     video: 'off',
     screenshot: 'only-on-failure',
