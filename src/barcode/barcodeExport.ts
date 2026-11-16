@@ -106,7 +106,7 @@ export interface PrintLabelOptions {
  * Esto evita que las impresoras térmicas (4"x2", continuo) interpreten el documento
  * como papel Carta (Letter 11"), empujando el código fuera del papel.
  */
-export function applyPrintPageStyle(pageSize = '4in 2in landscape'): void {
+export function applyPrintPageStyle(pageSize = '3.25in 2in portrait'): void {
   if (typeof document === 'undefined') return;
   let styleEl = document.getElementById('print-page-style') as HTMLStyleElement | null;
   if (!styleEl) {
@@ -148,17 +148,21 @@ export function printLabel(
     document.body.appendChild(printRoot);
   }
 
-  if (options?.precut3in1) {
+  const usePrecut3in1 =
+    options?.precut3in1 === true ||
+    (options?.precut3in1 !== false && !options?.customClass && !options?.pageSize);
+
+  if (usePrecut3in1) {
     const pageSize = options?.pageSize || '3.25in 2in portrait';
     applyPrintPageStyle(pageSize);
-    const cleanBarcode = stripSkuNumberText(options.barcode || '') || 'MHK-000000';
-    const cleanSku = stripSkuNumberText(options.sku || '') || cleanBarcode;
+    const cleanBarcode = stripSkuNumberText(options?.barcode || '') || 'MHK-000000';
+    const cleanSku = stripSkuNumberText(options?.sku || '') || cleanBarcode;
     const precutHtml = renderPrecut3in1Html({
       barcode: cleanBarcode,
       sku: cleanSku,
       description: stripSkuNumberText(title || ''),
-      brand: options.brand || 'MOHAWK',
-      unit: options.unit || '',
+      brand: options?.brand || 'MOHAWK',
+      unit: options?.unit || '',
     });
     printRoot.innerHTML = `
       <div class="single-label-print intermec-composite-page">

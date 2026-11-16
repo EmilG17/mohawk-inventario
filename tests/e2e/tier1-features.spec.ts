@@ -522,6 +522,10 @@ test.describe('Tier 1: Feature Coverage (F1 to F10)', () => {
     await page.getByRole('button', { name: /Etiquetas/i }).first().click();
     const sheetModal = page.locator('.barcode-sheet-modal');
     test.skip((await sheetModal.count()) === 0, 'F9 print offset pending M3 implementation');
+    const templateSelect = sheetModal.locator('select.template-picker, #sheet-template');
+    if (await templateSelect.isVisible()) {
+      await templateSelect.selectOption('avery5160');
+    }
     const offsetInput = sheetModal.locator('input[name="offset"], #sheet-offset');
     if (await offsetInput.isVisible()) {
       await offsetInput.fill('4');

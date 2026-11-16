@@ -174,7 +174,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
             sku: f.sku.value.trim() || p.sku || txt,
             unit: f.unit.value.trim() || p.unit,
             brand: p.brand || 'MOHAWK',
-            pageSize: `${btProfile.labelWidthIn}in ${btProfile.labelHeightIn}in portrait`,
+            pageSize: '3.25in 2in portrait',
             precut3in1: true,
           });
           return;

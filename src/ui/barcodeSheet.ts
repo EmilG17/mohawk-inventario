@@ -255,7 +255,7 @@ export function renderLabelSlot(
   const {
     showSku = true,
     showUnit = true,
-    template = 'avery5160',
+    template = 'intermec_composite',
     border = false,
     bartenderProfile,
   } = options;
@@ -268,7 +268,7 @@ export function renderLabelSlot(
   const cleanSku = stripSkuNumberText(product.sku || '');
   const descText = stripSkuNumberText(product.description?.trim() || '') || 'Sin descripción';
 
-  const tmplConfig = TEMPLATES[template] || TEMPLATES.avery5160;
+  const tmplConfig = TEMPLATES[template] || TEMPLATES.intermec_composite;
 
   if (tmplConfig.isComposite3in1) {
     const compSlot = h('div', {
@@ -349,7 +349,7 @@ export function renderLabelSlot(
 /**
  * Renderiza un slot en blanco (para espacios omitidos por offset).
  */
-export function renderBlankSlot(template: LabelTemplate = 'avery5160'): HTMLElement {
+export function renderBlankSlot(template: LabelTemplate = 'intermec_composite'): HTMLElement {
   return h('div', {
     class: `sheet-label blank sheet-slot-empty template-${template}`,
   });
@@ -412,7 +412,7 @@ export function openBarcodeSheetDialog(
 
   const PREF_KEY = 'mohawk_preferred_label_template';
   const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem(PREF_KEY) : null) as LabelTemplate | null;
-  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'avery5160';
+  let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'intermec_composite';
   let startingOffset = 0;
   let showSku = true;
   let showUnit = true;
@@ -758,6 +758,7 @@ export function openBarcodeSheetDialog(
     return pages;
   };
 
+  const previewHint = h('p', { class: 'muted small' });
   const updatePreview = () => {
     const items = buildItemsList();
     const config = TEMPLATES[selectedTemplate];
@@ -766,6 +767,10 @@ export function openBarcodeSheetDialog(
     );
 
     countSummary.textContent = `${items.length} etiqueta(s) · ${totalPages || 1} página(s)`;
+    previewHint.textContent =
+      config.perSheet === 1
+        ? 'Formato térmico (1 etiqueta por página): en el cuadro de impresión selecciona Margen "Ninguno" y Escala "100%".'
+        : 'Nota para imprimir en hoja Avery: en el cuadro de impresión selecciona Margen "Ninguno" y Escala "100%".';
     clear(previewWrap, ...renderPagesDom(false));
   };
 
@@ -975,11 +980,7 @@ export function openBarcodeSheetDialog(
       h('h4', { style: 'margin: 0;' }, 'Previsualización de hoja'),
       countSummary,
     ),
-    h(
-      'p',
-      { class: 'muted small' },
-      'Nota para imprimir en Avery: En el cuadro de diálogo de impresión del navegador, selecciona Margen: "Ninguno" y Escala: "100%".',
-    ),
+    previewHint,
     previewWrap,
     // Botones de acción
     h(

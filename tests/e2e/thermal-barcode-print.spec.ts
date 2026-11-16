@@ -111,8 +111,12 @@ test.describe('Impresión de código de barras y etiquetas térmicas 4x2', () =>
     await page.waitForTimeout(300);
     await modal.locator('.queue-search-item').first().click();
 
-    // Cambiar la plantilla a "Rollo térmico 4" × 2""
+    // Por defecto debe abrir en Intermec 3 en 1
     const templateSelect = modal.locator('#sheet-template');
+    await expect(templateSelect).toHaveValue('intermec_composite');
+    await expect(modal.locator('.sheet-preview-wrap .intermec-composite-page').first()).toBeVisible();
+
+    // Cambiar la plantilla a "Rollo térmico 4" × 2""
     await templateSelect.selectOption('thermal4x2');
 
     // Verificar que en la previsualización se muestra .thermal-4x2-page

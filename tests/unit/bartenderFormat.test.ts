@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import {
   DEFAULT_BARTENDER_PROFILE,
   extractStringsFromBinary,
@@ -7,8 +7,9 @@ import {
   resetBartenderProfile,
   saveBartenderProfile,
 } from '../../src/barcode/bartenderFormat';
+import { printLabel } from '../../src/barcode/barcodeExport';
 import { renderPrecut3in1Html, renderQrCodeSvg } from '../../src/barcode/code128';
-import { renderLabelSlot, TEMPLATES } from '../../src/ui/barcodeSheet';
+import { renderBlankSlot, renderLabelSlot, TEMPLATES } from '../../src/ui/barcodeSheet';
 
 describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
   beforeEach(() => {
@@ -113,6 +114,115 @@ describe('BarTender Format Importer & Intermec PM43 Calibration', () => {
     expect(html).toContain('DALTILE');
     expect(html).toContain('1234567');
     expect(html).toContain('qr-code-svg');
+  });
+
+  it('defaults renderLabelSlot, renderBlankSlot, and printLabel to Intermec 3-in-1 format', () => {
+    const prevDoc = (globalThis as any).document;
+    const prevWin = (globalThis as any).window;
+    const prevNode = (globalThis as any).Node;
+    const elementsById = new Map<string, any>();
+
+    class FakeNode {
+      textContent = '';
+    }
+    class FakeEl extends FakeNode {
+      tagName: string;
+      _id = '';
+      _className = '';
+      innerHTML = '';
+      children: any[] = [];
+      attrs: Record<string, string> = {};
+      classList = {
+        add: (...cls: string[]) => {
+          const set = new Set(this._className.split(/\s+/).filter(Boolean));
+          cls.forEach((c) => set.add(c));
+          this._className = Array.from(set).join(' ');
+        },
+        contains: (c: string) => this._className.split(/\s+/).includes(c),
+      };
+      get id() {
+        return this._id;
+      }
+      set id(v: string) {
+        if (this._id) elementsById.delete(this._id);
+        this._id = v;
+        if (v) elementsById.set(v, this);
+      }
+      get className() {
+        return this._className;
+      }
+      set className(v: string) {
+        this._className = v;
+      }
+      constructor(tag: string) {
+        super();
+        this.tagName = tag.toUpperCase();
+      }
+      setAttribute(k: string, v: string) {
+        this.attrs[k] = v;
+        if (k === 'id') {
+          this.id = v;
+        }
+      }
+      appendChild(child: any) {
+        this.children.push(child);
+        return child;
+      }
+      addEventListener() {}
+      remove() {
+        if (this.id) elementsById.delete(this.id);
+      }
+    }
+
+    const fakeHead = new FakeEl('head');
+    const fakeBody = new FakeEl('body');
+    const printSpy = vi.fn();
+
+    (globalThis as any).Node = FakeNode;
+    (globalThis as any).document = {
+      head: fakeHead,
+      body: fakeBody,
+      createElement: (tag: string) => new FakeEl(tag),
+      createTextNode: (t: string) => Object.assign(new FakeNode(), { textContent: t }),
+      getElementById: (id: string) => elementsById.get(id) ?? null,
+    };
+    (globalThis as any).window = {
+      print: printSpy,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    };
+
+    try {
+      const slot = renderLabelSlot({
+        id: '1',
+        barcode: '1234567',
+        sku: 'SKU-3IN1',
+        description: 'CERAMIC TILE 12X24',
+        brand: 'DALTILE',
+        unit: 'PZA',
+        idealStock: 10,
+        createdAt: '',
+        updatedAt: '',
+      }) as unknown as FakeEl;
+      expect(slot.classList.contains('composite-3in1-label')).toBe(true);
+      expect(slot.innerHTML).toContain('precut-3in1-sheet');
+      expect(slot.innerHTML).toContain('qr-code-svg');
+
+      const blank = renderBlankSlot() as unknown as FakeEl;
+      expect(blank.classList.contains('template-intermec_composite')).toBe(true);
+
+      printLabel('', 'CERAMIC TILE 12X24', { barcode: '1234567', sku: 'SKU-3IN1' });
+      expect(printSpy).toHaveBeenCalledTimes(1);
+      const pageStyle = elementsById.get('print-page-style');
+      expect(pageStyle?.textContent).toContain('3.25in 2in portrait');
+      const root = elementsById.get('single-print-root');
+      expect(root?.innerHTML).toContain('intermec-composite-page');
+      expect(root?.innerHTML).toContain('precut-3in1-sheet');
+    } finally {
+      (globalThis as any).document = prevDoc;
+      (globalThis as any).window = prevWin;
+      (globalThis as any).Node = prevNode;
+    }
   });
 });
 

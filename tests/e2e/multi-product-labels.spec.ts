@@ -50,6 +50,15 @@ test.describe('Impresión de etiquetas de distintos productos en la misma cola u
     await secondQtyInput.fill('2');
     await secondQtyInput.dispatchEvent('change');
 
+    // 5b. Verificar que el formato por defecto sea Intermec 3 en 1 con 5 copias previas
+    const templateSelect = modal.locator('#sheet-template');
+    await expect(templateSelect).toHaveValue('intermec_composite');
+    await expect(modal.locator('.sheet-preview-wrap .intermec-composite-page')).toHaveCount(5);
+    await expect(modal.locator('.sheet-preview-wrap .precut-3in1-sheet')).toHaveCount(5);
+
+    // Cambiar a plantilla Avery 5160 para probar hoja multi-producto y offset
+    await templateSelect.selectOption('avery5160');
+
     // 6. Verificar que la previsualización de la hoja contiene 5 etiquetas en total (3 de uno + 2 del otro)
     const previewSlots = modal.locator('.sheet-preview-wrap .sheet-label:not(.blank)');
     await expect(previewSlots).toHaveCount(5);
