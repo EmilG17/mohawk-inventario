@@ -742,7 +742,12 @@ export const catalogView: View = {
                     }
                   },
                 }, icon('trash'), L('Eliminar', 'Delete')),
-            h('button', { class: 'btn ghost sm', onclick: () => { selected.clear(); draw(); } }, '✕'),
+            h('button', {
+              class: 'btn ghost sm mass-close-btn',
+              'aria-label': L('Cerrar selección', 'Close selection'),
+              title: L('Cerrar selección', 'Close selection'),
+              onclick: () => { selected.clear(); draw(); },
+            }, '✕'),
           ),
         );
       } else {
@@ -914,13 +919,13 @@ export const catalogView: View = {
           h('div', { class: 'chips' }, chip('todos', L('Todos', 'All')), chip('sin_desc', `${L('Sin descripción', 'No description')} (${noDesc})`), chip('no_cat', L('No catalogados', 'Uncataloged'))),
         ),
         selectToolbar,
-        massBar,
         h('div', { class: 'plist-table-head', 'aria-hidden': 'true' },
           h('span', null),
           h('span', null, L('Producto / Código / SKU', 'Product / Code / SKU')),
           h('span', null, L('Inventario Ideal', 'Ideal Stock')),
         ),
         list,
+        massBar,
       ),
     );
     draw();

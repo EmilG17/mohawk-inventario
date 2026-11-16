@@ -476,7 +476,7 @@ describe('Challenger 2: Movements UI Lifecycle & Teardown Verification Suite', (
       expect(dlg).toBeDefined();
 
       // Find camera toggle button and click to start camera
-      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara'));
+      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara') || b.textContent?.includes('Camera'));
       expect(camToggleBtn).toBeDefined();
       camToggleBtn?.click();
 
@@ -485,7 +485,7 @@ describe('Challenger 2: Movements UI Lifecycle & Teardown Verification Suite', (
       expect(startScannerSpy).toHaveBeenCalled();
 
       // Click "Cancelar"
-      const cancelBtn = dlg.querySelectorAll('button').find((b) => b.textContent === 'Cancelar');
+      const cancelBtn = dlg.querySelectorAll('button').find((b) => b.textContent === 'Cancelar' || b.textContent === 'Cancel');
       expect(cancelBtn).toBeDefined();
       cancelBtn?.click();
 
@@ -513,14 +513,16 @@ describe('Challenger 2: Movements UI Lifecycle & Teardown Verification Suite', (
       const dlg = (await openMovementRegistrationModal('MHK-001', 'IN')) as MockElement;
 
       // Start camera
-      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara'));
+      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara') || b.textContent?.includes('Camera'));
       camToggleBtn?.click();
       await new Promise((r) => setTimeout(r, 10));
 
       // Click "Guardar Movimiento"
-      const saveBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Guardar Movimiento'));
+      const saveBtn = dlg.querySelectorAll('button').find((b) => b.getAttribute('data-testid') === 'movements-save-btn' || b.textContent?.includes('Guardar Movimiento') || b.textContent?.includes('Save Movement'));
       saveBtn?.click();
-      await new Promise((r) => setTimeout(r, 15));
+      for (let i = 0; i < 20 && dlg.open; i++) {
+        await new Promise((r) => setTimeout(r, 20));
+      }
 
       expect(mockScannerHandle.stop).toHaveBeenCalled();
       expect(stopTrackSpy).toHaveBeenCalled();
@@ -544,7 +546,7 @@ describe('Challenger 2: Movements UI Lifecycle & Teardown Verification Suite', (
 
       const dlg = (await openMovementRegistrationModal('MHK-001', 'IN')) as MockElement;
 
-      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara'));
+      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara') || b.textContent?.includes('Camera'));
       camToggleBtn?.click();
       await new Promise((r) => setTimeout(r, 10));
 
@@ -574,7 +576,7 @@ describe('Challenger 2: Movements UI Lifecycle & Teardown Verification Suite', (
 
       // Open modal from view
       const dlg = (await openMovementRegistrationModal('MHK-001', 'IN')) as MockElement;
-      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara'));
+      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara') || b.textContent?.includes('Camera'));
       camToggleBtn?.click();
       await new Promise((r) => setTimeout(r, 10));
 
@@ -601,11 +603,11 @@ describe('Challenger 2: Movements UI Lifecycle & Teardown Verification Suite', (
       vi.spyOn(scannerMod, 'startScanner').mockImplementation(() => scannerPromise as any);
 
       const dlg = (await openMovementRegistrationModal('MHK-001', 'IN')) as MockElement;
-      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara'));
+      const camToggleBtn = dlg.querySelectorAll('button').find((b) => b.textContent?.includes('Cámara') || b.textContent?.includes('Camera'));
       camToggleBtn?.click();
 
       // startScanner is in-flight. User closes modal.
-      const cancelBtn = dlg.querySelectorAll('button').find((b) => b.textContent === 'Cancelar');
+      const cancelBtn = dlg.querySelectorAll('button').find((b) => b.textContent === 'Cancelar' || b.textContent === 'Cancel');
       cancelBtn?.click();
 
       // Scanner hardware finish resolving
