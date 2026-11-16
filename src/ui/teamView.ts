@@ -942,7 +942,7 @@ export const teamView: View = {
                 class: 'card',
                 'data-testid': 'team-no-session-badge',
                 style:
-                  'width: 100%; margin: 0 0 8px 0; padding: 12px 14px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border-left: 4px solid var(--warning);',
+                  'width: 100%; margin: 0 0 8px 0; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--border);',
               },
               h(
                 'div',
@@ -1023,7 +1023,7 @@ export const teamView: View = {
         {
           class: 'card sup-live-scanners-card',
           'data-testid': 'team-live-scanners',
-          style: 'margin-bottom: 12px; border-left: 4px solid var(--accent);',
+          style: 'margin-bottom: 14px; border: 1px solid var(--border);',
         },
         h(
           'div',

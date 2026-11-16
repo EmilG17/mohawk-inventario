@@ -28,7 +28,7 @@ import {
 import { installState, promptInstall } from './install';
 import { createBrandLogo } from './logo';
 import type { View } from './router';
-import { navigate } from './router';
+import { currentPath, navigate } from './router';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
 
 export async function askCounterName(force = false): Promise<string | null> {
@@ -160,7 +160,7 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                       class: 'btn ghost sm',
                       onclick: async () => {
                         await askCounterName(true);
-                        navigate('/');
+                        if ((currentPath() || '/') === '/') navigate('/');
                       },
                     },
                     icon('gear'),
