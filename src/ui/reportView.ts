@@ -22,364 +22,410 @@ import { createBrandLogo } from './logo';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
 import { navigate, type View } from './router';
 import { onCloudRoomUpdate } from '../sync/cloudSync';
+import { computeRoomDataSig } from './cloudSignal';
 
 let selectedSessionId: string | null = null;
 let filter: 'todos' | 'por_pedir' | RowStatus = 'todos';
 let query = '';
 let includeNotCounted = true;
 let unbindCloudSync: (() => void) | null = null;
+let reportMounted = false;
+let reportRenderSeq = 0;
+let reportSyncTimer: ReturnType<typeof setTimeout> | null = null;
+let lastReportDataFp = '';
+
+async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq: number): Promise<void> {
+  if (params?.get('session')) {
+    selectedSessionId = params.get('session');
+  }
+  const [allSess, activeSession, products, deviceId, movementSummaries, idealLevels] = await Promise.all([
+    allSessions(), getActiveSession(), allProducts(), getDeviceId(), getMovementSummariesBySku(), getIdealLevels(),
+  ]);
+  if (!reportMounted || seq !== reportRenderSeq) return;
+
+  let session: Session | undefined;
+  if (selectedSessionId) {
+    session = allSess.find((s) => s.id === selectedSessionId) ?? (await getSession(selectedSessionId));
+    if (!reportMounted || seq !== reportRenderSeq) return;
+  }
+  if (!session && activeSession) {
+    session = activeSession;
+  }
+  if (!session && allSess.length > 0) {
+    session = allSess[0];
+  }
+
+  if (!session) {
+    clear(root, h('section', { class: 'card' },
+      h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesiones'),
+      h('h2', null, 'No hay sesiones'),
+      h('p', { class: 'muted' }, 'Aún no se ha registrado ninguna sesión de conteo.'),
+      h('button', { class: 'btn primary', onclick: () => navigate('/') }, 'Ir al inicio'),
+    ));
+    return;
+  }
+
+  selectedSessionId = session.id;
+  const isCur = activeSession?.id === session.id;
+  const isClosed = session.closed;
+  const counts = await countsForSession(session.id);
+  if (!reportMounted || seq !== reportRenderSeq) return;
+
+  const countsByBarcode = new Map<string, CountEntry[]>();
+  for (const c of counts) {
+    const arr = countsByBarcode.get(c.barcode);
+    if (arr) arr.push(c);
+    else countsByBarcode.set(c.barcode, [c]);
+  }
+
+  const allRows = buildReport(products, counts, {
+    includeNotCounted,
+    movementsBySku: movementSummaries,
+    idealLevels,
+  });
+  const summary = summarize(allRows);
+
+  const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const list = h('ul', { class: 'rlist' });
+  const countEl = h('span', { class: 'muted small' });
+
+  const drawList = () => {
+    const words = norm(query).split(/\s+/).filter(Boolean);
+    const rows = allRows
+      .filter((r) =>
+        filter === 'todos'
+          ? true
+          : filter === 'por_pedir'
+            ? Boolean(r.needsReorder)
+            : r.status === filter,
+      )
+      .filter((r) => {
+        if (!words.length) return true;
+        const hay = norm(`${r.description} ${r.sku} ${displayBarcode(r.barcode)} ${r.counters.join(' ')}`);
+        return words.every((w) => hay.includes(w));
+      });
+    countEl.textContent = `${rows.length} de ${allRows.length}`;
+    clear(list,
+      rows.length === 0 ? h('li', { class: 'empty' }, 'No hay productos con este filtro.') : null,
+      rows.slice(0, 150).map((r) => {
+        const badgeClass = r.status === 'ok' ? 'badge ok' : r.status === 'faltante' ? 'badge error' : r.status === 'sobrante' ? 'badge info' : 'badge warn';
+        const idealVal = r.idealQty ?? r.expected;
+        const idealDiff = idealVal !== undefined ? r.counted - idealVal : r.diff;
+        const idealDiffText = idealDiff === undefined ? '' : idealDiff > 0 ? `+${fmtNum(idealDiff)}` : fmtNum(idealDiff);
+        return h('li', {
+          class: `r-item ${r.status}`,
+          onclick: () => rowDetailDialog(r, countsByBarcode.get(r.barcode) ?? []),
+        },
+        h('div', { class: 'r-head' },
+          h('div', { class: 'grow' },
+            h('div', { class: 'rec-desc' }, r.description || h('i', { class: 'muted' }, 'Sin descripción')),
+            h('div', { class: 'rec-meta' },
+              r.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(r.barcode)),
+              r.sku ? ` · ${r.sku}` : '',
+              r.unit ? ` · ${r.unit}` : '',
+            ),
+          ),
+          h(
+            'div',
+            { class: 'row', style: 'gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end;' },
+            r.needsReorder
+              ? h(
+                  'span',
+                  { class: 'badge warn', title: `Bajo stock mínimo (${fmtNum(r.minQty)})` },
+                  `Pedir +${fmtNum(r.suggestedOrderQty)}`,
+                )
+              : null,
+            h('span', { class: badgeClass }, STATUS_LABEL[r.status]),
+          ),
+        ),
+        h('div', { class: 'r-nums' },
+          h('span', null, 'Ideal: ', h('b', null, fmtNum(idealVal))),
+          h('span', null, 'Contado: ', h('b', null, fmtNum(r.counted))),
+          idealDiff !== undefined ? h('span', { class: `diff ${idealDiff < 0 ? 'neg' : idealDiff > 0 ? 'pos' : ''}` }, 'Dif: ', h('b', null, idealDiffText)) : null,
+          r.diffValue !== undefined && r.diffValue !== 0 ? h('span', { class: 'muted small' }, fmtMoney(r.diffValue)) : null,
+        ),
+        );
+      }),
+      rows.length > 150 ? h('li', { class: 'empty' }, `Mostrando 150 de ${rows.length}. Usa el buscador.`) : null,
+    );
+  };
+
+  const chip = (id: typeof filter, label: string, count: number) =>
+    h('button', {
+      class: `chip ${filter === id ? 'active' : ''}`,
+      onclick: () => { filter = id; drawList(); updateChips(); },
+    }, `${label} (${count})`);
+
+  const chipsWrap = h('div', { class: 'chips' });
+  const updateChips = () => {
+    clear(chipsWrap,
+      chip('todos', 'Todos', allRows.length),
+      chip('por_pedir', 'Por pedir', summary.reorderCount),
+      chip('faltante', 'Faltantes', summary.short),
+      chip('sobrante', 'Sobrantes', summary.over),
+      chip('no_contado', 'No contados', summary.notCounted),
+      chip('no_catalogado', 'No catalogados', summary.uncataloged),
+      chip('ok', 'Correctos', summary.ok),
+    );
+  };
+  updateChips();
+
+  // Exportar
+  const baseName = `inventario_${safeFileName(session.name)}_${new Date().toISOString().slice(0, 10)}`;
+  const doExportXlsx = async () => {
+    const [currentMovements, currentIdealLevels] = await Promise.all([
+      listMovements(),
+      getIdealLevels(),
+    ]);
+    const bytes = buildReportWorkbook({
+      session,
+      rows: allRows,
+      summary,
+      counts,
+      products,
+      movements: currentMovements,
+      idealLevels: currentIdealLevels,
+    });
+    downloadFile(bytes, `${baseName}.xlsx`, MIME.xlsx);
+    toast('Excel generado', 'ok');
+  };
+  const doExportCsv = () => {
+    const csv = buildReportCsv(allRows);
+    downloadFile(csv, `${baseName}.csv`, MIME.csv);
+    toast('CSV generado', 'ok');
+  };
+  const doShareCount = async () => {
+    const cf = buildCountFile(session, counts, products, deviceId);
+    await shareOrDownload(JSON.stringify(cf, null, 2), `${baseName}.conteo.json`, MIME.json, `Conteo ${session.name}`);
+  };
+
+  const sessionSelect = h('select', {
+    id: 'session-select',
+    'data-testid': 'report-session-select',
+    class: 'input sm session-picker',
+    style: 'max-width: 260px; font-weight: normal;',
+    onchange: (e: Event) => {
+      const val = (e.target as HTMLSelectElement).value;
+      selectedSessionId = val;
+      navigate(`/reporte?session=${val}`);
+    },
+  },
+    allSess.map((s) =>
+      h('option', {
+        value: s.id,
+        selected: s.id === session!.id,
+      }, `${s.name} (${s.closed ? 'Cerrada' : activeSession?.id === s.id ? 'Activa' : 'Abierta'})`),
+    ),
+  );
+
+  const statusBadge = isCur
+    ? h('span', { class: 'badge ok' }, 'Activa')
+    : isClosed
+      ? h('span', { class: 'badge info' }, 'Cerrada')
+      : h('span', { class: 'badge warn' }, 'Abierta');
+
+  const secondaryItems: (HTMLElement | null)[] = [
+    summary.shortValue || summary.overValue || summary.reorderValue
+      ? h('div', { class: 'row values-row wrap', style: 'margin: 0;' },
+        h('span', { class: 'small' }, 'Faltante: ', h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
+        h('span', { class: 'small' }, 'Sobrante: ', h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
+        h('span', { class: 'small' }, 'Neto: ', h('b', null, fmtMoney(summary.netValue))),
+        summary.reorderValue ? h('span', { class: 'small' }, 'Est. Compra: ', h('b', null, fmtMoney(summary.reorderValue))) : null,
+      )
+      : null,
+    (() => {
+      const techStats = new Map<string, { scans: number; units: number; products: Set<string> }>();
+      for (const c of counts) {
+        const name = c.counter?.trim() || session.counter || 'Técnico';
+        const st = techStats.get(name) ?? { scans: 0, units: 0, products: new Set<string>() };
+        st.scans++;
+        st.units += c.qty;
+        st.products.add(c.barcode);
+        techStats.set(name, st);
+      }
+      if (techStats.size === 0) return null;
+      return h(
+        'div',
+        null,
+        h('div', { class: 'muted xsmall bold uppercase', style: 'margin-bottom: 4px;' }, `Participación (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
+        h(
+          'ul',
+          { class: 'contributor-list' },
+          [...techStats.entries()].map(([name, info]) =>
+            h(
+              'li',
+              null,
+              h('span', null, h('b', null, name)),
+              h(
+                'span',
+                { class: 'muted small' },
+                `${info.products.size} prod. · ${info.scans} escaneo(s) · ${fmtNum(info.units)} u.`,
+              ),
+            ),
+          ),
+        ),
+      );
+    })(),
+    h('label', { class: 'check-inline small muted' },
+      h('input', {
+        type: 'checkbox', checked: includeNotCounted,
+        onchange: (e: Event) => {
+          includeNotCounted = (e.target as HTMLInputElement).checked;
+          navigate(`/reporte?session=${session.id}`);
+        },
+      }),
+      h('span', null, 'Incluir productos del catálogo no contados'),
+    ),
+  ];
+
+  clear(root,
+    h('section', { class: 'card' },
+      h('div', { class: 'card-head wrap', style: 'align-items: center; gap: 10px;' },
+        createBrandLogo(32, 'brand-mark report-brand-mark'),
+        h('div', { class: 'grow' },
+          h('div', { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
+            h('h2', { style: 'margin: 0;' }, session.name),
+            statusBadge,
+            countEl,
+          ),
+          h('div', { class: 'muted xsmall' },
+            `${session.counter} · ${fmtDateTime(session.createdAt)}`,
+            session.closed && session.closedAt ? ` · Finalizada: ${fmtDateTime(session.closedAt)}` : '',
+          ),
+        ),
+        sessionSelect,
+      ),
+      h('div', { class: 'kpis' },
+        kpi(`${summary.accuracy}%`, 'Exactitud', summary.accuracy >= 95 ? 'good' : summary.accuracy >= 80 ? 'warn' : 'bad'),
+        kpi(fmtNum(summary.counted), 'Contados'),
+        kpi(fmtNum(summary.short), 'Faltantes', summary.short ? 'bad' : ''),
+        kpi(fmtNum(summary.over), 'Sobrantes', summary.over ? 'warn' : ''),
+        kpi(fmtNum(summary.notCounted), 'No contados'),
+        kpi(fmtNum(summary.reorderCount), 'Por pedir', summary.reorderCount ? 'warn' : ''),
+      ),
+      h('div', { class: 'row wrap', style: 'gap: 6px;' },
+        h('button', { class: 'btn primary sm', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
+        h('button', { class: 'btn sm', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
+        h('button', {
+          class: 'btn sm',
+          'data-testid': 'report-unify-btn',
+          onclick: () => void openUnifyReportsDialog((sid) => {
+            selectedSessionId = sid;
+            navigate(`/reporte?session=${sid}`);
+          }),
+        }, icon('users'), 'Unificar reportes de técnicos'),
+        h('button', {
+          class: 'btn sm',
+          'data-testid': 'report-print-labels',
+          onclick: () => {
+            const sessionProducts = products.filter((p) => countsByBarcode.has(p.barcode));
+            const initialQuantities: Record<string, number> = {};
+            for (const c of counts) {
+              initialQuantities[c.barcode] = (initialQuantities[c.barcode] || 0) + (c.qty || 1);
+            }
+            openBarcodeSheetDialog({
+              products: sessionProducts.length ? sessionProducts : products,
+              initialQuantities,
+              defaultTitle: `Etiquetas de sesión: ${session.name}`,
+            });
+          },
+        }, icon('scan'), 'Imprimir etiquetas de sesión'),
+        h('button', { class: 'btn ghost sm', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
+        isClosed
+          ? h('button', {
+            class: 'btn sm',
+            onclick: async () => {
+              await reopenSession(session.id);
+              toast('Sesión reabierta y activada', 'ok');
+              navigate(`/reporte?session=${session.id}`);
+            },
+          }, 'Reabrir sesión')
+          : isCur
+            ? h('button', {
+              class: 'btn danger ghost sm',
+              onclick: async () => {
+                const ok = await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión "${session.name}"?`, 'Finalizar', true);
+                if (ok) {
+                  await closeSession(session.id);
+                  toast('Sesión finalizada con éxito', 'ok');
+                  navigate(`/reporte?session=${session.id}`);
+                }
+              },
+            }, 'Finalizar sesión')
+            : h('button', {
+              class: 'btn sm',
+              onclick: async () => {
+                await setActiveSession(session.id);
+                toast(`Sesión activa: ${session.name}`, 'ok');
+                navigate(`/reporte?session=${session.id}`);
+              },
+            }, 'Activar sesión'),
+      ),
+      h('details', { class: 'ui-disclosure' },
+        h('summary', { class: 'ui-disclosure-summary' }, 'Desglose financiero, técnicos y opciones'),
+        h('div', { class: 'ui-disclosure-body' }, ...secondaryItems),
+      ),
+    ),
+    h('section', { class: 'card list-card' },
+      h('div', { class: 'filter-bar-row' },
+        h('input', {
+          class: 'input', type: 'search', placeholder: 'Buscar por descripción, código o responsable', value: query,
+          oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; drawList(); },
+        }),
+        chipsWrap,
+      ),
+      h('div', { class: 'rlist-table-head', 'aria-hidden': 'true' },
+        h('span', null, 'Producto / Estado'),
+        h('span', null, 'Ideal · Contado · Diferencia'),
+      ),
+      list,
+    ),
+  );
+  drawList();
+}
 
 export const reportView: View = {
   title: 'Reporte',
   async render(root, params) {
+    reportMounted = true;
+    const seq = ++reportRenderSeq;
+    lastReportDataFp = '';
+
     if (unbindCloudSync) {
       unbindCloudSync();
       unbindCloudSync = null;
     }
-    unbindCloudSync = onCloudRoomUpdate(() => {
-      if (root.isConnected) {
-        void reportView.render(root, params);
+    if (reportSyncTimer) {
+      clearTimeout(reportSyncTimer);
+      reportSyncTimer = null;
+    }
+
+    unbindCloudSync = onCloudRoomUpdate((roomState) => {
+      if (!reportMounted) return;
+      // Ignorar ráfagas de telemetría solo de cámara/escáner que no alteran el reporte
+      if (roomState) {
+        const nextFp = computeRoomDataSig(roomState);
+        if (nextFp && nextFp === lastReportDataFp) return;
+        lastReportDataFp = nextFp;
       }
+      if (reportSyncTimer) clearTimeout(reportSyncTimer);
+      reportSyncTimer = setTimeout(() => {
+        reportSyncTimer = null;
+        if (!reportMounted) return;
+        const refreshSeq = ++reportRenderSeq;
+        void drawReportContent(root, params, refreshSeq);
+      }, 0);
     });
 
-    if (params?.get('session')) {
-      selectedSessionId = params.get('session');
-    }
-    const [allSess, activeSession, products, deviceId, movementSummaries, idealLevels] = await Promise.all([
-      allSessions(), getActiveSession(), allProducts(), getDeviceId(), getMovementSummariesBySku(), getIdealLevels(),
-    ]);
-
-    let session: Session | undefined;
-    if (selectedSessionId) {
-      session = allSess.find((s) => s.id === selectedSessionId) ?? (await getSession(selectedSessionId));
-    }
-    if (!session && activeSession) {
-      session = activeSession;
-    }
-    if (!session && allSess.length > 0) {
-      session = allSess[0];
-    }
-
-    if (!session) {
-      clear(root, h('section', { class: 'card' },
-        h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesiones'),
-        h('h2', null, 'No hay sesiones'),
-        h('p', { class: 'muted' }, 'Aún no se ha registrado ninguna sesión de conteo.'),
-        h('button', { class: 'btn primary', onclick: () => navigate('/') }, 'Ir al inicio'),
-      ));
-      return;
-    }
-
-    selectedSessionId = session.id;
-    const isCur = activeSession?.id === session.id;
-    const isClosed = session.closed;
-    const counts = await countsForSession(session.id);
-    const allRows = buildReport(products, counts, {
-      includeNotCounted,
-      movementsBySku: movementSummaries,
-      idealLevels,
-    });
-    const summary = summarize(allRows);
-
-    const norm = (s: string) => s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-    const list = h('ul', { class: 'rlist' });
-    const countEl = h('span', { class: 'muted small' });
-
-    const drawList = () => {
-      const words = norm(query).split(/\s+/).filter(Boolean);
-      const rows = allRows
-        .filter((r) =>
-          filter === 'todos'
-            ? true
-            : filter === 'por_pedir'
-              ? Boolean(r.needsReorder)
-              : r.status === filter,
-        )
-        .filter((r) => {
-          if (!words.length) return true;
-          const hay = norm(`${r.description} ${r.sku} ${displayBarcode(r.barcode)} ${r.counters.join(' ')}`);
-          return words.every((w) => hay.includes(w));
-        });
-      countEl.textContent = `${rows.length} de ${allRows.length}`;
-      clear(list,
-        rows.length === 0 ? h('li', { class: 'empty' }, 'No hay productos con este filtro.') : null,
-        rows.slice(0, 150).map((r) => {
-          const badgeClass = r.status === 'ok' ? 'badge ok' : r.status === 'faltante' ? 'badge error' : r.status === 'sobrante' ? 'badge info' : 'badge warn';
-          const idealVal = r.idealQty ?? r.expected;
-          const idealDiff = idealVal !== undefined ? r.counted - idealVal : r.diff;
-          const idealDiffText = idealDiff === undefined ? '' : idealDiff > 0 ? `+${fmtNum(idealDiff)}` : fmtNum(idealDiff);
-          return h('li', {
-            class: `r-item ${r.status}`,
-            onclick: () => rowDetailDialog(r, counts.filter((c) => c.barcode === r.barcode)),
-          },
-          h('div', { class: 'r-head' },
-            h('div', { class: 'grow' },
-              h('div', { class: 'rec-desc' }, r.description || h('i', { class: 'muted' }, 'Sin descripción')),
-              h('div', { class: 'rec-meta' },
-                r.barcode.startsWith('SKU:') ? '' : h('code', null, displayBarcode(r.barcode)),
-                r.sku ? ` · ${r.sku}` : '',
-                r.unit ? ` · ${r.unit}` : '',
-              ),
-            ),
-            h(
-              'div',
-              { class: 'row', style: 'gap: 6px; align-items: center; flex-wrap: wrap; justify-content: flex-end;' },
-              r.needsReorder
-                ? h(
-                    'span',
-                    { class: 'badge warn', title: `Bajo stock mínimo (${fmtNum(r.minQty)})` },
-                    `Pedir +${fmtNum(r.suggestedOrderQty)}`,
-                  )
-                : null,
-              h('span', { class: badgeClass }, STATUS_LABEL[r.status]),
-            ),
-          ),
-          h('div', { class: 'r-nums' },
-            h('span', null, 'Ideal: ', h('b', null, fmtNum(idealVal))),
-            h('span', null, 'Contado: ', h('b', null, fmtNum(r.counted))),
-            idealDiff !== undefined ? h('span', { class: `diff ${idealDiff < 0 ? 'neg' : idealDiff > 0 ? 'pos' : ''}` }, 'Dif: ', h('b', null, idealDiffText)) : null,
-            r.diffValue !== undefined && r.diffValue !== 0 ? h('span', { class: 'muted small' }, fmtMoney(r.diffValue)) : null,
-          ),
-          );
-        }),
-        rows.length > 150 ? h('li', { class: 'empty' }, `Mostrando 150 de ${rows.length}. Usa el buscador.`) : null,
-      );
-    };
-
-    const chip = (id: typeof filter, label: string, count: number) =>
-      h('button', {
-        class: `chip ${filter === id ? 'active' : ''}`,
-        onclick: () => { filter = id; drawList(); updateChips(); },
-      }, `${label} (${count})`);
-
-    const chipsWrap = h('div', { class: 'chips' });
-    const updateChips = () => {
-      clear(chipsWrap,
-        chip('todos', 'Todos', allRows.length),
-        chip('por_pedir', 'Por pedir', summary.reorderCount),
-        chip('faltante', 'Faltantes', summary.short),
-        chip('sobrante', 'Sobrantes', summary.over),
-        chip('no_contado', 'No contados', summary.notCounted),
-        chip('no_catalogado', 'No catalogados', summary.uncataloged),
-        chip('ok', 'Correctos', summary.ok),
-      );
-    };
-    updateChips();
-
-    // Exportar
-    const baseName = `inventario_${safeFileName(session.name)}_${new Date().toISOString().slice(0, 10)}`;
-    const doExportXlsx = async () => {
-      const [currentMovements, currentIdealLevels] = await Promise.all([
-        listMovements(),
-        getIdealLevels(),
-      ]);
-      const bytes = buildReportWorkbook({
-        session,
-        rows: allRows,
-        summary,
-        counts,
-        products,
-        movements: currentMovements,
-        idealLevels: currentIdealLevels,
-      });
-      downloadFile(bytes, `${baseName}.xlsx`, MIME.xlsx);
-      toast('Excel generado', 'ok');
-    };
-    const doExportCsv = () => {
-      const csv = buildReportCsv(allRows);
-      downloadFile(csv, `${baseName}.csv`, MIME.csv);
-      toast('CSV generado', 'ok');
-    };
-    const doShareCount = async () => {
-      const cf = buildCountFile(session, counts, products, deviceId);
-      await shareOrDownload(JSON.stringify(cf, null, 2), `${baseName}.conteo.json`, MIME.json, `Conteo ${session.name}`);
-    };
-
-    const sessionSelect = h('select', {
-      id: 'session-select',
-      'data-testid': 'report-session-select',
-      class: 'input sm session-picker',
-      style: 'max-width: 260px; font-weight: normal;',
-      onchange: (e: Event) => {
-        const val = (e.target as HTMLSelectElement).value;
-        selectedSessionId = val;
-        navigate(`/reporte?session=${val}`);
-      },
-    },
-      allSess.map((s) =>
-        h('option', {
-          value: s.id,
-          selected: s.id === session!.id,
-        }, `${s.name} (${s.closed ? 'Cerrada' : activeSession?.id === s.id ? 'Activa' : 'Abierta'})`),
-      ),
-    );
-
-    const statusBadge = isCur
-      ? h('span', { class: 'badge ok' }, 'Activa')
-      : isClosed
-        ? h('span', { class: 'badge info' }, 'Cerrada')
-        : h('span', { class: 'badge warn' }, 'Abierta');
-
-    const secondaryItems: (HTMLElement | null)[] = [
-      summary.shortValue || summary.overValue || summary.reorderValue
-        ? h('div', { class: 'row values-row wrap', style: 'margin: 0;' },
-          h('span', { class: 'small' }, 'Faltante: ', h('b', { class: 'neg' }, fmtMoney(summary.shortValue))),
-          h('span', { class: 'small' }, 'Sobrante: ', h('b', { class: 'pos' }, fmtMoney(summary.overValue))),
-          h('span', { class: 'small' }, 'Neto: ', h('b', null, fmtMoney(summary.netValue))),
-          summary.reorderValue ? h('span', { class: 'small' }, 'Est. Compra: ', h('b', null, fmtMoney(summary.reorderValue))) : null,
-        )
-        : null,
-      (() => {
-        const techStats = new Map<string, { scans: number; units: number; products: Set<string> }>();
-        for (const c of counts) {
-          const name = c.counter?.trim() || session.counter || 'Técnico';
-          const st = techStats.get(name) ?? { scans: 0, units: 0, products: new Set<string>() };
-          st.scans++;
-          st.units += c.qty;
-          st.products.add(c.barcode);
-          techStats.set(name, st);
-        }
-        if (techStats.size === 0) return null;
-        return h(
-          'div',
-          null,
-          h('div', { class: 'muted xsmall bold uppercase', style: 'margin-bottom: 4px;' }, `Participación (${techStats.size} participante${techStats.size === 1 ? '' : 's'})`),
-          h(
-            'ul',
-            { class: 'contributor-list' },
-            [...techStats.entries()].map(([name, info]) =>
-              h(
-                'li',
-                null,
-                h('span', null, h('b', null, name)),
-                h(
-                  'span',
-                  { class: 'muted small' },
-                  `${info.products.size} prod. · ${info.scans} escaneo(s) · ${fmtNum(info.units)} u.`,
-                ),
-              ),
-            ),
-          ),
-        );
-      })(),
-      h('label', { class: 'check-inline small muted' },
-        h('input', {
-          type: 'checkbox', checked: includeNotCounted,
-          onchange: (e: Event) => {
-            includeNotCounted = (e.target as HTMLInputElement).checked;
-            navigate(`/reporte?session=${session.id}`);
-          },
-        }),
-        h('span', null, 'Incluir productos del catálogo no contados'),
-      ),
-    ];
-
-    clear(root,
-      h('section', { class: 'card' },
-        h('div', { class: 'card-head wrap', style: 'align-items: center; gap: 10px;' },
-          createBrandLogo(32, 'brand-mark report-brand-mark'),
-          h('div', { class: 'grow' },
-            h('div', { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
-              h('h2', { style: 'margin: 0;' }, session.name),
-              statusBadge,
-              countEl,
-            ),
-            h('div', { class: 'muted xsmall' },
-              `${session.counter} · ${fmtDateTime(session.createdAt)}`,
-              session.closed && session.closedAt ? ` · Finalizada: ${fmtDateTime(session.closedAt)}` : '',
-            ),
-          ),
-          sessionSelect,
-        ),
-        h('div', { class: 'kpis' },
-          kpi(`${summary.accuracy}%`, 'Exactitud', summary.accuracy >= 95 ? 'good' : summary.accuracy >= 80 ? 'warn' : 'bad'),
-          kpi(fmtNum(summary.counted), 'Contados'),
-          kpi(fmtNum(summary.short), 'Faltantes', summary.short ? 'bad' : ''),
-          kpi(fmtNum(summary.over), 'Sobrantes', summary.over ? 'warn' : ''),
-          kpi(fmtNum(summary.notCounted), 'No contados'),
-          kpi(fmtNum(summary.reorderCount), 'Por pedir', summary.reorderCount ? 'warn' : ''),
-        ),
-        h('div', { class: 'row wrap', style: 'gap: 6px;' },
-          h('button', { class: 'btn primary sm', 'data-testid': 'report-export-xlsx', onclick: doExportXlsx }, icon('download'), 'Exportar Excel (.xlsx)'),
-          h('button', { class: 'btn sm', 'data-testid': 'report-export-csv', onclick: doExportCsv }, icon('download'), 'CSV'),
-          h('button', {
-            class: 'btn sm',
-            'data-testid': 'report-unify-btn',
-            onclick: () => void openUnifyReportsDialog((sid) => {
-              selectedSessionId = sid;
-              navigate(`/reporte?session=${sid}`);
-            }),
-          }, icon('users'), 'Unificar reportes de técnicos'),
-          h('button', {
-            class: 'btn sm',
-            'data-testid': 'report-print-labels',
-            onclick: () => {
-              const sessionProducts = products.filter((p) => counts.some((c) => c.barcode === p.barcode));
-              const initialQuantities: Record<string, number> = {};
-              for (const c of counts) {
-                initialQuantities[c.barcode] = (initialQuantities[c.barcode] || 0) + (c.qty || 1);
-              }
-              openBarcodeSheetDialog({
-                products: sessionProducts.length ? sessionProducts : products,
-                initialQuantities,
-                defaultTitle: `Etiquetas de sesión: ${session.name}`,
-              });
-            },
-          }, icon('scan'), 'Imprimir etiquetas de sesión'),
-          h('button', { class: 'btn ghost sm', 'data-testid': 'report-share-count', onclick: doShareCount }, icon('share'), 'Compartir conteo'),
-          isClosed
-            ? h('button', {
-              class: 'btn sm',
-              onclick: async () => {
-                await reopenSession(session.id);
-                toast('Sesión reabierta y activada', 'ok');
-                navigate(`/reporte?session=${session.id}`);
-              },
-            }, 'Reabrir sesión')
-            : isCur
-              ? h('button', {
-                class: 'btn danger ghost sm',
-                onclick: async () => {
-                  const ok = await confirmDialog('Finalizar sesión', `¿Deseas finalizar la sesión "${session.name}"?`, 'Finalizar', true);
-                  if (ok) {
-                    await closeSession(session.id);
-                    toast('Sesión finalizada con éxito', 'ok');
-                    navigate(`/reporte?session=${session.id}`);
-                  }
-                },
-              }, 'Finalizar sesión')
-              : h('button', {
-                class: 'btn sm',
-                onclick: async () => {
-                  await setActiveSession(session.id);
-                  toast(`Sesión activa: ${session.name}`, 'ok');
-                  navigate(`/reporte?session=${session.id}`);
-                },
-              }, 'Activar sesión'),
-        ),
-        h('details', { class: 'ui-disclosure' },
-          h('summary', { class: 'ui-disclosure-summary' }, 'Desglose financiero, técnicos y opciones'),
-          h('div', { class: 'ui-disclosure-body' }, ...secondaryItems),
-        ),
-      ),
-      h('section', { class: 'card list-card' },
-        h('div', { class: 'filter-bar-row' },
-          h('input', {
-            class: 'input', type: 'search', placeholder: 'Buscar por descripción, código o responsable', value: query,
-            oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; drawList(); },
-          }),
-          chipsWrap,
-        ),
-        h('div', { class: 'rlist-table-head', 'aria-hidden': 'true' },
-          h('span', null, 'Producto / Estado'),
-          h('span', null, 'Ideal · Contado · Diferencia'),
-        ),
-        list,
-      ),
-    );
-    drawList();
+    await drawReportContent(root, params, seq);
   },
   destroy() {
+    reportMounted = false;
+    reportRenderSeq++;
+    if (reportSyncTimer) {
+      clearTimeout(reportSyncTimer);
+      reportSyncTimer = null;
+    }
     if (unbindCloudSync) {
       unbindCloudSync();
       unbindCloudSync = null;

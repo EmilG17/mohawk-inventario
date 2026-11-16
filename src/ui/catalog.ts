@@ -11,6 +11,7 @@ import { importCatalogFile, parseAppFile, reconcileCatalogProducts } from '../io
 import { displayBarcode, parseNumber } from '../io/normalize';
 import { processPending } from '../lookup/pendingQueue';
 import { onCloudRoomUpdate, syncCatalogWithDb, triggerBackgroundSync } from '../sync/cloudSync';
+import { computeRoomDataSig } from './cloudSignal';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, openDialog, pickFiles, shareOrDownload, toast,
 } from './dom';
@@ -25,6 +26,10 @@ let filter: 'todos' | 'sin_desc' | 'no_cat' = 'todos';
 let query = '';
 let unsubscribeCatalogCloud: (() => void) | null = null;
 let unsubscribeCatalogResize: (() => void) | null = null;
+let catalogMounted = false;
+let catalogRenderSeq = 0;
+let catalogCloudTimer: ReturnType<typeof setTimeout> | null = null;
+let lastCatalogDataFp = '';
 
 export async function syncCatalogWithDbFlow(onCompleted?: () => void): Promise<void> {
   try {
@@ -613,8 +618,12 @@ export function openMassActionsDialog(
 export const catalogView: View = {
   title: 'Catálogo',
   async render(root, params = new URLSearchParams()) {
+    catalogMounted = true;
+    const seq = ++catalogRenderSeq;
+    lastCatalogDataFp = '';
     const readOnlyMobile = isMobileCatalogReadOnly();
     let [products, idealLevels] = await Promise.all([allProducts(), getIdealLevels()]);
+    if (!catalogMounted || seq !== catalogRenderSeq) return;
     const selected = new Set<string>();
     const list = h('ul', { class: 'plist' });
     const countEl = h('span', { class: 'muted small' });
@@ -641,8 +650,12 @@ export const catalogView: View = {
     };
 
     const refreshData = async (clearSelection = true) => {
+      if (!catalogMounted) return;
       if (clearSelection) selected.clear();
-      [products, idealLevels] = await Promise.all([allProducts(), getIdealLevels()]);
+      const [nextProds, nextIdeals] = await Promise.all([allProducts(), getIdealLevels()]);
+      if (!catalogMounted || seq !== catalogRenderSeq) return;
+      products = nextProds;
+      idealLevels = nextIdeals;
       draw();
     };
 
@@ -903,10 +916,23 @@ export const catalogView: View = {
     draw();
 
     if (unsubscribeCatalogCloud) unsubscribeCatalogCloud();
-    unsubscribeCatalogCloud = onCloudRoomUpdate(() => {
-      if (root.isConnected) {
-        void refreshData(false);
+    if (catalogCloudTimer) {
+      clearTimeout(catalogCloudTimer);
+      catalogCloudTimer = null;
+    }
+    unsubscribeCatalogCloud = onCloudRoomUpdate((roomState) => {
+      if (!catalogMounted || seq !== catalogRenderSeq) return;
+      if (roomState) {
+        const nextFp = computeRoomDataSig(roomState);
+        if (nextFp && nextFp === lastCatalogDataFp) return;
+        lastCatalogDataFp = nextFp;
       }
+      if (catalogCloudTimer) clearTimeout(catalogCloudTimer);
+      catalogCloudTimer = setTimeout(() => {
+        catalogCloudTimer = null;
+        if (!catalogMounted || seq !== catalogRenderSeq) return;
+        void refreshData(false);
+      }, 0);
     });
 
     if (unsubscribeCatalogResize) {
@@ -916,7 +942,7 @@ export const catalogView: View = {
     if (typeof window !== 'undefined') {
       let lastMobile = readOnlyMobile;
       const onResize = () => {
-        if (!root.isConnected) return;
+        if (!catalogMounted || seq !== catalogRenderSeq) return;
         const nextMobile = isMobileCatalogReadOnly();
         if (nextMobile !== lastMobile) {
           lastMobile = nextMobile;
@@ -928,6 +954,12 @@ export const catalogView: View = {
     }
   },
   destroy() {
+    catalogMounted = false;
+    catalogRenderSeq++;
+    if (catalogCloudTimer) {
+      clearTimeout(catalogCloudTimer);
+      catalogCloudTimer = null;
+    }
     if (unsubscribeCatalogCloud) {
       unsubscribeCatalogCloud();
       unsubscribeCatalogCloud = null;

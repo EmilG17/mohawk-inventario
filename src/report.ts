@@ -320,7 +320,7 @@ export function buildReport(
   const order: Record<RowStatus, number> = { faltante: 0, sobrante: 1, no_catalogado: 2, no_contado: 3, ok: 4 };
   return rows.sort(
     (x, y) => order[x.status] - order[y.status] || Math.abs(y.diffValue ?? 0) - Math.abs(x.diffValue ?? 0) ||
-      x.description.localeCompare(y.description),
+      String(x.description ?? '').localeCompare(String(y.description ?? '')),
   );
 }
 

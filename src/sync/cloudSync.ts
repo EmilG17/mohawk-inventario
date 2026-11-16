@@ -129,7 +129,8 @@ let currentStatus: CloudConnectionStatus = {
 
 function emitStatus(patch: Partial<CloudConnectionStatus>): void {
   currentStatus = { ...currentStatus, ...patch };
-  for (const fn of statusListeners) {
+  for (const fn of [...statusListeners]) {
+    if (!statusListeners.has(fn)) continue;
     try {
       fn(currentStatus);
     } catch {}
@@ -184,7 +185,8 @@ export function onCloudRoomUpdate(listener: (state: CloudRoomState) => void): ()
 }
 
 function notifyRoomListeners(state: CloudRoomState): void {
-  for (const fn of syncListeners) {
+  for (const fn of [...syncListeners]) {
+    if (!syncListeners.has(fn)) continue;
     try {
       fn(state);
     } catch {}
@@ -856,7 +858,7 @@ export function mergeRoomStates(
   };
 }
 
-export function computeStateFingerprint(state: CloudRoomState | null): string {
+export function computeDataFingerprint(state: CloudRoomState | null): string {
   if (!state) return '';
   const lastCountTs = state.counts.length ? state.counts[state.counts.length - 1].timestamp : 0;
   const countQtySum = state.counts.reduce((sum, c) => sum + (c.qty || 0), 0);
@@ -890,12 +892,17 @@ export function computeStateFingerprint(state: CloudRoomState | null): string {
     .map(([k, p]) => `${k}:${p.scans}:${p.units}:${p.lastSeen}:${p.lastSku ?? ''}:${p.lastQty ?? ''}`)
     .join(';');
 
+  return `${state.sessionName || ''}|${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}|${partSig}`;
+}
+
+export function computeStateFingerprint(state: CloudRoomState | null): string {
+  if (!state) return '';
   const scannerSig = Object.entries(state.liveScanners || {})
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([k, sc]) => `${k}:${sc.status}:${sc.barcode ?? ''}:${sc.qty ?? ''}:${sc.cameraOn ? 1 : 0}:${sc.updatedAt}`)
     .join(';');
 
-  return `${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}|${partSig}|${scannerSig}`;
+  return `${computeDataFingerprint(state)}|${scannerSig}`;
 }
 
 /**
@@ -913,178 +920,182 @@ export async function applyIncomingRoomStateToLocal(
   };
   const prevFp = computeStateFingerprint(prevMirror);
   const nextFp = computeStateFingerprint(mergedState);
+  const dataChanged = !prevMirror || computeDataFingerprint(prevMirror) !== computeDataFingerprint(mergedState);
 
   saveLocalRoomMirror(incomingState.roomCode, mergedState);
 
   let hasNewChanges = prevFp !== nextFp;
 
-  // Prune tombstoned items locally and sync local tombstones
-  const localTombstones = await getLocalTombstones();
-  const mergedTomb: TombstoneState = {
-    counts: { ...(localTombstones.counts || {}) },
-    movements: { ...(localTombstones.movements || {}) },
-    products: { ...(localTombstones.products || {}) },
-  };
-  if (incomingState.tombstones) {
-    let tombChanged = false;
+  if (dataChanged) {
+    // Prune tombstoned items locally and sync local tombstones
+    const localTombstones = await getLocalTombstones();
+    const mergedTomb: TombstoneState = {
+      counts: { ...(localTombstones.counts || {}) },
+      movements: { ...(localTombstones.movements || {}) },
+      products: { ...(localTombstones.products || {}) },
+    };
+    if (incomingState.tombstones) {
+      let tombChanged = false;
 
-    if (incomingState.tombstones.counts) {
-      for (const [id, ts] of Object.entries(incomingState.tombstones.counts)) {
-        if (typeof ts === 'number') {
-          const cid = canonicalCountId(id);
-          const prevTs = mergedTomb.counts?.[cid] || 0;
-          if (ts > prevTs) {
-            mergedTomb.counts![cid] = ts;
-            tombChanged = true;
+      if (incomingState.tombstones.counts) {
+        for (const [id, ts] of Object.entries(incomingState.tombstones.counts)) {
+          if (typeof ts === 'number') {
+            const cid = canonicalCountId(id);
+            const prevTs = mergedTomb.counts?.[cid] || 0;
+            if (ts > prevTs) {
+              mergedTomb.counts![cid] = ts;
+              tombChanged = true;
+            }
           }
         }
       }
-    }
-    if (incomingState.tombstones.movements) {
-      for (const [id, ts] of Object.entries(incomingState.tombstones.movements)) {
-        if (typeof ts === 'number') {
-          const prevTs = mergedTomb.movements?.[id] || 0;
-          if (ts > prevTs) {
-            mergedTomb.movements![id] = ts;
-            tombChanged = true;
+      if (incomingState.tombstones.movements) {
+        for (const [id, ts] of Object.entries(incomingState.tombstones.movements)) {
+          if (typeof ts === 'number') {
+            const prevTs = mergedTomb.movements?.[id] || 0;
+            if (ts > prevTs) {
+              mergedTomb.movements![id] = ts;
+              tombChanged = true;
+            }
           }
         }
       }
-    }
-    if (incomingState.tombstones.products) {
-      for (const [bc, ts] of Object.entries(incomingState.tombstones.products)) {
-        if (typeof ts === 'number') {
-          const prevTs = mergedTomb.products?.[bc] || 0;
-          if (ts > prevTs) {
-            mergedTomb.products![bc] = ts;
-            tombChanged = true;
+      if (incomingState.tombstones.products) {
+        for (const [bc, ts] of Object.entries(incomingState.tombstones.products)) {
+          if (typeof ts === 'number') {
+            const prevTs = mergedTomb.products?.[bc] || 0;
+            if (ts > prevTs) {
+              mergedTomb.products![bc] = ts;
+              tombChanged = true;
+            }
           }
         }
       }
-    }
-    if (tombChanged) {
-      await saveLocalTombstones(mergedTomb);
-    }
+      if (tombChanged) {
+        await saveLocalTombstones(mergedTomb);
+      }
 
-    // Delete any local count that has been tombstoned
-    if (mergedTomb.counts && Object.keys(mergedTomb.counts).length > 0) {
-      const activeSession = await getActiveSession();
-      if (activeSession) {
-        const localCounts = await countsForSession(activeSession.id);
+      // Delete any local count that has been tombstoned
+      if (mergedTomb.counts && Object.keys(mergedTomb.counts).length > 0) {
+        const activeSession = await getActiveSession();
+        if (activeSession) {
+          const localCounts = await countsForSession(activeSession.id);
+          const db = await getDB();
+          for (const c of localCounts) {
+            const cid = canonicalCountId(c.id);
+            const tombTs = mergedTomb.counts[cid];
+            if (tombTs !== undefined && tombTs >= c.timestamp) {
+              await db.delete('counts', c.id);
+              hasNewChanges = true;
+            }
+          }
+        }
+      }
+
+      // Delete any local movement that has been tombstoned
+      if (mergedTomb.movements && Object.keys(mergedTomb.movements).length > 0) {
+        const localMovs = await listMovements();
+        const filteredMovs = localMovs.filter((m) => {
+          const tombTs = mergedTomb.movements![m.id];
+          return !(tombTs !== undefined && tombTs >= m.timestamp);
+        });
+        if (filteredMovs.length !== localMovs.length) {
+          await saveAllMovements(filteredMovs);
+          hasNewChanges = true;
+        }
+      }
+
+      // Delete any local product that has been tombstoned
+      if (mergedTomb.products && Object.keys(mergedTomb.products).length > 0) {
+        const localProds = await allProducts();
         const db = await getDB();
-        for (const c of localCounts) {
-          const cid = canonicalCountId(c.id);
-          const tombTs = mergedTomb.counts[cid];
-          if (tombTs !== undefined && tombTs >= c.timestamp) {
-            await db.delete('counts', c.id);
+        for (const p of localProds) {
+          const tombTs = mergedTomb.products[p.barcode];
+          if (tombTs !== undefined && tombTs >= (p.updatedAt || 0)) {
+            await db.delete('products', p.barcode);
             hasNewChanges = true;
           }
         }
       }
     }
 
-    // Delete any local movement that has been tombstoned
-    if (mergedTomb.movements && Object.keys(mergedTomb.movements).length > 0) {
-      const localMovs = await listMovements();
-      const filteredMovs = localMovs.filter((m) => {
-        const tombTs = mergedTomb.movements![m.id];
-        return !(tombTs !== undefined && tombTs >= m.timestamp);
-      });
-      if (filteredMovs.length !== localMovs.length) {
-        await saveAllMovements(filteredMovs);
+    const incomingProducts = (incomingState.products || []).filter((p) => {
+      const tombTs = mergedTomb.products?.[p.barcode];
+      return !(tombTs !== undefined && tombTs >= (p.updatedAt || 0));
+    });
+    const incomingCounts = (incomingState.counts || []).filter((c) => {
+      const cid = canonicalCountId(c.id);
+      const tombTs = mergedTomb.counts?.[cid];
+      return !(tombTs !== undefined && tombTs >= c.timestamp);
+    });
+
+    if (incomingProducts.length > 0) {
+      const recRes = await reconcileCatalogProducts(incomingProducts);
+      if (recRes.added > 0 || recRes.updated > 0) {
         hasNewChanges = true;
       }
     }
 
-    // Delete any local product that has been tombstoned
-    if (mergedTomb.products && Object.keys(mergedTomb.products).length > 0) {
-      const localProds = await allProducts();
-      const db = await getDB();
-      for (const p of localProds) {
-        const tombTs = mergedTomb.products[p.barcode];
-        if (tombTs !== undefined && tombTs >= (p.updatedAt || 0)) {
-          await db.delete('products', p.barcode);
+    // Si no hay sesión activa, NO creamos una sesión automáticamente (evita sesion fantasma)
+    const session = await getActiveSession();
+    if (session && incomingCounts.length > 0) {
+      const remoteFile: CountFile = {
+        app: APP_ID,
+        version: 1,
+        kind: 'conteo',
+        exportedAt: new Date().toISOString(),
+        deviceId: 'cloud-room',
+        session: {
+          id: session.id,
+          name: incomingState.sessionName || session.name,
+          counter: 'Sala ' + incomingState.roomCode,
+          createdAt: session.createdAt,
+          closed: false,
+        },
+        counts: incomingCounts,
+        // Ya conciliado arriba: evita recorrer y serializar todo el catálogo por segunda vez
+        products: [],
+      };
+      const mergeRes = await mergeCountFiles(session.id, [remoteFile]);
+      if (mergeRes.added > 0 || (mergeRes.updated || 0) > 0 || mergeRes.productsAdded > 0) {
+        hasNewChanges = true;
+      }
+    }
+
+    if (incomingState.movements && Array.isArray(incomingState.movements)) {
+      const localMovs = await listMovements();
+      const movMap = new Map<string, Movement>();
+      for (const m of localMovs) movMap.set(m.id, m);
+
+      let movsModified = false;
+      for (const m of incomingState.movements) {
+        const prev = movMap.get(m.id);
+        if (!prev) {
+          movMap.set(m.id, m);
+          movsModified = true;
+          hasNewChanges = true;
+        } else if (
+          m.timestamp > (prev.timestamp || 0) ||
+          (m.timestamp === (prev.timestamp || 0) &&
+            (m.quantity !== prev.quantity || m.type !== prev.type || m.sku !== prev.sku))
+        ) {
+          movMap.set(m.id, m);
+          movsModified = true;
           hasNewChanges = true;
         }
       }
-    }
-  }
-
-  const incomingProducts = (incomingState.products || []).filter((p) => {
-    const tombTs = mergedTomb.products?.[p.barcode];
-    return !(tombTs !== undefined && tombTs >= (p.updatedAt || 0));
-  });
-  const incomingCounts = (incomingState.counts || []).filter((c) => {
-    const cid = canonicalCountId(c.id);
-    const tombTs = mergedTomb.counts?.[cid];
-    return !(tombTs !== undefined && tombTs >= c.timestamp);
-  });
-
-  if (incomingProducts.length > 0) {
-    const recRes = await reconcileCatalogProducts(incomingProducts);
-    if (recRes.added > 0 || recRes.updated > 0) {
-      hasNewChanges = true;
-    }
-  }
-
-  // Si no hay sesión activa, NO creamos una sesión automáticamente (evita sesion fantasma)
-  const session = await getActiveSession();
-  if (session && (incomingCounts.length > 0 || incomingProducts.length > 0)) {
-    const remoteFile: CountFile = {
-      app: APP_ID,
-      version: 1,
-      kind: 'conteo',
-      exportedAt: new Date().toISOString(),
-      deviceId: 'cloud-room',
-      session: {
-        id: session.id,
-        name: incomingState.sessionName || session.name,
-        counter: 'Sala ' + incomingState.roomCode,
-        createdAt: session.createdAt,
-        closed: false,
-      },
-      counts: incomingCounts,
-      products: incomingProducts,
-    };
-    const mergeRes = await mergeCountFiles(session.id, [remoteFile]);
-    if (mergeRes.added > 0 || (mergeRes.updated || 0) > 0 || mergeRes.productsAdded > 0) {
-      hasNewChanges = true;
-    }
-  }
-
-  if (incomingState.movements && Array.isArray(incomingState.movements)) {
-    const localMovs = await listMovements();
-    const movMap = new Map<string, Movement>();
-    for (const m of localMovs) movMap.set(m.id, m);
-
-    let movsModified = false;
-    for (const m of incomingState.movements) {
-      const prev = movMap.get(m.id);
-      if (!prev) {
-        movMap.set(m.id, m);
-        movsModified = true;
-        hasNewChanges = true;
-      } else if (
-        m.timestamp > (prev.timestamp || 0) ||
-        (m.timestamp === (prev.timestamp || 0) &&
-          (m.quantity !== prev.quantity || m.type !== prev.type || m.sku !== prev.sku))
-      ) {
-        movMap.set(m.id, m);
-        movsModified = true;
-        hasNewChanges = true;
+      if (movsModified) {
+        await saveAllMovements([...movMap.values()]);
       }
     }
-    if (movsModified) {
-      await saveAllMovements([...movMap.values()]);
-    }
-  }
 
-  if (incomingState.idealLevels && typeof incomingState.idealLevels === 'object') {
-    const curIdeals = await getIdealLevels();
-    const mergedIdeals = { ...curIdeals, ...incomingState.idealLevels };
-    if (JSON.stringify(curIdeals) !== JSON.stringify(mergedIdeals)) {
-      await setIdealLevels(mergedIdeals);
-      hasNewChanges = true;
+    if (incomingState.idealLevels && typeof incomingState.idealLevels === 'object') {
+      const curIdeals = await getIdealLevels();
+      const mergedIdeals = { ...curIdeals, ...incomingState.idealLevels };
+      if (JSON.stringify(curIdeals) !== JSON.stringify(mergedIdeals)) {
+        await setIdealLevels(mergedIdeals);
+        hasNewChanges = true;
+      }
     }
   }
 
@@ -1248,7 +1259,7 @@ async function doSyncNow(opts?: {
     productsAdded += recRes.added;
   }
 
-  if (session && (mergedRoom.counts.length > 0 || mergedRoom.products.length > 0)) {
+  if (session && mergedRoom.counts.length > 0) {
     const remoteFile: CountFile = {
       app: APP_ID,
       version: 1,
@@ -1263,7 +1274,8 @@ async function doSyncNow(opts?: {
         closed: false,
       },
       counts: mergedRoom.counts,
-      products: mergedRoom.products,
+      // Ya conciliado justo arriba: evita duplicar el cruce de catálogo en cada syncNow
+      products: [],
     };
     const mergeRes = await mergeCountFiles(session.id, [remoteFile]);
     addedCounts = mergeRes.added;
@@ -1428,8 +1440,31 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
     };
 
     es.addEventListener('put', handleSsePayload as EventListener);
-    es.addEventListener('patch', () => {
+    es.addEventListener('patch', (ev: Event) => {
       onConnected();
+      try {
+        const msg = ev as MessageEvent;
+        const parsed = msg?.data ? JSON.parse(msg.data) : null;
+        if (parsed && typeof parsed === 'object' && typeof parsed.path === 'string' && parsed.path.startsWith('/liveScanners')) {
+          const mirror = getLocalRoomMirror(roomCode);
+          if (mirror && parsed.data && typeof parsed.data === 'object') {
+            let patchMap: Record<string, LiveScannerState> = {};
+            if (parsed.path === '/liveScanners') {
+              patchMap = parsed.data as Record<string, LiveScannerState>;
+            } else {
+              const key = parsed.path.slice('/liveScanners/'.length).split('/')[0];
+              if (key) patchMap = { [key]: parsed.data as LiveScannerState };
+            }
+            const nextMirror: CloudRoomState = {
+              ...mirror,
+              liveScanners: mergeLiveScannersMap(mirror.liveScanners, patchMap),
+            };
+            saveLocalRoomMirror(roomCode, nextMirror);
+            notifyRoomListeners(nextMirror);
+            return;
+          }
+        }
+      } catch {}
       void pullRemoteRoomQuietly(endpointUrl, roomCode);
     });
     es.onmessage = handleSsePayload;

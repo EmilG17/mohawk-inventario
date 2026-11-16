@@ -9,8 +9,11 @@ import {
   encodeCompactCountQrChunks,
   isCompactCountQr,
   normalizeEndpointBaseUrl,
+  onCloudRoomUpdate,
+  publishLiveScannerState,
   syncNow,
 } from '../../src/sync/cloudSync';
+import { saveSettings } from '../../src/settings';
 
 describe('cloudSync (Sincronización en Línea y QR)', () => {
   beforeEach(async () => {
@@ -114,5 +117,25 @@ describe('cloudSync (Sincronización en Línea y QR)', () => {
     expect(decoded.counts[0].qty).toBe(15);
     expect(decoded.counts[1].barcode).toBe('00079567011002');
     expect(decoded.counts[1].qty).toBe(6);
+  });
+
+  it('evita bucle infinito cuando un listener onCloudRoomUpdate se re-suscribe durante la notificación', async () => {
+    await saveSettings({ syncEnabled: true, syncRoomCode: 'MHK-LOOP-TEST', syncEndpointUrl: '' });
+    let calls = 0;
+    let unsub: (() => void) | null = null;
+    const register = () => {
+      if (unsub) {
+        unsub();
+        unsub = null;
+      }
+      unsub = onCloudRoomUpdate(() => {
+        calls++;
+        register();
+      });
+    };
+    register();
+    await publishLiveScannerState({ status: 'idle', cameraOn: false });
+    unsub?.();
+    expect(calls).toBe(1);
   });
 });

@@ -42,6 +42,7 @@ import {
   toast,
 } from './dom';
 import { onCloudRoomUpdate, publishLiveScannerState, triggerBackgroundSync } from '../sync/cloudSync';
+import { computeRoomDataSig } from './cloudSignal';
 import type { View } from './router';
 
 export type MovementStatus = IdealStatus;
@@ -82,6 +83,9 @@ let activeModalScanner: ScannerHandle | null = null;
 let wedgeController: WedgeController | null = null;
 let unsubscribeCloud: (() => void) | null = null;
 let isModalOpening = false;
+let movRenderSeq = 0;
+let movCloudTimer: ReturnType<typeof setTimeout> | null = null;
+let lastMovDataFp = '';
 
 /**
  * Resuelve un producto en el catálogo por código de barras o SKU
@@ -129,6 +133,7 @@ export const movementsView: View = {
 
   async render(root: HTMLElement, params: URLSearchParams): Promise<void> {
     viewRootEl = root;
+    lastMovDataFp = '';
 
     const actionParam = params?.get('action');
 
@@ -142,15 +147,28 @@ export const movementsView: View = {
     }
 
     await renderMainView();
-    if (!viewRootEl) return;
+    if (viewRootEl !== root) return;
     setupKeyboardWedge();
     setupSimulationHook();
 
     if (unsubscribeCloud) unsubscribeCloud();
-    unsubscribeCloud = onCloudRoomUpdate(() => {
-      if (viewRootEl && (!activeModalDialog || !activeModalDialog.open)) {
-        void renderMainView();
+    if (movCloudTimer) {
+      clearTimeout(movCloudTimer);
+      movCloudTimer = null;
+    }
+    unsubscribeCloud = onCloudRoomUpdate((roomState) => {
+      if (viewRootEl !== root || (activeModalDialog && activeModalDialog.open)) return;
+      if (roomState) {
+        const nextFp = computeRoomDataSig(roomState);
+        if (nextFp && nextFp === lastMovDataFp) return;
+        lastMovDataFp = nextFp;
       }
+      if (movCloudTimer) clearTimeout(movCloudTimer);
+      movCloudTimer = setTimeout(() => {
+        movCloudTimer = null;
+        if (viewRootEl !== root || (activeModalDialog && activeModalDialog.open)) return;
+        void renderMainView();
+      }, 0);
     });
 
     if (actionParam === 'in' || actionParam === 'out') {
@@ -180,6 +198,11 @@ export const movementsView: View = {
 
   async destroy(): Promise<void> {
     isModalOpening = false;
+    movRenderSeq++;
+    if (movCloudTimer) {
+      clearTimeout(movCloudTimer);
+      movCloudTimer = null;
+    }
     if (unsubscribeCloud) {
       unsubscribeCloud();
       unsubscribeCloud = null;
@@ -269,7 +292,9 @@ function setupSimulationHook() {
  * Renderiza la vista principal con KPIs, selector de sub-pestaña y el contenido activo
  */
 async function renderMainView(): Promise<void> {
-  if (!viewRootEl) return;
+  const targetRoot = viewRootEl;
+  if (!targetRoot) return;
+  const seq = ++movRenderSeq;
 
   const [products, session, summariesMap, idealLevels, movements] = await Promise.all([
     allProducts(),
@@ -278,10 +303,10 @@ async function renderMainView(): Promise<void> {
     getIdealLevels(),
     listMovements(),
   ]);
-  if (!viewRootEl) return;
+  if (viewRootEl !== targetRoot || seq !== movRenderSeq) return;
 
   const counts: CountEntry[] = session ? await countsForSession(session.id) : [];
-  if (!viewRootEl) return;
+  if (viewRootEl !== targetRoot || seq !== movRenderSeq) return;
 
   // Mapear conteos físicos actuales por SKU y código de barras
   const countQtyBySku = new Map<string, number>();
@@ -492,8 +517,8 @@ async function renderMainView(): Promise<void> {
       ? renderComparativeSection(rows)
       : renderBitacoraSection(movements, productBySku);
 
-  if (!viewRootEl) return;
-  clear(viewRootEl, kpiSection, subNav, contentSection);
+  if (viewRootEl !== targetRoot || seq !== movRenderSeq) return;
+  clear(targetRoot, kpiSection, subNav, contentSection);
 }
 
 /**

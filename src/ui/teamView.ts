@@ -76,6 +76,9 @@ let configExpanded: boolean | null = null;
 let unsubscribeRoom: (() => void) | null = null;
 let unsubscribeStatus: (() => void) | null = null;
 let relativeTimeTimer: ReturnType<typeof setInterval> | null = null;
+let teamMounted = false;
+let teamRenderSeq = 0;
+let teamRoomTimer: ReturnType<typeof setTimeout> | null = null;
 
 function fmtRelativeAgo(ts: number | null | undefined): string {
   if (!ts) return 'Sin actividad';
@@ -258,7 +261,10 @@ function openReceiveQrDialog(activeSession: Session, onMerged: () => void): void
 export const teamView: View = {
   title: 'Monitor de Supervisor en Vivo',
   async render(root) {
+    teamMounted = true;
+    const mountSeq = ++teamRenderSeq;
     let s = await loadSettings();
+    if (!teamMounted || mountSeq !== teamRenderSeq) return;
 
     // Si tiene sala configurada, asegurar que la escucha en tiempo real esté corriendo
     if (s.syncRoomCode) {
@@ -624,7 +630,8 @@ export const teamView: View = {
     };
 
     const refreshDashboard = async () => {
-      if (!root.isConnected) return;
+      if (!teamMounted) return;
+      const seq = ++teamRenderSeq;
       const [sessions, current, deviceId, localProducts, localMovements, movSummaries, localIdealLevels] =
         await Promise.all([
           allSessions(),
@@ -635,10 +642,11 @@ export const teamView: View = {
           getMovementSummariesBySku(),
           getIdealLevels(),
         ]);
-      if (!root.isConnected) return;
+      if (!teamMounted || seq !== teamRenderSeq) return;
 
       const roomState = s.syncRoomCode ? getCachedRoomState(s.syncRoomCode) : null;
       const localCounts = current ? await countsForSession(current.id) : [];
+      if (!teamMounted || seq !== teamRenderSeq) return;
 
       // Fusionar productos locales + productos en la nube (incluso si aún no hay sesión local)
       const prodTomb = roomState?.tombstones?.products || {};
@@ -1065,7 +1073,7 @@ export const teamView: View = {
                     class: 'sup-live-scanner-row',
                     'data-testid': `live-scanner-${sc.counter}`,
                     style:
-                      'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface-2, rgba(255,255,255,0.03)); border: 1px solid var(--border);',
+                      'display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px; border-radius: var(--radius-sm); background: var(--bg-subtle); border: 1px solid var(--border);',
                   },
                   h(
                     'div',
@@ -1205,7 +1213,7 @@ export const teamView: View = {
                     {
                       class: 'small',
                       style:
-                        'margin: 6px 0; padding: 6px 8px; border-radius: var(--r-sm); background: rgba(245, 158, 11, 0.12); border: 1px solid rgba(245, 158, 11, 0.35);',
+                        'margin: 6px 0; padding: 6px 8px; border-radius: var(--radius-sm); background: var(--warning-bg); border: 1px solid rgba(217, 119, 6, 0.35);',
                     },
                     t.liveScanner.status === 'pending_confirm'
                       ? `En pantalla: ${t.liveScanner.sku || t.liveScanner.barcode || ''} · Cant: ${fmtNum(t.liveScanner.qty ?? 1)}`
@@ -1920,18 +1928,29 @@ export const teamView: View = {
     renderConfigDrawer();
     await refreshDashboard();
 
+    if (!teamMounted) return;
     if (unsubscribeStatus) unsubscribeStatus();
     unsubscribeStatus = onCloudStatusChange((st) => {
-      renderStatusHeader(st);
+      if (teamMounted) renderStatusHeader(st);
     });
 
     if (unsubscribeRoom) unsubscribeRoom();
+    if (teamRoomTimer) {
+      clearTimeout(teamRoomTimer);
+      teamRoomTimer = null;
+    }
     unsubscribeRoom = onCloudRoomUpdate(() => {
-      void refreshDashboard();
+      if (!teamMounted) return;
+      if (teamRoomTimer) clearTimeout(teamRoomTimer);
+      teamRoomTimer = setTimeout(() => {
+        teamRoomTimer = null;
+        if (teamMounted) void refreshDashboard();
+      }, 80);
     });
 
     if (relativeTimeTimer) clearInterval(relativeTimeTimer);
     relativeTimeTimer = setInterval(() => {
+      if (!teamMounted) return;
       const el = document.getElementById('sup-last-sync-ago');
       if (el) {
         const ts = Number(el.getAttribute('data-ts'));
@@ -1941,7 +1960,13 @@ export const teamView: View = {
   },
 
   destroy() {
+    teamMounted = false;
+    teamRenderSeq++;
     userSelectedTab = false;
+    if (teamRoomTimer) {
+      clearTimeout(teamRoomTimer);
+      teamRoomTimer = null;
+    }
     if (unsubscribeRoom) {
       unsubscribeRoom();
       unsubscribeRoom = null;

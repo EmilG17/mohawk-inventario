@@ -21,13 +21,19 @@ import {
 } from './dom';
 import { navigate, type View } from './router';
 
+let settingsMounted = false;
+let settingsRenderSeq = 0;
+
 export const settingsView: View = {
   title: 'Ajustes',
   async render(root, params) {
+    settingsMounted = true;
+    const seq = ++settingsRenderSeq;
     const readOnlyMobile = isMobileCatalogReadOnly();
     const mobileViewport = isMobileViewport();
     const supervisorUI = isSupervisorModeEnabled();
     const [s, products] = await Promise.all([loadSettings(), allProducts()]);
+    if (!settingsMounted || seq !== settingsRenderSeq) return;
     const totalProds = products.length;
     const uncatalogedCount = products.filter((p) => p.uncataloged).length;
     const officialCount = totalProds - uncatalogedCount;
@@ -407,5 +413,9 @@ export const settingsView: View = {
           )
         : null,
     );
+  },
+  destroy() {
+    settingsMounted = false;
+    settingsRenderSeq++;
   },
 };

@@ -134,4 +134,53 @@ test.describe('Supervisor Live Scanner Telemetry & Mobile Supervisor Mode', () =
     await expect(page.getByTestId('home-quick-labels')).toBeVisible();
     await expect(page.getByTestId('workflow-bar')).toBeVisible();
   });
+
+  test('Hacer clic en Reporte desde Contar con escaneo pendiente y sincronización en vivo no cuelga la app', async ({
+    page,
+  }) => {
+    const viewport = page.viewportSize();
+    if ((viewport?.width ?? 1280) < 900) return;
+
+    const roomCode = `E2E-RPT-${Date.now().toString(36).toUpperCase()}`;
+    await page.goto('/#/');
+    await page.getByRole('button', { name: 'Cambiar' }).click();
+    await page.fill('input.input', 'Carlos Sup');
+    await page.getByRole('button', { name: 'Aceptar' }).click();
+
+    await page.getByTestId('home-start-session-btn').click();
+    await page.getByRole('button', { name: 'Aceptar' }).click();
+    await expect(page).toHaveURL(/#\/contar/);
+
+    await page.evaluate(async (rc) => {
+      const req = indexedDB.open('mohawk-inventario');
+      await new Promise<void>((resolve, reject) => {
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction(['meta'], 'readwrite');
+          const store = tx.objectStore('meta');
+          const getReq = store.get('settings');
+          getReq.onsuccess = () => {
+            const cur = getReq.result || {};
+            store.put(
+              { ...cur, counterName: 'Carlos Sup', syncEnabled: true, syncAuto: true, syncRoomCode: rc, syncEndpointUrl: '' },
+              'settings',
+            );
+          };
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    }, roomCode);
+
+    await page.reload();
+    await expect(page).toHaveURL(/#\/contar/);
+
+    await page.evaluate(() => (window as any).__simulateScan('079567011002'));
+    await expect(page.locator('#pcard')).toBeVisible();
+
+    await page.getByTestId('count-goto-report').click();
+    await expect(page).toHaveURL(/#\/reporte/, { timeout: 5000 });
+    await expect(page.getByTestId('report-export-xlsx')).toBeVisible({ timeout: 5000 });
+  });
 });

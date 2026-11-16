@@ -11,6 +11,7 @@ import { getAllMovements } from '../db/movements';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
 import { getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
+import { computeRoomDataSig } from './cloudSignal';
 import { detectPlatformInfo } from './app';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { importCatalogFlow, syncCatalogWithDbFlow } from './catalog';
@@ -65,8 +66,11 @@ export async function newSessionFlow(): Promise<boolean> {
 
 let currentRoot: HTMLElement | null = null;
 let unsubscribeHomeCloud: (() => void) | null = null;
+let homeRenderSeq = 0;
+let homeCloudTimer: ReturnType<typeof setTimeout> | null = null;
+let lastHomeDataFp = '';
 
-async function renderHomeContent(root: HTMLElement): Promise<void> {
+async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Promise<void> {
   const [s, session, products, pending, sessions, movements] = await Promise.all([
     loadSettings(),
     getActiveSession(),
@@ -75,9 +79,10 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
     allSessions(),
     getAllMovements(),
   ]);
-  if (currentRoot !== root) return;
+  if (currentRoot !== root || seq !== homeRenderSeq) return;
 
     const counts = session ? await countsForSession(session.id) : [];
+    if (currentRoot !== root || seq !== homeRenderSeq) return;
     const catalogCount = products.filter((p) => !p.uncataloged).length;
     const withExpected = products.filter((p) => p.expectedQty !== undefined).length;
     const uncatalogedCount = products.filter((p) => p.uncataloged).length;
@@ -661,19 +666,40 @@ export const homeView: View = {
   title: 'Inicio',
   async render(root) {
     currentRoot = root;
+    const seq = ++homeRenderSeq;
+    lastHomeDataFp = '';
     if (unsubscribeHomeCloud) {
       unsubscribeHomeCloud();
       unsubscribeHomeCloud = null;
     }
-    unsubscribeHomeCloud = onCloudRoomUpdate(() => {
-      if (!currentRoot) return;
+    if (homeCloudTimer) {
+      clearTimeout(homeCloudTimer);
+      homeCloudTimer = null;
+    }
+    unsubscribeHomeCloud = onCloudRoomUpdate((roomState) => {
+      if (currentRoot !== root) return;
       if (typeof document !== 'undefined' && document.querySelector?.('dialog[open]')) return;
-      void renderHomeContent(currentRoot);
+      if (roomState) {
+        const nextFp = computeRoomDataSig(roomState);
+        if (nextFp && nextFp === lastHomeDataFp) return;
+        lastHomeDataFp = nextFp;
+      }
+      if (homeCloudTimer) clearTimeout(homeCloudTimer);
+      homeCloudTimer = setTimeout(() => {
+        homeCloudTimer = null;
+        if (currentRoot !== root) return;
+        void renderHomeContent(root);
+      }, 0);
     });
-    await renderHomeContent(root);
+    await renderHomeContent(root, seq);
   },
   destroy() {
     currentRoot = null;
+    homeRenderSeq++;
+    if (homeCloudTimer) {
+      clearTimeout(homeCloudTimer);
+      homeCloudTimer = null;
+    }
     if (unsubscribeHomeCloud) {
       unsubscribeHomeCloud();
       unsubscribeHomeCloud = null;

@@ -16,6 +16,7 @@ import {
   publishLiveScannerState,
   triggerBackgroundSync,
 } from '../sync/cloudSync';
+import { computeRoomDataSig } from './cloudSignal';
 import { clear, confirmDialog, fmtNum, fmtTime, h, icon, openDialog, toast } from './dom';
 import { isMobileCatalogReadOnly, isSupervisorModeEnabled } from './catalogMode';
 import { newSessionFlow } from './home';
@@ -46,6 +47,10 @@ const debounce = createDebouncer(1500);
 let wantCamera = false;
 let unsubscribeCountCloud: (() => void) | null = null;
 let viewMounted = false;
+let countRenderSeq = 0;
+let cameraAttemptSeq = 0;
+let countCloudTimer: ReturnType<typeof setTimeout> | null = null;
+let lastCountDataFp = '';
 const wedge = createWedgeController({
   minLength: 4,
   maxIntervalMs: 80,
@@ -106,12 +111,18 @@ function updateCooldownUi(justFinished = false): void {
   }
 }
 
-export function triggerCooldown(ms = COOLDOWN_MS): void {
+function triggerCooldown(ms = COOLDOWN_MS): void {
+  if (!viewMounted) return;
   cooldownUntil = Date.now() + ms;
   debounce.reset();
   updateCooldownUi();
   if (cooldownTimer) clearInterval(cooldownTimer);
   cooldownTimer = window.setInterval(() => {
+    if (!viewMounted) {
+      if (cooldownTimer) clearInterval(cooldownTimer);
+      cooldownTimer = null;
+      return;
+    }
     const remaining = cooldownUntil - Date.now();
     if (remaining <= 0) {
       if (cooldownTimer) clearInterval(cooldownTimer);
@@ -146,7 +157,8 @@ function emitScannerState(
 
 // ---------------- cámara ----------------
 async function startCamera() {
-  if (scanner) return;
+  if (scanner || !viewMounted) return;
+  const attempt = ++cameraAttemptSeq;
   unlockAudio();
   if (!cameraAvailable()) {
     els.camMsg.textContent = window.isSecureContext
@@ -158,7 +170,12 @@ async function startCamera() {
   els.camMsg.textContent = 'Iniciando cámara…';
   els.videoWrap.classList.remove('off');
   try {
-    scanner = await startScanner(els.video, (text) => onDetected(text));
+    const started = await startScanner(els.video, (text) => onDetected(text));
+    if (!viewMounted || attempt !== cameraAttemptSeq) {
+      try { started.stop(); } catch {}
+      return;
+    }
+    scanner = started;
     wantCamera = true;
     sessionStorage.setItem('camera', '1');
     els.camMsg.textContent = '';
@@ -177,6 +194,7 @@ async function startCamera() {
         : { origin: 'camara' },
     );
   } catch (e) {
+    if (!viewMounted || attempt !== cameraAttemptSeq) return;
     const err = e as Error;
     scanner = null;
     els.videoWrap.classList.add('off');
@@ -187,6 +205,7 @@ async function startCamera() {
 }
 
 function stopCamera(remember = true) {
+  cameraAttemptSeq++;
   scanner?.stop();
   scanner = null;
   torchOn = false;
@@ -311,6 +330,7 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
 
   if (!known?.description) {
     const r = await resolveDescription(code);
+    if (!viewMounted) return;
     if (pending?.token === token) {
       pending.product = r.product;
       pending.status = r.status;
@@ -325,40 +345,46 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
       }
       renderCard();
     }
-  } else {
+  } else if (viewMounted && pending?.token === token) {
     pending.status = known.source === 'catalogo' ? 'catalogo' : 'encontrado';
     renderCard();
   }
-  if (s.quickMode) await renderRecent();
+  if (s.quickMode && viewMounted) await renderRecent();
 }
 
 let lastQuick: CountEntry | null = null;
 
-async function commitPending(silent = false): Promise<void> {
+async function commitPending(silent = false, skipUi = false): Promise<void> {
   if (!pending || !session) return;
   const p = pending;
   pending = null;
   if (settingsSync().quickMode) {
     lastQuick = null;
-    triggerCooldown(COOLDOWN_MS);
-    renderCard();
+    if (!skipUi && viewMounted) {
+      triggerCooldown(COOLDOWN_MS);
+      renderCard();
+    }
     return;
   }
-  triggerCooldown(COOLDOWN_MS);
+  if (!skipUi && viewMounted) triggerCooldown(COOLDOWN_MS);
   if (p.qty > 0) {
     await addCount({ sessionId: session.id, barcode: p.code, qty: p.qty, counter: session.counter });
     if (!silent) toast(`Registrado: ${fmtNum(p.qty)} × ${p.product?.description || displayBarcode(p.code)}`, 'ok');
-    emitScannerState('registered', {
-      barcode: p.code,
-      sku: p.product?.sku || p.code,
-      description: p.product?.description,
-      qty: p.qty,
-      origin: p.origin,
-    });
+    if (!skipUi) {
+      emitScannerState('registered', {
+        barcode: p.code,
+        sku: p.product?.sku || p.code,
+        description: p.product?.description,
+        qty: p.qty,
+        origin: p.origin,
+      });
+    }
     triggerBackgroundSync(session.id);
   }
-  renderCard();
-  await renderRecent();
+  if (!skipUi && viewMounted) {
+    renderCard();
+    await renderRecent();
+  }
 }
 
 const STATUS_TEXT: Record<Pending['status'], string> = {
@@ -378,6 +404,7 @@ async function alreadyCounted(code: string): Promise<number> {
 }
 
 function renderCard(): void {
+  if (!viewMounted || !els?.card) return;
   const card = els.card;
   if (!pending) {
     clear(card);
@@ -539,8 +566,9 @@ async function editAndRefresh(code: string) {
 }
 
 async function renderRecent(): Promise<void> {
-  if (!session || !els) return;
+  if (!viewMounted || !session || !els) return;
   const [counts, products] = await Promise.all([countsForSession(session.id), allProducts()]);
+  if (!viewMounted || !session || !els) return;
   const pMap = new Map(products.map((p) => [p.barcode, p]));
   const distinct = new Set(counts.map((c) => c.barcode)).size;
   els.recentTitle.textContent = `Últimos escaneos · ${distinct} productos · ${counts.length} registros`;
@@ -629,8 +657,13 @@ async function manualEntry(text: string) {
 export const countView: View = {
   title: 'Contar',
   async render(root) {
+    const seq = ++countRenderSeq;
+    viewMounted = true;
+    lastCountDataFp = '';
     await loadSettings();
+    if (!viewMounted || seq !== countRenderSeq) return;
     session = await getActiveSession();
+    if (!viewMounted || seq !== countRenderSeq) return;
     if (!session) {
       clear(root, h('section', { class: 'card idle-gate' },
         h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, 'Sin sesión activa'),
@@ -647,6 +680,7 @@ export const countView: View = {
     }
     const s = settingsSync();
     countIdealLevels = await getIdealLevels();
+    if (!viewMounted || seq !== countRenderSeq) return;
     const supervisorUI = isSupervisorModeEnabled();
     const video = h('video', { playsinline: true, muted: true, autoplay: true }) as HTMLVideoElement;
     const camMsg = h('div', { class: 'cam-msg' }, 'Escáner físico listo · Cámara apagada');
@@ -743,25 +777,45 @@ export const countView: View = {
       ),
     );
 
-    viewMounted = true;
+    if (!viewMounted || seq !== countRenderSeq) return;
     if (unsubscribeCountCloud) unsubscribeCountCloud();
-    unsubscribeCountCloud = onCloudRoomUpdate(() => {
-      if (viewMounted && session && els) {
+    if (countCloudTimer) {
+      clearTimeout(countCloudTimer);
+      countCloudTimer = null;
+    }
+    unsubscribeCountCloud = onCloudRoomUpdate((roomState) => {
+      if (!viewMounted || !session || !els) return;
+      if (roomState) {
+        const nextFp = computeRoomDataSig(roomState);
+        if (nextFp && nextFp === lastCountDataFp) return;
+        lastCountDataFp = nextFp;
+      }
+      if (countCloudTimer) clearTimeout(countCloudTimer);
+      countCloudTimer = setTimeout(() => {
+        countCloudTimer = null;
+        if (!viewMounted || !session || !els) return;
         void getIdealLevels().then((lv) => {
+          if (!viewMounted) return;
           countIdealLevels = lv;
           if (pending) renderCard();
         });
         void renderRecent();
-      }
+      }, 0);
     });
     document.addEventListener('visibilitychange', onVisibility);
     wedge.attach();
     renderCard();
     await renderRecent();
-    if (sessionStorage.getItem('camera') === '1') void startCamera();
+    if (viewMounted && seq === countRenderSeq && sessionStorage.getItem('camera') === '1') void startCamera();
   },
   async destroy() {
     viewMounted = false;
+    countRenderSeq++;
+    cameraAttemptSeq++;
+    if (countCloudTimer) {
+      clearTimeout(countCloudTimer);
+      countCloudTimer = null;
+    }
     if (unsubscribeCountCloud) {
       unsubscribeCountCloud();
       unsubscribeCountCloud = null;
@@ -774,7 +828,7 @@ export const countView: View = {
     document.removeEventListener('visibilitychange', onVisibility);
     wedge.detach();
     stopCamera(false);
-    if (pending) await commitPending(true);
+    if (pending) await commitPending(true, true);
     pending = null;
     void publishLiveScannerState({
       status: 'idle',
