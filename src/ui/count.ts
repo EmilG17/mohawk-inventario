@@ -727,16 +727,20 @@ export const countView: View = {
           }, 'Finalizar sesión'),
         ),
       ),
-      h('section', { class: 'scan-area' },
-        videoWrap,
-        h('div', { class: 'row cam-controls' }, camBtn, torchBtn, quick),
+      h('section', { class: 'card scan-workspace-card' },
+        h('div', { class: 'scan-area' },
+          videoWrap,
+          h('div', { class: 'row cam-controls' }, camBtn, torchBtn, quick),
+        ),
+        h('form', {
+          class: 'row manual', onsubmit: (e: Event) => { e.preventDefault(); unlockAudio(); const v = input.value; input.value = ''; input.blur(); void manualEntry(v); },
+        }, input, h('button', { class: 'btn primary', type: 'submit', 'aria-label': 'Buscar' }, icon('search'))),
       ),
-      h('form', {
-        class: 'row manual', onsubmit: (e: Event) => { e.preventDefault(); unlockAudio(); const v = input.value; input.value = ''; input.blur(); void manualEntry(v); },
-      }, input, h('button', { class: 'btn primary', type: 'submit', 'aria-label': 'Buscar' }, icon('search'))),
       card,
-      recentTitle,
-      recent,
+      h('section', { class: 'card list-card' },
+        recentTitle,
+        recent,
+      ),
     );
 
     viewMounted = true;

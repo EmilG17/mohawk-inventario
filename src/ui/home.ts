@@ -124,34 +124,14 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
               createBrandLogo(44, 'brand-mark hero-brand-mark'),
               h(
                 'div',
-                { class: 'dash-user-avatar' },
-                (s.counterName || 'T').trim().slice(0, 2).toUpperCase(),
-              ),
-              h(
-                'div',
                 { class: 'dash-user-meta' },
-                h(
-                  'div',
-                  { class: 'dash-tag-row' },
-                  h('span', { class: 'badge info' }, platform.label),
-                  cloudStatus.roomCode && cloudStatus.state === 'connected'
-                    ? h('span', { class: 'badge ok' }, `Sala: ${cloudStatus.roomCode}`)
-                    : cloudStatus.roomCode
-                      ? h('span', { class: 'badge warn' }, `Sala: ${cloudStatus.roomCode}`)
-                      : h('span', { class: 'badge default' }, 'Local'),
-                  h(
-                    'span',
-                    { class: navigator.onLine ? 'badge ok' : 'badge warn' },
-                    navigator.onLine ? 'En línea' : 'Sin conexión',
-                  ),
-                ),
                 h(
                   'div',
                   { class: 'hello' },
                   h(
                     'div',
                     null,
-                    h('div', { class: 'muted xsmall' }, 'Operador'),
+                    h('div', { class: 'muted xsmall' }, `Operador · ${todayStr}`),
                     h('div', { class: 'big' }, s.counterName || 'Sin asignar'),
                   ),
                   h(
@@ -167,20 +147,30 @@ async function renderHomeContent(root: HTMLElement): Promise<void> {
                     'Cambiar',
                   ),
                 ),
-                h('div', { class: 'muted xsmall dash-date-text' }, todayStr),
+                h(
+                  'div',
+                  { class: 'dash-tag-row' },
+                  h('span', { class: 'badge info' }, platform.label),
+                  cloudStatus.roomCode && cloudStatus.state === 'connected'
+                    ? h('span', { class: 'badge ok' }, `Sala: ${cloudStatus.roomCode}`)
+                    : cloudStatus.roomCode
+                      ? h('span', { class: 'badge warn' }, `Sala: ${cloudStatus.roomCode}`)
+                      : h('span', { class: 'badge default' }, 'Local'),
+                  h(
+                    'span',
+                    { class: navigator.onLine ? 'badge ok' : 'badge warn' },
+                    navigator.onLine ? 'En línea' : 'Sin conexión',
+                  ),
+                  !session
+                    ? h(
+                        'h2',
+                        { class: 'badge warn dash-idle-pill', 'data-testid': 'home-idle-badge', style: 'margin:0; font-weight:700;' },
+                        'Sin sesión activa',
+                      )
+                    : null,
+                ),
               ),
             ),
-            !session
-              ? h(
-                  'div',
-                  { class: 'dash-hero-right' },
-                  h(
-                    'h2',
-                    { class: 'badge warn dash-idle-pill', 'data-testid': 'home-idle-badge', style: 'margin:0; font-weight:700;' },
-                    'Sin sesión activa',
-                  ),
-                )
-              : null,
           ),
         ),
 

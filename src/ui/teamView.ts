@@ -279,6 +279,7 @@ export const teamView: View = {
     const configDrawerWrap = h('div');
     const errorBannerWrap = h('div');
     const kpiGridWrap = h('div', { class: 'sup-kpi-grid' });
+    const noSessionBannerWrap = h('div');
     const tabsBarWrap = h('div', { class: 'sup-tabs-bar' });
     const tabContentWrap = h('div', { class: 'sup-tab-body' });
 
@@ -288,6 +289,7 @@ export const teamView: View = {
       errorBannerWrap,
       configDrawerWrap,
       kpiGridWrap,
+      noSessionBannerWrap,
       tabsBarWrap,
       tabContentWrap,
     );
@@ -934,7 +936,7 @@ export const teamView: View = {
       ];
 
       clear(
-        tabsBarWrap,
+        noSessionBannerWrap,
         !current
           ? h(
               'div',
@@ -942,7 +944,7 @@ export const teamView: View = {
                 class: 'card',
                 'data-testid': 'team-no-session-badge',
                 style:
-                  'width: 100%; margin: 0 0 8px 0; padding: 14px 16px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; border: 1px solid var(--border);',
+                  'width: 100%; margin: 0 0 14px 0; padding: 14px 18px; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px;',
               },
               h(
                 'div',
@@ -971,6 +973,10 @@ export const teamView: View = {
               ),
             )
           : null,
+      );
+
+      clear(
+        tabsBarWrap,
         tabs.map((t) =>
           h(
             'button',

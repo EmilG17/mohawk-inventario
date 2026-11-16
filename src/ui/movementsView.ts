@@ -468,17 +468,17 @@ async function renderMainView(): Promise<void> {
     ),
   );
 
-  // 2. Selector de Sub-Pestaña
-  const subNav = h('div', { class: 'chips', style: 'margin: 12px 0;' },
+  // 2. Selector de Sub-Pestaña (barra segmentada uniforme)
+  const subNav = h('div', { class: 'chips sup-tabs-bar sup-tabs-2' },
     h('button', {
-      class: `chip ${activeSubTab === 'comparative' ? 'active' : ''}`,
+      class: `chip sup-tab-btn ${activeSubTab === 'comparative' ? 'active' : ''}`,
       onclick: () => {
         activeSubTab = 'comparative';
         void renderMainView();
       },
     }, 'Conciliación e Ideal'),
     h('button', {
-      class: `chip ${activeSubTab === 'bitacora' ? 'active' : ''}`,
+      class: `chip sup-tab-btn ${activeSubTab === 'bitacora' ? 'active' : ''}`,
       onclick: () => {
         activeSubTab = 'bitacora';
         void renderMainView();
