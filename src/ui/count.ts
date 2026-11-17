@@ -14,7 +14,10 @@ import {
   archiveSessionToCloud,
   decodeCompactCountQr,
   isCompactCountQr,
+  isRoomInviteUrl,
+  joinRoomFromInvite,
   onCloudRoomUpdate,
+  parseRoomInviteUrl,
   publishLiveScannerState,
   triggerBackgroundSync,
 } from '../sync/cloudSync';
@@ -268,6 +271,25 @@ function feedback(kind: 'ok' | 'warn') {
 }
 
 export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'manual'): Promise<void> {
+  if (isRoomInviteUrl(raw)) {
+    const invite = parseRoomInviteUrl(raw);
+    if (invite && invite.roomCode) {
+      const res = await joinRoomFromInvite(raw);
+      if (res.success) {
+        feedback('ok');
+        toast(
+          L(
+            `¡Conectado a la sala compartida ${res.roomCode || invite.roomCode}!`,
+            `Connected to shared room ${res.roomCode || invite.roomCode}!`,
+          ),
+          'ok',
+          5000,
+        );
+        return;
+      }
+    }
+  }
+
   if (!session) return;
   if (isCompactCountQr(raw)) {
     try {

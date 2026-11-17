@@ -5,7 +5,9 @@ import { reconcileCatalogProducts } from '../io/mergeCounts';
 import { loadSampleCatalog } from '../sampleData';
 import { loadSettings, saveSettings } from '../settings';
 import {
+  checkRoomExistsInDb,
   getCloudConnectionStatus,
+  listAvailableRoomsInDb,
   normalizeEndpointBaseUrl,
   normalizeRoomCode,
   startLiveCloudSync,
@@ -79,16 +81,71 @@ export const settingsView: View = {
       checked: Boolean(s.supervisorMode),
       'data-testid': 'settings-supervisor-mode-toggle',
     }) as HTMLInputElement;
+
+    const roomDatalist = h('datalist', { id: 'settings-rooms-datalist' });
+    const roomStatusBadge = h('div', { class: 'small muted', style: 'margin-top: 4px; min-height: 18px;' });
+
+    let checkTimer: ReturnType<typeof setTimeout> | null = null;
+    const verifyRoomStatus = () => {
+      if (checkTimer) clearTimeout(checkTimer);
+      checkTimer = setTimeout(async () => {
+        const cleanRoom = normalizeRoomCode(syncRoomInput.value);
+        const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
+        if (!cleanRoom || !cleanEndpoint) {
+          roomStatusBadge.textContent = '';
+          return;
+        }
+        const res = await checkRoomExistsInDb(cleanEndpoint, cleanRoom);
+        if (res.exists) {
+          roomStatusBadge.className = 'small pos';
+          roomStatusBadge.textContent = `✓ ${L('Sala existente en Firebase', 'Existing room in Firebase')}`;
+        } else {
+          roomStatusBadge.className = 'small muted';
+          roomStatusBadge.textContent = `• ${L('Nueva sala (se creará al sincronizar)', 'New room (will be created upon sync)')}`;
+        }
+      }, 350);
+    };
+
+    const loadAvailableRooms = async () => {
+      const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
+      if (!cleanEndpoint) return;
+      try {
+        const rooms = await listAvailableRoomsInDb(cleanEndpoint);
+        clear(roomDatalist);
+        for (const r of rooms) {
+          roomDatalist.appendChild(h('option', { value: r.roomCode }, r.sessionName || r.roomCode));
+        }
+      } catch {}
+    };
+
     const syncRoomInput = h('input', {
       class: 'input input-sm',
       value: s.syncRoomCode,
       placeholder: L('Ej. MHK-PLANTA-1', 'e.g. MHK-PLANT-1'),
+      list: 'settings-rooms-datalist',
+      style: 'text-transform: uppercase;',
+      oninput: verifyRoomStatus,
+      onblur: () => {
+        const clean = normalizeRoomCode(syncRoomInput.value);
+        if (clean) syncRoomInput.value = clean;
+        verifyRoomStatus();
+      },
     }) as HTMLInputElement;
+
     const syncEndpointInput = h('input', {
       class: 'input input-sm',
       value: s.syncEndpointUrl,
       placeholder: 'https://tu-proyecto-default-rtdb.firebaseio.com',
+      onblur: () => {
+        const clean = normalizeEndpointBaseUrl(syncEndpointInput.value);
+        if (clean) syncEndpointInput.value = clean;
+        void loadAvailableRooms();
+        verifyRoomStatus();
+      },
     }) as HTMLInputElement;
+
+    void loadAvailableRooms();
+    verifyRoomStatus();
 
     const diagBox = h('div', { class: 'sup-diag-box', style: 'display:none' });
 
@@ -377,6 +434,8 @@ export const settingsView: View = {
             h('label', { class: 'field compact-field' },
               h('span', null, L('Código de Sala compartida', 'Shared room code')),
               syncRoomInput,
+              roomDatalist,
+              roomStatusBadge,
             ),
             h('label', { class: 'field compact-field' },
               h('span', null, L('URL de Firebase Realtime DB', 'Firebase Realtime DB URL')),

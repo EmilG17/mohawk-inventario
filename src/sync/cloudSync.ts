@@ -200,8 +200,14 @@ if (typeof BroadcastChannel !== 'undefined') {
 export function normalizeRoomCode(code: string): string {
   return (code || '')
     .trim()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
     .toUpperCase()
-    .replace(/[^A-Z0-9_-]+/g, '-')
+    .replace(/[_\s]+/g, '-')
+    .replace(/^([A-Z]+)(\d+)$/, '$1-$2')
+    .replace(/-0+(\d+)/g, '-$1')
+    .replace(/[^A-Z0-9-]+/g, '')
+    .replace(/-+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 32);
 }
@@ -209,6 +215,263 @@ export function normalizeRoomCode(code: string): string {
 export function generateRoomCode(prefix = 'MHK'): string {
   const num = Math.floor(1000 + Math.random() * 9000);
   return `${prefix}-${num}`;
+}
+
+export interface AvailableRoomInfo {
+  roomCode: string;
+  sessionName?: string;
+  totalCounts?: number;
+  updatedAt?: number;
+}
+
+/**
+ * Consulta las salas existentes en la base de datos de Firebase para evitar crear duplicados.
+ * Utiliza ?shallow=true para una respuesta ultraligera de pocos bytes y consulta el índice.
+ */
+export async function listAvailableRoomsInDb(endpointUrl: string): Promise<AvailableRoomInfo[]> {
+  const normBase = normalizeEndpointBaseUrl(endpointUrl);
+  if (!normBase || typeof fetch === 'undefined') return [];
+
+  const isFirebase = /firebaseio\.com/i.test(normBase) || /\.firebasedatabase\.app/i.test(normBase);
+  if (!isFirebase) return [];
+
+  const foundMap = new Map<string, AvailableRoomInfo>();
+
+  // 1. Intentar shallow query sobre /rooms.json (ultraligero en Firebase)
+  try {
+    const url = `${normBase}/rooms.json?shallow=true`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: getFetchTimeoutSignal(5000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data && typeof data === 'object') {
+        for (const k of Object.keys(data)) {
+          const norm = normalizeRoomCode(k);
+          if (norm && !foundMap.has(norm)) {
+            foundMap.set(norm, { roomCode: norm });
+          }
+        }
+      }
+    }
+  } catch {}
+
+  // 2. Intentar consultar el registro ligero de salas /rooms_index.json
+  try {
+    const indexUrl = `${normBase}/rooms_index.json`;
+    const res2 = await fetch(indexUrl, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: getFetchTimeoutSignal(4000),
+    });
+    if (res2.ok) {
+      const indexData = await res2.json();
+      if (indexData && typeof indexData === 'object') {
+        for (const [k, v] of Object.entries(indexData as Record<string, any>)) {
+          const norm = normalizeRoomCode(k);
+          if (norm) {
+            foundMap.set(norm, {
+              roomCode: norm,
+              sessionName: v?.sessionName,
+              totalCounts: v?.totalCounts,
+              updatedAt: v?.updatedAt,
+            });
+          }
+        }
+      }
+    }
+  } catch {}
+
+  return [...foundMap.values()];
+}
+
+/**
+ * Comprueba si una sala específica ya existe en la base de datos de Firebase
+ * consultando únicamente su marca de tiempo (solo ~8 bytes).
+ */
+export async function checkRoomExistsInDb(
+  endpointUrl: string,
+  roomCode: string,
+): Promise<{
+  exists: boolean;
+  roomCode: string;
+  updatedAt?: number;
+}> {
+  const normBase = normalizeEndpointBaseUrl(endpointUrl);
+  const code = normalizeRoomCode(roomCode);
+  if (!normBase || !code || typeof fetch === 'undefined') {
+    return { exists: false, roomCode: code };
+  }
+
+  const isFirebase = /firebaseio\.com/i.test(normBase) || /\.firebasedatabase\.app/i.test(normBase);
+  if (!isFirebase) {
+    return { exists: false, roomCode: code };
+  }
+
+  try {
+    const cleanRoom = encodeURIComponent(code);
+    const url = `${normBase}/rooms/${cleanRoom}/updatedAt.json`;
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: getFetchTimeoutSignal(4000),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      if (data !== null) {
+        return { exists: true, roomCode: code, updatedAt: typeof data === 'number' ? data : undefined };
+      }
+    }
+  } catch {}
+
+  return { exists: false, roomCode: code };
+}
+
+/**
+ * Genera un código de sala único asegurando que no colisione con ninguna sala existente en la BD.
+ */
+export async function generateUniqueRoomCode(endpointUrl?: string, prefix = 'MHK'): Promise<string> {
+  const normBase = normalizeEndpointBaseUrl(endpointUrl || '');
+  if (!normBase) {
+    return generateRoomCode(prefix);
+  }
+
+  try {
+    const existing = await listAvailableRoomsInDb(normBase);
+    const set = new Set(existing.map((r) => r.roomCode));
+
+    // Si existen salas con formato secuencial (ej. MHK-1, MHK-2), sugerimos el siguiente entero disponible
+    let maxSequential = 0;
+    const prefixRegex = new RegExp(`^${prefix}-(\\d+)$`, 'i');
+    for (const r of existing) {
+      const match = r.roomCode.match(prefixRegex);
+      if (match) {
+        const val = parseInt(match[1], 10);
+        if (val > maxSequential && val < 1000) {
+          maxSequential = val;
+        }
+      }
+    }
+
+    if (maxSequential > 0) {
+      const candidate = `${prefix}-${maxSequential + 1}`;
+      if (!set.has(candidate)) return candidate;
+    }
+
+    for (let i = 0; i < 20; i++) {
+      const candidate = generateRoomCode(prefix);
+      if (!set.has(candidate)) {
+        return candidate;
+      }
+    }
+  } catch {}
+
+  const uniqueSuffix = Math.floor(1000 + (Date.now() % 9000));
+  return `${prefix}-${uniqueSuffix}`;
+}
+
+/**
+ * Detecta si una cadena escaneada o recibida es un enlace o código de invitación a sala.
+ */
+export function isRoomInviteUrl(raw: string): boolean {
+  if (!raw || typeof raw !== 'string') return false;
+  const trimmed = raw.trim();
+  if (trimmed.startsWith(QR_PREFIX)) return false;
+  return trimmed.includes('room=') || trimmed.includes('?room=') || trimmed.includes('&room=');
+}
+
+/**
+ * Extrae los parámetros de sala y base de datos de un enlace de invitación.
+ */
+export function parseRoomInviteUrl(raw: string): { roomCode?: string; endpointUrl?: string } | null {
+  if (!isRoomInviteUrl(raw)) return null;
+  try {
+    const trimmed = raw.trim();
+    const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
+    const room = url.searchParams.get('room');
+    const db = url.searchParams.get('db') || url.searchParams.get('endpoint');
+    if (!room && !db) return null;
+    return {
+      roomCode: room ? normalizeRoomCode(room) : undefined,
+      endpointUrl: db ? normalizeEndpointBaseUrl(db) : undefined,
+    };
+  } catch {
+    const matchRoom = raw.match(/[?&]room=([a-zA-Z0-9_.-]+)/i);
+    const matchDb = raw.match(/[?&](?:db|endpoint)=([^&]+)/i);
+    if (!matchRoom && !matchDb) return null;
+    return {
+      roomCode: matchRoom ? normalizeRoomCode(matchRoom[1]) : undefined,
+      endpointUrl: matchDb ? normalizeEndpointBaseUrl(decodeURIComponent(matchDb[1])) : undefined,
+    };
+  }
+}
+
+/**
+ * Conecta e inicializa la sincronización inmediata a una sala desde una invitación QR o link.
+ */
+export async function joinRoomFromInvite(
+  roomCodeOrUrl: string,
+  endpointUrl?: string,
+): Promise<{ success: boolean; roomCode?: string }> {
+  let targetRoom = roomCodeOrUrl;
+  let targetEndpoint = endpointUrl;
+
+  if (isRoomInviteUrl(roomCodeOrUrl)) {
+    const parsed = parseRoomInviteUrl(roomCodeOrUrl);
+    if (parsed) {
+      if (parsed.roomCode) targetRoom = parsed.roomCode;
+      if (parsed.endpointUrl) targetEndpoint = parsed.endpointUrl;
+    }
+  }
+
+  const code = normalizeRoomCode(targetRoom);
+  if (!code) return { success: false };
+  const currentSettings = await loadSettings();
+  const cleanEndpoint = targetEndpoint ? normalizeEndpointBaseUrl(targetEndpoint) : currentSettings.syncEndpointUrl;
+
+  await saveSettings({
+    syncEnabled: true,
+    syncAuto: true,
+    syncRoomCode: code,
+    syncEndpointUrl: cleanEndpoint,
+  });
+
+  startLiveCloudSync({ roomCode: code, endpointUrl: cleanEndpoint });
+  void syncNow({ roomCode: code, endpointUrl: cleanEndpoint }).catch(() => {});
+  return { success: true, roomCode: code };
+}
+
+export async function registerRoomInDbIndex(
+  endpointUrl: string,
+  roomCode: string,
+  sessionName: string,
+  totalCounts: number,
+): Promise<void> {
+  const normBase = normalizeEndpointBaseUrl(endpointUrl);
+  const cleanRoom = encodeURIComponent(normalizeRoomCode(roomCode));
+  if (!normBase || !cleanRoom || typeof fetch === 'undefined') return;
+  const isFirebase = /firebaseio\.com/i.test(normBase) || /\.firebasedatabase\.app/i.test(normBase);
+  if (!isFirebase) return;
+
+  try {
+    const url = `${normBase}/rooms_index/${cleanRoom}.json`;
+    await fetch(url, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        roomCode: normalizeRoomCode(roomCode),
+        sessionName: sessionName || `Sala ${roomCode}`,
+        totalCounts,
+        updatedAt: Date.now(),
+      }),
+      signal: getFetchTimeoutSignal(4000),
+    });
+  } catch {}
 }
 
 export function onCloudRoomUpdate(listener: (state: CloudRoomState) => void): () => void {

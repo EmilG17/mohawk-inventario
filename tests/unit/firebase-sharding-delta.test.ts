@@ -4,15 +4,22 @@ import { clearMovements, listMovements, recordMovement } from '../../src/db/move
 import {
   _clearMemoryRooms,
   archiveSessionToCloud,
+  checkRoomExistsInDb,
   fetchCloudArchivedSession,
   fetchRemoteUpdatedAt,
+  generateUniqueRoomCode,
+  isRoomInviteUrl,
+  joinRoomFromInvite,
+  listAvailableRoomsInDb,
   listCloudArchivedSessions,
+  normalizeRoomCode,
+  parseRoomInviteUrl,
   patchRemoteRoomDelta,
   syncDeltaToRemote,
   syncNow,
   triggerBackgroundSync,
 } from '../../src/sync/cloudSync';
-import { saveSettings } from '../../src/settings';
+import { loadSettings, saveSettings } from '../../src/settings';
 import 'fake-indexeddb/auto';
 
 describe('Firebase Realtime DB Granular Sharding & Delta Sync Suite', () => {
@@ -173,5 +180,90 @@ describe('Firebase Realtime DB Granular Sharding & Delta Sync Suite', () => {
     });
     expect(fetchedDetail).not.toBeNull();
     expect(fetchedDetail?.counts).toHaveLength(2);
+  });
+
+  describe('Prevención de salas duplicadas y normalización canónica', () => {
+    it('normaliza variaciones tipográficas a una sala canónica única', () => {
+      // Casos comunes de duplicados por tecleo de técnicos
+      expect(normalizeRoomCode('mhk-01')).toBe('MHK-1');
+      expect(normalizeRoomCode('MHK 1')).toBe('MHK-1');
+      expect(normalizeRoomCode('mhk_1')).toBe('MHK-1');
+      expect(normalizeRoomCode('mhk 001')).toBe('MHK-1');
+      expect(normalizeRoomCode('mhk2026')).toBe('MHK-2026');
+      expect(normalizeRoomCode('Salón 1')).toBe('SALON-1');
+      expect(normalizeRoomCode('  mhk-planta-02  ')).toBe('MHK-PLANTA-2');
+      expect(normalizeRoomCode('MHK-ALMACEN_CENTRAL-007')).toBe('MHK-ALMACEN-CENTRAL-7');
+    });
+
+    it('identifica y procesa URLs de invitación para unirse con 1-tap/escaneo', async () => {
+      const inviteUrl = 'https://app.mohawk.com/?room=MHK-AUDIT-1&endpoint=https%3A%2F%2Fdemo-rtdb.firebaseio.com';
+      expect(isRoomInviteUrl(inviteUrl)).toBe(true);
+      expect(isRoomInviteUrl('750100123456')).toBe(false);
+
+      const parsed = parseRoomInviteUrl(inviteUrl);
+      expect(parsed).not.toBeNull();
+      expect(parsed?.roomCode).toBe('MHK-AUDIT-1');
+      expect(parsed?.endpointUrl).toBe('https://demo-rtdb.firebaseio.com');
+
+      const joined = await joinRoomFromInvite(inviteUrl);
+      expect(joined.success).toBe(true);
+      expect(joined.roomCode).toBe('MHK-AUDIT-1');
+
+      const s = await loadSettings();
+      expect(s.syncRoomCode).toBe('MHK-AUDIT-1');
+      expect(s.syncEndpointUrl).toBe('https://demo-rtdb.firebaseio.com');
+      expect(s.syncEnabled).toBe(true);
+    });
+
+    it('listAvailableRoomsInDb y checkRoomExistsInDb consultan el índice de salas en Firebase', async () => {
+      const mockRoomsIndex = {
+        'MHK-1': { roomCode: 'MHK-1', sessionName: 'Inventario General', updatedAt: 1794860000000 },
+        'MHK-2': { roomCode: 'MHK-2', sessionName: 'Auditoría Tienda', updatedAt: 1794860050000 },
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const u = String(url);
+        if (u.includes('/rooms_index.json')) {
+          return new Response(JSON.stringify(mockRoomsIndex), { status: 200 });
+        }
+        if (u.includes('/rooms/MHK-1/updatedAt.json')) {
+          return new Response(JSON.stringify(1794860000000), { status: 200 });
+        }
+        if (u.includes('/rooms/MHK-99/updatedAt.json')) {
+          return new Response('null', { status: 200 });
+        }
+        return new Response('null', { status: 200 });
+      });
+
+      const rooms = await listAvailableRoomsInDb('https://demo-rtdb.firebaseio.com');
+      expect(rooms).toHaveLength(2);
+      expect(rooms.map((r) => r.roomCode)).toContain('MHK-1');
+      expect(rooms.map((r) => r.roomCode)).toContain('MHK-2');
+
+      const exists1 = await checkRoomExistsInDb('https://demo-rtdb.firebaseio.com', 'mhk-01'); // Debe normalizarse a MHK-1
+      expect(exists1.exists).toBe(true);
+
+      const exists99 = await checkRoomExistsInDb('https://demo-rtdb.firebaseio.com', 'MHK-99');
+      expect(exists99.exists).toBe(false);
+    });
+
+    it('generateUniqueRoomCode busca un número secuencial no utilizado evitando colisiones', async () => {
+      const existingRooms = {
+        'MHK-1': true,
+        'MHK-2': true,
+        'MHK-3': true,
+      };
+
+      vi.spyOn(globalThis, 'fetch').mockImplementation(async (url) => {
+        const u = String(url);
+        if (u.includes('/rooms.json?shallow=true')) {
+          return new Response(JSON.stringify(existingRooms), { status: 200 });
+        }
+        return new Response('null', { status: 200 });
+      });
+
+      const uniqueCode = await generateUniqueRoomCode('https://demo-rtdb.firebaseio.com', 'MHK');
+      expect(uniqueCode).toBe('MHK-4');
+    });
   });
 });

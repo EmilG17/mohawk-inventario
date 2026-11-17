@@ -344,6 +344,9 @@ vi.mock('../../src/sync/cloudSync', () => ({
   onCloudStatusChange: vi.fn(() => () => {}),
   decodeCompactCountQr: vi.fn(() => null),
   isCompactCountQr: vi.fn(() => false),
+  isRoomInviteUrl: vi.fn(() => false),
+  parseRoomInviteUrl: vi.fn(() => null),
+  joinRoomFromInvite: vi.fn(async () => ({ success: true })),
   publishLiveScannerState: vi.fn(async () => {}),
   triggerBackgroundSync: vi.fn(),
 }));

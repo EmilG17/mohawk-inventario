@@ -26,14 +26,17 @@ import { normalizeBarcode } from '../io/normalize';
 import { buildReport, type ReportRow } from '../report';
 import { loadSettings, saveSettings } from '../settings';
 import {
+  archiveSessionToCloud,
   buildRoomInviteUrl,
   canonicalCountId,
+  checkRoomExistsInDb,
   decodeCompactCountQr,
   encodeCompactCountQrChunks,
   generateRoomCode,
+  generateUniqueRoomCode,
   getCachedRoomState,
-  archiveSessionToCloud,
   getCloudConnectionStatus,
+  listAvailableRoomsInDb,
   normalizeEndpointBaseUrl,
   normalizeRoomCode,
   onCloudRoomUpdate,
@@ -306,11 +309,74 @@ export const teamView: View = {
     );
 
     // Controles persistentes del cajón de configuración
+    const roomDatalist = h('datalist', { id: 'team-rooms-datalist' });
+    const roomStatusBadge = h('div', { class: 'small muted', style: 'margin-top: 4px; min-height: 18px;' });
+    const roomsDiscoveryBox = h('div', { class: 'row wrap', style: 'gap: 4px; margin-top: 6px;', hidden: true });
+
+    let checkTimer: ReturnType<typeof setTimeout> | null = null;
+    const verifyRoomStatus = () => {
+      if (checkTimer) clearTimeout(checkTimer);
+      checkTimer = setTimeout(async () => {
+        const cleanRoom = normalizeRoomCode(roomInput.value);
+        const cleanEndpoint = normalizeEndpointBaseUrl(endpointInput.value);
+        if (!cleanRoom || !cleanEndpoint) {
+          roomStatusBadge.textContent = '';
+          return;
+        }
+        const res = await checkRoomExistsInDb(cleanEndpoint, cleanRoom);
+        if (res.exists) {
+          roomStatusBadge.className = 'small pos';
+          roomStatusBadge.textContent = `✓ ${L('Sala existente en Firebase (te unirás a los conteos del equipo)', 'Existing room in Firebase (you will join team counts)')}`;
+        } else {
+          roomStatusBadge.className = 'small muted';
+          roomStatusBadge.textContent = `• ${L('Nueva sala (se creará al sincronizar)', 'New room (will be created upon sync)')}`;
+        }
+      }, 350);
+    };
+
+    const loadAvailableRooms = async () => {
+      const cleanEndpoint = normalizeEndpointBaseUrl(endpointInput.value);
+      if (!cleanEndpoint) return;
+      try {
+        const rooms = await listAvailableRoomsInDb(cleanEndpoint);
+        clear(roomDatalist);
+        for (const r of rooms) {
+          roomDatalist.appendChild(h('option', { value: r.roomCode }, r.sessionName || r.roomCode));
+        }
+        if (rooms.length > 0) {
+          roomsDiscoveryBox.hidden = false;
+          clear(roomsDiscoveryBox,
+            h('span', { class: 'muted small', style: 'align-self: center; margin-right: 4px;' }, L('Salas activas en BD:', 'Active rooms in DB:')),
+            ...rooms.slice(0, 6).map((r) =>
+              h('button', {
+                class: 'btn xs ghost',
+                type: 'button',
+                title: r.sessionName ? `${r.roomCode} - ${r.sessionName}` : r.roomCode,
+                onclick: () => {
+                  roomInput.value = r.roomCode;
+                  verifyRoomStatus();
+                },
+              }, r.roomCode),
+            ),
+          );
+        } else {
+          roomsDiscoveryBox.hidden = true;
+        }
+      } catch {}
+    };
+
     const roomInput = h('input', {
       class: 'input',
       value: s.syncRoomCode || 'MHK-2026',
       placeholder: 'Ej. MHK-2026',
       style: 'text-transform: uppercase; font-weight: 700;',
+      list: 'team-rooms-datalist',
+      oninput: verifyRoomStatus,
+      onblur: () => {
+        const clean = normalizeRoomCode(roomInput.value);
+        if (clean) roomInput.value = clean;
+        verifyRoomStatus();
+      },
     }) as HTMLInputElement;
 
     const endpointInput = h('input', {
@@ -320,8 +386,13 @@ export const teamView: View = {
       onblur: () => {
         const clean = normalizeEndpointBaseUrl(endpointInput.value);
         if (clean) endpointInput.value = clean;
+        void loadAvailableRooms();
+        verifyRoomStatus();
       },
     }) as HTMLInputElement;
+
+    void loadAvailableRooms();
+    verifyRoomStatus();
 
     const autoCheck = h('input', {
       type: 'checkbox',
@@ -557,18 +628,22 @@ export const teamView: View = {
                 'div',
                 { class: 'row', style: 'gap: 6px;' },
                 roomInput,
+                roomDatalist,
                 h(
                   'button',
                   {
                     class: 'btn sm',
                     type: 'button',
-                    onclick: () => {
-                      roomInput.value = generateRoomCode('MHK');
+                    onclick: async () => {
+                      roomInput.value = await generateUniqueRoomCode(endpointInput.value, 'MHK');
+                      verifyRoomStatus();
                     },
                   },
-                  L('Generar', 'Generate'),
+                  L('Generar única', 'Generate unique'),
                 ),
               ),
+              roomStatusBadge,
+              roomsDiscoveryBox,
             ),
             h(
               'label',
