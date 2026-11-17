@@ -37,7 +37,7 @@ import { openBarcodeSheetDialog } from './barcodeSheet';
 import { createBrandLogo } from './logo';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
 import { navigate, type View } from './router';
-import { onCloudRoomUpdate } from '../sync/cloudSync';
+import { archiveSessionToCloud, onCloudRoomUpdate } from '../sync/cloudSync';
 import { computeRoomDataSig } from './cloudSignal';
 
 let selectedSessionId: string | null = null;
@@ -363,6 +363,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
                 const ok = await confirmDialog(L('Finalizar sesión', 'Close session'), L(`¿Deseas finalizar la sesión "${session.name}"?`, `Finish session "${session.name}"?`), L('Finalizar', 'Close'), true);
                 if (ok) {
                   await closeSession(session.id);
+                  void archiveSessionToCloud(session.id).catch(() => {});
                   toast(L('Sesión finalizada con éxito', 'Session closed'), 'ok');
                   navigate(`/reporte?session=${session.id}`);
                 }

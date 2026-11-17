@@ -11,7 +11,7 @@ import { L, getLocaleTag } from '../i18n/i18n';
 import { getAllMovements } from '../db/movements';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
-import { getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
+import { archiveSessionToCloud, getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
 import { computeRoomDataSig } from './cloudSignal';
 import { detectPlatformInfo } from './app';
 import { openBarcodeSheetDialog } from './barcodeSheet';
@@ -342,6 +342,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                       );
                       if (ok) {
                         await closeSession(session.id);
+                        void archiveSessionToCloud(session.id).catch(() => {});
                         toast(L('Sesión finalizada con éxito', 'Session closed'), 'ok');
                         navigate('/');
                       }

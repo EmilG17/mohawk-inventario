@@ -57,6 +57,38 @@ export interface TombstoneState {
   products?: Record<string, number>;
 }
 
+export interface RoomDeltaPayload {
+  counts?: Record<string, CountEntry | null>;
+  movements?: Record<string, Movement | null>;
+  products?: Record<string, Product | null>;
+  liveScanners?: Record<string, LiveScannerState>;
+  participants?: Record<string, CloudParticipant>;
+  tombstones?: {
+    counts?: Record<string, number>;
+    movements?: Record<string, number>;
+    products?: Record<string, number>;
+  };
+  updatedAt?: number;
+  catalogVersion?: number;
+}
+
+export interface CloudArchivedSessionSummary {
+  id: string;
+  name: string;
+  counter: string;
+  createdAt: number;
+  closedAt: number;
+  totalCounts: number;
+  totalUnits: number;
+  roomCode: string;
+}
+
+export interface CloudArchivedSessionDetail extends CloudArchivedSessionSummary {
+  counts: CountEntry[];
+  movements?: Movement[];
+  exportedAt: string;
+}
+
 export interface CloudRoomState {
   app: typeof APP_ID;
   version: 1;
@@ -442,6 +474,360 @@ async function putRemoteRoom(endpointUrl: string, roomCode: string, state: Cloud
     throw new Error(formatRemoteHttpError(res.status, roomCode));
   }
   return true;
+}
+
+/**
+ * Consulta de forma ultraligera el timestamp de actualización de la sala en Firebase
+ * sin descargar conteos, productos ni movimientos.
+ */
+export async function fetchRemoteUpdatedAt(endpointUrl: string, roomCode: string): Promise<number | null> {
+  const norm = normalizeEndpointBaseUrl(endpointUrl);
+  if (!norm || typeof fetch === 'undefined') return null;
+  const isFirebase = /firebaseio\.com/i.test(norm) || /\.firebasedatabase\.app/i.test(norm);
+  if (!isFirebase) return null;
+  const cleanRoom = encodeURIComponent(normalizeRoomCode(roomCode));
+  const url = `${norm}/rooms/${cleanRoom}/updatedAt.json`;
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: getFetchTimeoutSignal(5000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return typeof data === 'number' ? data : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Aplica una actualización granular/delta multi-path en Firebase Realtime Database
+ * utilizando peticiones PATCH sobre sub-rutas específicas (counts, movements, liveScanners, etc.).
+ * Reduce el consumo de datos de megabytes a solo ~200 bytes por escaneo.
+ */
+export async function patchRemoteRoomDelta(
+  endpointUrl: string,
+  roomCode: string,
+  delta: RoomDeltaPayload,
+): Promise<boolean> {
+  const cleanRoom = encodeURIComponent(normalizeRoomCode(roomCode));
+  const rawBase = normalizeEndpointBaseUrl(endpointUrl);
+  if (!rawBase || !cleanRoom || typeof fetch === 'undefined') return false;
+
+  const isFirebase = /firebaseio\.com/i.test(rawBase) || /\.firebasedatabase\.app/i.test(rawBase);
+  if (!isFirebase) return false;
+
+  const now = delta.updatedAt || Date.now();
+  const patchPayload: Record<string, unknown> = {
+    updatedAt: now,
+  };
+
+  if (delta.counts) {
+    for (const [id, c] of Object.entries(delta.counts)) {
+      const normKey = canonicalCountId(id);
+      patchPayload[`counts/${normKey}`] = c;
+    }
+  }
+
+  if (delta.movements) {
+    for (const [id, m] of Object.entries(delta.movements)) {
+      patchPayload[`movements/${id}`] = m;
+    }
+  }
+
+  if (delta.products) {
+    for (const [barcode, p] of Object.entries(delta.products)) {
+      const normBc = normalizeBarcode(barcode);
+      patchPayload[`products/${normBc}`] = p;
+    }
+  }
+
+  if (delta.liveScanners) {
+    for (const [key, scan] of Object.entries(delta.liveScanners)) {
+      patchPayload[`liveScanners/${key}`] = scan;
+    }
+  }
+
+  if (delta.participants) {
+    for (const [key, part] of Object.entries(delta.participants)) {
+      patchPayload[`participants/${key}`] = part;
+    }
+  }
+
+  if (delta.tombstones?.counts) {
+    for (const [id, ts] of Object.entries(delta.tombstones.counts)) {
+      const normKey = canonicalCountId(id);
+      patchPayload[`tombstones/counts/${normKey}`] = ts;
+      patchPayload[`counts/${normKey}`] = null;
+    }
+  }
+
+  if (delta.tombstones?.movements) {
+    for (const [id, ts] of Object.entries(delta.tombstones.movements)) {
+      patchPayload[`tombstones/movements/${id}`] = ts;
+      patchPayload[`movements/${id}`] = null;
+    }
+  }
+
+  if (delta.tombstones?.products) {
+    for (const [bc, ts] of Object.entries(delta.tombstones.products)) {
+      const normBc = normalizeBarcode(bc);
+      patchPayload[`tombstones/products/${normBc}`] = ts;
+      patchPayload[`products/${normBc}`] = null;
+    }
+  }
+
+  if (delta.catalogVersion !== undefined) {
+    patchPayload.catalogVersion = delta.catalogVersion;
+  }
+
+  const patchUrl = `${rawBase}/rooms/${cleanRoom}.json`;
+  try {
+    const res = await fetch(patchUrl, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(patchPayload),
+      signal: getFetchTimeoutSignal(8000),
+    });
+    return res.ok;
+  } catch (err) {
+    console.warn('[cloudSync] Error en patch delta:', err);
+    return false;
+  }
+}
+
+/**
+ * Sincroniza deltas recientes hacia Firebase de forma ultra-ligera (~200 bytes)
+ * enviando únicamente conteos, movimientos y lápidas posteriores a `sinceTimestamp`.
+ */
+export async function syncDeltaToRemote(opts: {
+  sessionId?: string;
+  roomCode?: string;
+  endpointUrl?: string;
+  sinceTimestamp?: number;
+}): Promise<boolean> {
+  const s = settingsSync();
+  const roomCode = normalizeRoomCode(opts.roomCode || s.syncRoomCode);
+  const endpointUrl = normalizeEndpointBaseUrl(opts.endpointUrl || s.syncEndpointUrl);
+  if (!roomCode || !endpointUrl) return false;
+
+  const isFirebase = /firebaseio\.com/i.test(endpointUrl) || /\.firebasedatabase\.app/i.test(endpointUrl);
+  if (!isFirebase) return false;
+
+  const since = opts.sinceTimestamp || 0;
+  const session = opts.sessionId ? await getSession(opts.sessionId) : await getActiveSession();
+
+  const allCounts = session ? await countsForSession(session.id) : [];
+  const deltaCounts = allCounts.filter((c) => c.timestamp >= since);
+
+  const allMovements = await listMovements();
+  const deltaMovements = allMovements.filter((m) => m.timestamp >= since);
+
+  const localTombstones = await getLocalTombstones();
+  const deltaTombCounts: Record<string, number> = {};
+  if (localTombstones.counts) {
+    for (const [id, ts] of Object.entries(localTombstones.counts)) {
+      if (ts >= since) deltaTombCounts[id] = ts;
+    }
+  }
+  const deltaTombMovements: Record<string, number> = {};
+  if (localTombstones.movements) {
+    for (const [id, ts] of Object.entries(localTombstones.movements)) {
+      if (ts >= since) deltaTombMovements[id] = ts;
+    }
+  }
+
+  const hasDeltas =
+    deltaCounts.length > 0 ||
+    deltaMovements.length > 0 ||
+    Object.keys(deltaTombCounts).length > 0 ||
+    Object.keys(deltaTombMovements).length > 0;
+
+  if (!hasDeltas) {
+    return true;
+  }
+
+  const countsMap: Record<string, CountEntry> = {};
+  for (const c of deltaCounts) {
+    countsMap[canonicalCountId(c.id)] = c;
+  }
+
+  const movementsMap: Record<string, Movement> = {};
+  for (const m of deltaMovements) {
+    movementsMap[m.id] = m;
+  }
+
+  const deviceId = await getDeviceId();
+  const counterName = (session?.counter || s.counterName || 'Técnico').trim() || 'Técnico';
+  const participantsMap: Record<string, CloudParticipant> = {
+    [deviceId]: {
+      counter: counterName,
+      deviceId,
+      lastSeen: Date.now(),
+      scans: allCounts.length,
+      units: allCounts.reduce((sum, c) => sum + (c.qty || 0), 0),
+      lastSku: deltaCounts[deltaCounts.length - 1]?.barcode,
+      lastQty: deltaCounts[deltaCounts.length - 1]?.qty,
+    },
+  };
+
+  const ok = await patchRemoteRoomDelta(endpointUrl, roomCode, {
+    counts: countsMap,
+    movements: movementsMap,
+    participants: participantsMap,
+    tombstones: {
+      counts: deltaTombCounts,
+      movements: deltaTombMovements,
+    },
+    updatedAt: Date.now(),
+  });
+
+  if (ok) {
+    const now = Date.now();
+    await setMeta(`lastSync_${roomCode}`, now);
+    emitStatus({
+      state: 'connected',
+      roomCode,
+      endpointUrl,
+      transport: 'remote',
+      lastSyncedAt: now,
+      lastError: null,
+    });
+  }
+
+  return ok;
+}
+
+/**
+ * Archiva una sesión completada en Firebase en una sub-ruta dedicada `/rooms/{sala}/sessions_archive/{id}.json`
+ * y guarda su resumen en `/rooms/{sala}/history_summaries/{id}.json`.
+ * Esto permite desacoplar sesiones pasadas de la sala activa para mantener el rendimiento al 100%.
+ */
+export async function archiveSessionToCloud(
+  sessionId: string,
+  opts?: { roomCode?: string; endpointUrl?: string },
+): Promise<boolean> {
+  const s = settingsSync();
+  const roomCode = normalizeRoomCode(opts?.roomCode || s.syncRoomCode);
+  const endpointUrl = normalizeEndpointBaseUrl(opts?.endpointUrl || s.syncEndpointUrl);
+  if (!roomCode || !endpointUrl || typeof fetch === 'undefined') return false;
+
+  const session = await getSession(sessionId);
+  if (!session) return false;
+
+  const counts = await countsForSession(sessionId);
+  const totalUnits = counts.reduce((acc, c) => acc + (c.qty || 0), 0);
+  const closedAt = Date.now();
+
+  const summary: CloudArchivedSessionSummary = {
+    id: session.id,
+    name: session.name,
+    counter: session.counter,
+    createdAt: session.createdAt,
+    closedAt,
+    totalCounts: counts.length,
+    totalUnits,
+    roomCode,
+  };
+
+  const detail: CloudArchivedSessionDetail = {
+    ...summary,
+    counts,
+    exportedAt: new Date().toISOString(),
+  };
+
+  const isFirebase = /firebaseio\.com/i.test(endpointUrl) || /\.firebasedatabase\.app/i.test(endpointUrl);
+  if (!isFirebase) return false;
+
+  const cleanRoom = encodeURIComponent(roomCode);
+  const cleanSessionId = encodeURIComponent(session.id);
+
+  try {
+    const detailUrl = `${endpointUrl}/rooms/${cleanRoom}/sessions_archive/${cleanSessionId}.json`;
+    await fetch(detailUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(detail),
+      signal: getFetchTimeoutSignal(10000),
+    });
+
+    const summaryUrl = `${endpointUrl}/rooms/${cleanRoom}/history_summaries/${cleanSessionId}.json`;
+    await fetch(summaryUrl, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify(summary),
+      signal: getFetchTimeoutSignal(6000),
+    });
+
+    return true;
+  } catch (err) {
+    console.warn('[cloudSync] Error al archivar sesión en Firebase:', err);
+    return false;
+  }
+}
+
+/**
+ * Consulta la lista ligera de sesiones archivadas en la sala de Firebase sin descargar el detalle de conteos.
+ */
+export async function listCloudArchivedSessions(opts?: {
+  roomCode?: string;
+  endpointUrl?: string;
+}): Promise<CloudArchivedSessionSummary[]> {
+  const s = settingsSync();
+  const roomCode = normalizeRoomCode(opts?.roomCode || s.syncRoomCode);
+  const endpointUrl = normalizeEndpointBaseUrl(opts?.endpointUrl || s.syncEndpointUrl);
+  if (!roomCode || !endpointUrl || typeof fetch === 'undefined') return [];
+
+  const cleanRoom = encodeURIComponent(roomCode);
+  const url = `${endpointUrl}/rooms/${cleanRoom}/history_summaries.json`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: getFetchTimeoutSignal(8000),
+    });
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (!data || typeof data !== 'object') return [];
+    return Object.values(data as Record<string, CloudArchivedSessionSummary>).filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Descarga bajo demanda el detalle completo de una sesión archivada en la nube (para reportes o exportar a Excel).
+ */
+export async function fetchCloudArchivedSession(
+  sessionId: string,
+  opts?: { roomCode?: string; endpointUrl?: string },
+): Promise<CloudArchivedSessionDetail | null> {
+  const s = settingsSync();
+  const roomCode = normalizeRoomCode(opts?.roomCode || s.syncRoomCode);
+  const endpointUrl = normalizeEndpointBaseUrl(opts?.endpointUrl || s.syncEndpointUrl);
+  if (!roomCode || !endpointUrl || !sessionId || typeof fetch === 'undefined') return null;
+
+  const cleanRoom = encodeURIComponent(roomCode);
+  const cleanSessionId = encodeURIComponent(sessionId);
+  const url = `${endpointUrl}/rooms/${cleanRoom}/sessions_archive/${cleanSessionId}.json`;
+
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json' },
+      cache: 'no-store',
+      signal: getFetchTimeoutSignal(10000),
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data && typeof data === 'object' && 'counts' in data ? (data as CloudArchivedSessionDetail) : null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -1406,6 +1792,133 @@ function resumeLivePolling(endpointUrl: string, roomCode: string): void {
   }
 }
 
+async function applyIncrementalRemoteCounts(counts: CountEntry[], roomCode: string): Promise<void> {
+  if (!counts || counts.length === 0) return;
+  const session = await getActiveSession();
+  if (session) {
+    const remoteFile: CountFile = {
+      app: APP_ID,
+      version: 1,
+      kind: 'conteo',
+      exportedAt: new Date().toISOString(),
+      deviceId: 'cloud-room',
+      session: {
+        id: session.id,
+        name: session.name,
+        counter: 'Sala ' + roomCode,
+        createdAt: session.createdAt,
+        closed: false,
+      },
+      counts,
+      products: [],
+    };
+    await mergeCountFiles(session.id, [remoteFile]);
+  }
+}
+
+async function applyRemoteCountDeletion(countId: string, timestamp = Date.now()): Promise<void> {
+  const normId = canonicalCountId(countId);
+  await recordTombstone('counts', normId, timestamp);
+  const session = await getActiveSession();
+  if (session) {
+    const curCounts = await countsForSession(session.id);
+    const db = await getDB();
+    for (const c of curCounts) {
+      if (canonicalCountId(c.id) === normId) {
+        await db.delete('counts', c.id);
+      }
+    }
+  }
+}
+
+async function applyIncrementalRemoteMovements(movements: Movement[]): Promise<void> {
+  if (!movements || movements.length === 0) return;
+  const localMovs = await listMovements();
+  const movMap = new Map<string, Movement>();
+  for (const m of localMovs) movMap.set(m.id, m);
+  let changed = false;
+  for (const m of movements) {
+    if (!m || !m.id) continue;
+    const prev = movMap.get(m.id);
+    if (!prev || m.timestamp >= (prev.timestamp || 0)) {
+      movMap.set(m.id, m);
+      changed = true;
+    }
+  }
+  if (changed) {
+    await saveAllMovements([...movMap.values()]);
+  }
+}
+
+async function applyRemoteMovementDeletion(movId: string, timestamp = Date.now()): Promise<void> {
+  await recordTombstone('movements', movId, timestamp);
+  const localMovs = await listMovements();
+  const filtered = localMovs.filter((m) => m.id !== movId);
+  if (filtered.length !== localMovs.length) {
+    await saveAllMovements(filtered);
+  }
+}
+
+function updateLocalMirrorQuickly(
+  roomCode: string,
+  delta: { counts?: CountEntry[]; movements?: Movement[]; deletedCountId?: string; deletedMovId?: string },
+): void {
+  const mirror = getLocalRoomMirror(roomCode);
+  if (!mirror) return;
+
+  let changed = false;
+  let nextCounts = mirror.counts;
+  let nextMovements = mirror.movements || [];
+
+  if (delta.counts && delta.counts.length > 0) {
+    const map = new Map(mirror.counts.map((c) => [canonicalCountId(c.id), c]));
+    for (const c of delta.counts) {
+      if (!c || !c.id) continue;
+      map.set(canonicalCountId(c.id), c);
+      changed = true;
+    }
+    nextCounts = [...map.values()];
+  }
+
+  if (delta.deletedCountId) {
+    const norm = canonicalCountId(delta.deletedCountId);
+    const filtered = nextCounts.filter((c) => canonicalCountId(c.id) !== norm);
+    if (filtered.length !== nextCounts.length) {
+      nextCounts = filtered;
+      changed = true;
+    }
+  }
+
+  if (delta.movements && delta.movements.length > 0) {
+    const map = new Map((mirror.movements || []).map((m) => [m.id, m]));
+    for (const m of delta.movements) {
+      if (!m || !m.id) continue;
+      map.set(m.id, m);
+      changed = true;
+    }
+    nextMovements = [...map.values()];
+  }
+
+  if (delta.deletedMovId) {
+    const filtered = nextMovements.filter((m) => m.id !== delta.deletedMovId);
+    if (filtered.length !== nextMovements.length) {
+      nextMovements = filtered;
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    const nextMirror: CloudRoomState = {
+      ...mirror,
+      counts: nextCounts,
+      movements: nextMovements,
+      updatedAt: Date.now(),
+    };
+    saveLocalRoomMirror(roomCode, nextMirror);
+    notifyRoomListeners(nextMirror);
+  }
+}
+
 function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): void {
   if (typeof EventSource === 'undefined' || liveSubscribedKey !== subKey) return;
   const roomUrl = buildRoomEndpointUrl(endpointUrl, roomCode);
@@ -1428,6 +1941,29 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
       try {
         const parsed = JSON.parse(ev.data);
         if (parsed && typeof parsed === 'object' && 'path' in parsed && parsed.path && parsed.path !== '/') {
+          const pathStr = String(parsed.path);
+          if (pathStr.startsWith('/counts/')) {
+            const countId = pathStr.slice('/counts/'.length);
+            if (parsed.data === null) {
+              void applyRemoteCountDeletion(countId);
+              updateLocalMirrorQuickly(roomCode, { deletedCountId: countId });
+            } else if (parsed.data && typeof parsed.data === 'object') {
+              void applyIncrementalRemoteCounts([parsed.data as CountEntry], roomCode);
+              updateLocalMirrorQuickly(roomCode, { counts: [parsed.data as CountEntry] });
+            }
+            return;
+          }
+          if (pathStr.startsWith('/movements/')) {
+            const movId = pathStr.slice('/movements/'.length);
+            if (parsed.data === null) {
+              void applyRemoteMovementDeletion(movId);
+              updateLocalMirrorQuickly(roomCode, { deletedMovId: movId });
+            } else if (parsed.data && typeof parsed.data === 'object') {
+              void applyIncrementalRemoteMovements([parsed.data as Movement]);
+              updateLocalMirrorQuickly(roomCode, { movements: [parsed.data as Movement] });
+            }
+            return;
+          }
           void pullRemoteRoomQuietly(endpointUrl, roomCode);
           return;
         }
@@ -1445,22 +1981,73 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
       try {
         const msg = ev as MessageEvent;
         const parsed = msg?.data ? JSON.parse(msg.data) : null;
-        if (parsed && typeof parsed === 'object' && typeof parsed.path === 'string' && parsed.path.startsWith('/liveScanners')) {
-          const mirror = getLocalRoomMirror(roomCode);
-          if (mirror && parsed.data && typeof parsed.data === 'object') {
-            let patchMap: Record<string, LiveScannerState> = {};
-            if (parsed.path === '/liveScanners') {
-              patchMap = parsed.data as Record<string, LiveScannerState>;
-            } else {
-              const key = parsed.path.slice('/liveScanners/'.length).split('/')[0];
-              if (key) patchMap = { [key]: parsed.data as LiveScannerState };
+        if (parsed && typeof parsed === 'object' && typeof parsed.path === 'string') {
+          const pathStr = parsed.path;
+
+          if (pathStr.startsWith('/liveScanners')) {
+            const mirror = getLocalRoomMirror(roomCode);
+            if (mirror && parsed.data && typeof parsed.data === 'object') {
+              let patchMap: Record<string, LiveScannerState> = {};
+              if (pathStr === '/liveScanners') {
+                patchMap = parsed.data as Record<string, LiveScannerState>;
+              } else {
+                const key = pathStr.slice('/liveScanners/'.length).split('/')[0];
+                if (key) patchMap = { [key]: parsed.data as LiveScannerState };
+              }
+              const nextMirror: CloudRoomState = {
+                ...mirror,
+                liveScanners: mergeLiveScannersMap(mirror.liveScanners, patchMap),
+              };
+              saveLocalRoomMirror(roomCode, nextMirror);
+              notifyRoomListeners(nextMirror);
+              return;
             }
-            const nextMirror: CloudRoomState = {
-              ...mirror,
-              liveScanners: mergeLiveScannersMap(mirror.liveScanners, patchMap),
-            };
-            saveLocalRoomMirror(roomCode, nextMirror);
-            notifyRoomListeners(nextMirror);
+          }
+
+          if (pathStr === '/counts' || pathStr.startsWith('/counts/')) {
+            const incoming: CountEntry[] = [];
+            if (pathStr === '/counts' && parsed.data && typeof parsed.data === 'object') {
+              incoming.push(...toArray<CountEntry>(parsed.data));
+            } else if (parsed.data && typeof parsed.data === 'object') {
+              incoming.push(parsed.data as CountEntry);
+            } else if (parsed.data === null && pathStr.startsWith('/counts/')) {
+              const cid = pathStr.slice('/counts/'.length);
+              void applyRemoteCountDeletion(cid);
+              updateLocalMirrorQuickly(roomCode, { deletedCountId: cid });
+              return;
+            }
+            if (incoming.length > 0) {
+              void applyIncrementalRemoteCounts(incoming, roomCode);
+              updateLocalMirrorQuickly(roomCode, { counts: incoming });
+              return;
+            }
+          }
+
+          if (pathStr === '/movements' || pathStr.startsWith('/movements/')) {
+            const incoming: Movement[] = [];
+            if (pathStr === '/movements' && parsed.data && typeof parsed.data === 'object') {
+              incoming.push(...toArray<Movement>(parsed.data));
+            } else if (parsed.data && typeof parsed.data === 'object') {
+              incoming.push(parsed.data as Movement);
+            } else if (parsed.data === null && pathStr.startsWith('/movements/')) {
+              const mid = pathStr.slice('/movements/'.length);
+              void applyRemoteMovementDeletion(mid);
+              updateLocalMirrorQuickly(roomCode, { deletedMovId: mid });
+              return;
+            }
+            if (incoming.length > 0) {
+              void applyIncrementalRemoteMovements(incoming);
+              updateLocalMirrorQuickly(roomCode, { movements: incoming });
+              return;
+            }
+          }
+
+          if (pathStr === '/updatedAt') {
+            const mirror = getLocalRoomMirror(roomCode);
+            if (mirror && typeof parsed.data === 'number') {
+              mirror.updatedAt = parsed.data;
+              saveLocalRoomMirror(roomCode, mirror);
+            }
             return;
           }
         }
@@ -1578,6 +2165,14 @@ async function pullRemoteRoomQuietly(endpointUrl: string, roomCode: string): Pro
   isPollingNow = true;
   const t0 = Date.now();
   try {
+    const lastSync = (await getMeta<number>(`lastSync_${roomCode}`)) || 0;
+    if (lastSync > 0) {
+      const remoteUpdatedAt = await fetchRemoteUpdatedAt(endpointUrl, roomCode);
+      if (remoteUpdatedAt !== null && remoteUpdatedAt <= lastSync) {
+        return;
+      }
+    }
+
     const remote = await fetchRemoteRoom(endpointUrl, roomCode);
     const latencyMs = Math.max(1, Date.now() - t0);
     if (remote) {
@@ -1612,15 +2207,33 @@ let autoSyncTimer: ReturnType<typeof setTimeout> | null = null;
 /**
  * Dispara una sincronización automática en segundo plano (con debounce de 350ms)
  * cuando el técnico registra, modifica o elimina un escaneo o movimiento de Kardex.
+ * En salas de Firebase utiliza deltas ultra-ligeros (~200 bytes) para máxima velocidad y eficiencia.
  */
 export function triggerBackgroundSync(sessionId?: string): void {
   const s = settingsSync();
   if (!s.syncEnabled || !s.syncAuto || !s.syncRoomCode.trim()) return;
   if (autoSyncTimer) clearTimeout(autoSyncTimer);
-  autoSyncTimer = setTimeout(() => {
-    void syncNow({ sessionId }).catch(() => {
+  autoSyncTimer = setTimeout(async () => {
+    try {
+      const cleanRoom = normalizeRoomCode(s.syncRoomCode);
+      const endpoint = normalizeEndpointBaseUrl(s.syncEndpointUrl || '');
+      const isFirebase = /firebaseio\.com/i.test(endpoint) || /\.firebasedatabase\.app/i.test(endpoint);
+      const lastSync = (await getMeta<number>(`lastSync_${cleanRoom}`)) || 0;
+
+      if (isFirebase && lastSync > 0 && Date.now() - lastSync < 600000) {
+        const deltaOk = await syncDeltaToRemote({
+          sessionId,
+          roomCode: cleanRoom,
+          endpointUrl: endpoint,
+          sinceTimestamp: lastSync - 3000,
+        });
+        if (deltaOk) return;
+      }
+
+      await syncNow({ sessionId });
+    } catch {
       void setMeta('pendingCloudSyncRoom', s.syncRoomCode);
-    });
+    }
   }, 350);
 }
 

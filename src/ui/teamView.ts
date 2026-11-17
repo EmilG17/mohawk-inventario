@@ -32,6 +32,7 @@ import {
   encodeCompactCountQrChunks,
   generateRoomCode,
   getCachedRoomState,
+  archiveSessionToCloud,
   getCloudConnectionStatus,
   normalizeEndpointBaseUrl,
   normalizeRoomCode,
@@ -1867,6 +1868,7 @@ export const teamView: View = {
                               )
                             ) {
                               await closeSession(sess.id);
+                              void archiveSessionToCloud(sess.id).catch(() => {});
                               toast('Sesión finalizada con éxito', 'ok');
                               void refreshDashboard();
                             }

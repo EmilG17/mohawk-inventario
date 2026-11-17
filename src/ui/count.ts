@@ -11,6 +11,7 @@ import { beep, cameraAvailable, createDebouncer, startScanner, unlockAudio, vibr
 import { createWedgeController } from '../scanner/wedge';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
 import {
+  archiveSessionToCloud,
   decodeCompactCountQr,
   isCompactCountQr,
   onCloudRoomUpdate,
@@ -766,6 +767,7 @@ export const countView: View = {
                 stopCamera(true);
                 if (pending) await commitPending(true);
                 await closeSession(session.id);
+                void archiveSessionToCloud(session.id).catch(() => {});
                 toast(L('Sesión finalizada con éxito', 'Session closed'), 'ok');
                 navigate('/');
               }
