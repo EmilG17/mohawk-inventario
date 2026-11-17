@@ -322,9 +322,9 @@ export async function bootstrapApp(): Promise<void> {
   // Mobile "Más ⋯" Bottom Sheet (< 900px)
   const mobileSupervisorToggleLabel = h('span', null);
   const syncMobileSupervisorLabel = () => {
-    const enabled = Boolean(settingsSync().supervisorMode);
-    mobileSupervisorToggleLabel.textContent = enabled
-      ? L('Modo Supervisor: ACTIVO (tocar para ocultar opciones)', 'Supervisor Mode: ACTIVE (tap to hide options)')
+    const isSup = isSupervisorModeEnabled();
+    mobileSupervisorToggleLabel.textContent = isSup
+      ? L('Modo Supervisor: ACTIVO (tocar para Modo Técnico)', 'Supervisor Mode: ACTIVE (tap for Technician Mode)')
       : L('Vista Técnico (tocar para Modo Supervisor)', 'Technician View (tap for Supervisor Mode)');
   };
   syncMobileSupervisorLabel();
@@ -336,8 +336,10 @@ export async function bootstrapApp(): Promise<void> {
       type: 'button',
       'data-testid': 'mobile-supervisor-toggle',
       onclick: async () => {
-        const next = !Boolean(settingsSync().supervisorMode);
-        await saveSettings({ supervisorMode: next });
+        const isSup = isSupervisorModeEnabled();
+        const next = !isSup;
+        const nextRole = next ? 'supervisor' : 'technician';
+        await saveSettings({ supervisorMode: next, userRole: nextRole });
         applyPlatformAttributes();
         syncMobileSupervisorLabel();
         toast(next ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');

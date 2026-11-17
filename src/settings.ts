@@ -24,6 +24,8 @@ export interface Settings {
   syncAuto: boolean;
   /** Modo Supervisor en móvil: habilita controles administrativos y de auditoría en pantallas móviles */
   supervisorMode?: boolean;
+  /** Rol operativo del dispositivo: 'supervisor' (centro de gestión) o 'technician' (cliente de conteo protegido) */
+  userRole?: 'supervisor' | 'technician';
   /** Preferencia de idioma ('auto' sigue al idioma del dispositivo) */
   language?: LangPref;
 }

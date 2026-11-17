@@ -4,6 +4,7 @@ import { clearMovements, listMovements, recordMovement } from '../../src/db/move
 import {
   _clearMemoryRooms,
   archiveSessionToCloud,
+  buildRoomInviteUrl,
   checkRoomExistsInDb,
   fetchCloudArchivedSession,
   fetchRemoteUpdatedAt,
@@ -19,6 +20,7 @@ import {
   syncNow,
   triggerBackgroundSync,
 } from '../../src/sync/cloudSync';
+import { isMobileCatalogReadOnly, isSupervisorModeEnabled, isTechnicianRole } from '../../src/ui/catalogMode';
 import { loadSettings, saveSettings } from '../../src/settings';
 import 'fake-indexeddb/auto';
 
@@ -195,24 +197,47 @@ describe('Firebase Realtime DB Granular Sharding & Delta Sync Suite', () => {
       expect(normalizeRoomCode('MHK-ALMACEN_CENTRAL-007')).toBe('MHK-ALMACEN-CENTRAL-7');
     });
 
-    it('identifica y procesa URLs de invitación para unirse con 1-tap/escaneo', async () => {
-      const inviteUrl = 'https://app.mohawk.com/?room=MHK-AUDIT-1&endpoint=https%3A%2F%2Fdemo-rtdb.firebaseio.com';
-      expect(isRoomInviteUrl(inviteUrl)).toBe(true);
+    it('identifica y procesa URLs de invitación con roles asignados (Técnico vs Co-Supervisor)', async () => {
+      // 1. Invitación por defecto a Cliente-Técnico (Escaneo protegido)
+      const techInviteUrl = buildRoomInviteUrl('MHK-AUDIT-1', 'https://demo-rtdb.firebaseio.com', 'technician');
+      expect(isRoomInviteUrl(techInviteUrl)).toBe(true);
       expect(isRoomInviteUrl('750100123456')).toBe(false);
 
-      const parsed = parseRoomInviteUrl(inviteUrl);
-      expect(parsed).not.toBeNull();
-      expect(parsed?.roomCode).toBe('MHK-AUDIT-1');
-      expect(parsed?.endpointUrl).toBe('https://demo-rtdb.firebaseio.com');
+      const parsedTech = parseRoomInviteUrl(techInviteUrl);
+      expect(parsedTech).not.toBeNull();
+      expect(parsedTech?.roomCode).toBe('MHK-AUDIT-1');
+      expect(parsedTech?.endpointUrl).toBe('https://demo-rtdb.firebaseio.com');
+      expect(parsedTech?.role).toBe('technician');
 
-      const joined = await joinRoomFromInvite(inviteUrl);
-      expect(joined.success).toBe(true);
-      expect(joined.roomCode).toBe('MHK-AUDIT-1');
+      const joinedTech = await joinRoomFromInvite(techInviteUrl);
+      expect(joinedTech.success).toBe(true);
+      expect(joinedTech.roomCode).toBe('MHK-AUDIT-1');
+      expect(joinedTech.role).toBe('technician');
 
-      const s = await loadSettings();
-      expect(s.syncRoomCode).toBe('MHK-AUDIT-1');
-      expect(s.syncEndpointUrl).toBe('https://demo-rtdb.firebaseio.com');
-      expect(s.syncEnabled).toBe(true);
+      const sTech = await loadSettings();
+      expect(sTech.syncRoomCode).toBe('MHK-AUDIT-1');
+      expect(sTech.syncEndpointUrl).toBe('https://demo-rtdb.firebaseio.com');
+      expect(sTech.syncEnabled).toBe(true);
+      expect(sTech.userRole).toBe('technician');
+      expect(sTech.supervisorMode).toBe(false);
+      expect(isTechnicianRole()).toBe(true);
+      expect(isSupervisorModeEnabled()).toBe(false);
+      expect(isMobileCatalogReadOnly()).toBe(true); // Catálogo protegido contra borrado accidental
+
+      // 2. Invitación a Co-Supervisor con acceso administrativo
+      const supInviteUrl = buildRoomInviteUrl('MHK-AUDIT-1', 'https://demo-rtdb.firebaseio.com', 'supervisor');
+      const parsedSup = parseRoomInviteUrl(supInviteUrl);
+      expect(parsedSup?.role).toBe('supervisor');
+
+      const joinedSup = await joinRoomFromInvite(supInviteUrl);
+      expect(joinedSup.success).toBe(true);
+      expect(joinedSup.role).toBe('supervisor');
+
+      const sSup = await loadSettings();
+      expect(sSup.userRole).toBe('supervisor');
+      expect(sSup.supervisorMode).toBe(true);
+      expect(isSupervisorModeEnabled()).toBe(true);
+      expect(isTechnicianRole()).toBe(false);
     });
 
     it('listAvailableRoomsInDb y checkRoomExistsInDb consultan el índice de salas en Firebase', async () => {

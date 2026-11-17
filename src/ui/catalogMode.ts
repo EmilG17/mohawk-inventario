@@ -14,19 +14,28 @@ export function isMobileViewport(): boolean {
 
 /**
  * Indica si las funciones y controles de Supervisor deben mostrarse en la interfaz.
- * En escritorio/tablet (>= 900px) siempre está activo; en móvil (< 900px) solo cuando
- * el usuario activa explícitamente "Modo Supervisor".
+ * En escritorio/tablet (>= 900px) está activo por defecto salvo que se fije el rol 'technician'.
+ * En móvil (< 900px) solo cuando el usuario activa "Modo Supervisor" o su rol es 'supervisor'.
  */
 export function isSupervisorModeEnabled(): boolean {
+  const s = settingsSync();
+  if (s.userRole === 'technician') return false;
+  if (s.userRole === 'supervisor') return true;
   if (!isMobileViewport()) return true;
-  return Boolean(settingsSync().supervisorMode);
+  return Boolean(s.supervisorMode);
+}
+
+/** Indica si el usuario actual opera como Cliente-Técnico protegido. */
+export function isTechnicianRole(): boolean {
+  return !isSupervisorModeEnabled();
 }
 
 /**
- * Indica si el dispositivo actual está en vista móvil (< 900px), donde la edición,
- * creación, importación o eliminación de productos del catálogo queda deshabilitada
- * para proteger la integridad de la base de datos maestra.
+ * Indica si el catálogo debe operar en modo protegido (solo lectura), donde la edición,
+ * creación, importación o eliminación masiva de productos queda deshabilitada para
+ * proteger la integridad del catálogo maestro frente a manipulaciones de técnicos o terminales móviles.
  */
 export function isMobileCatalogReadOnly(): boolean {
+  if (isTechnicianRole()) return true;
   return isMobileViewport();
 }

@@ -98,21 +98,52 @@ function fmtRelativeAgo(ts: number | null | undefined): string {
 }
 
 function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
-  const inviteUrl = buildRoomInviteUrl(roomCode, endpointUrl);
-  const svg = renderQrCodeSvg(inviteUrl, 240, 2);
+  let selectedRole: 'technician' | 'supervisor' = 'technician';
 
   const qrBox = h('div', {
     style:
       'display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 16px; background: #fff; border-radius: 12px; border: 1px solid var(--border); margin: 8px auto;',
   });
-  qrBox.innerHTML = svg;
 
   const urlInput = h('input', {
     class: 'input sm',
     readonly: true,
-    value: inviteUrl,
     onclick: (e: Event) => (e.target as HTMLInputElement).select(),
   }) as HTMLInputElement;
+
+  const roleDesc = h('p', { class: 'muted small', style: 'margin: 4px 0;' });
+
+  const updateQrAndUrl = () => {
+    const inviteUrl = buildRoomInviteUrl(roomCode, endpointUrl, selectedRole);
+    const svg = renderQrCodeSvg(inviteUrl, 240, 2);
+    qrBox.innerHTML = svg;
+    urlInput.value = inviteUrl;
+    if (selectedRole === 'technician') {
+      roleDesc.textContent = L(
+        'Modo Cliente-Técnico: Escaneo y consulta rápida de productos. Catálogo y cierre de sesión protegidos contra borrado accidental.',
+        'Technician Client Mode: Fast scanning and item lookup. Master catalog and session closing protected against accidental changes.',
+      );
+    } else {
+      roleDesc.textContent = L(
+        'Modo Co-Supervisor: Acceso administrativo completo para gestionar catálogo, auditoría y exportaciones.',
+        'Co-Supervisor Mode: Full administrative access to manage catalog, audit, and exports.',
+      );
+    }
+  };
+
+  const roleSelect = h('select', {
+    class: 'input sm',
+    style: 'font-weight: 600;',
+    onchange: (e: Event) => {
+      selectedRole = (e.target as HTMLSelectElement).value as 'technician' | 'supervisor';
+      updateQrAndUrl();
+    },
+  },
+    h('option', { value: 'technician', selected: true }, L('Cliente-Técnico (Escaneo protegido - Recomendado)', 'Client-Technician (Protected scanning - Recommended)')),
+    h('option', { value: 'supervisor' }, L('Co-Supervisor (Acceso administrativo)', 'Co-Supervisor (Administrative access)')),
+  );
+
+  updateQrAndUrl();
 
   const copyBtn = h(
     'button',
@@ -121,7 +152,7 @@ function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
       type: 'button',
       onclick: async () => {
         try {
-          await navigator.clipboard.writeText(inviteUrl);
+          await navigator.clipboard.writeText(urlInput.value);
           toast(L('Enlace de invitación copiado al portapapeles', 'Invite link copied to clipboard'), 'ok');
         } catch {
           urlInput.select();
@@ -140,19 +171,16 @@ function openRoomInviteQrDialog(roomCode: string, endpointUrl: string): void {
       { class: 'badge ok', style: 'align-self: center;' },
       `${L('Sala en Vivo:', 'Live Room:')} ${roomCode}`,
     ),
-    h(
-      'p',
-      { class: 'muted small', style: 'margin: 0;' },
-      L(
-        'Pide a los técnicos que escaneen este código QR con la cámara de su teléfono o envíales el enlace directo. Su aplicación configurará Firebase y el Código de Sala automáticamente.',
-        'Ask technicians to scan this QR code with their phone camera or send them the direct link. Their app will configure Firebase and the Room Code automatically.',
-      ),
+    h('label', { class: 'field compact-field', style: 'margin: 6px 0; text-align: left;' },
+      h('span', null, L('Tipo de acceso / Rol para este enlace:', 'Access type / Role for this link:')),
+      roleSelect,
     ),
+    roleDesc,
     qrBox,
     h('div', { class: 'row', style: 'gap: 6px;' }, urlInput, copyBtn),
   );
 
-  openDialog(`${L('Invitar Técnicos · Sala', 'Invite Technicians · Room')} ${roomCode}`, body, [{ label: L('Cerrar', 'Close') }]);
+  openDialog(`${L('Invitar a Sala', 'Invite to Room')} ${roomCode}`, body, [{ label: L('Cerrar', 'Close') }]);
 }
 
 function openShowMyQrDialog(session: Session, counts: CountEntry[]): void {

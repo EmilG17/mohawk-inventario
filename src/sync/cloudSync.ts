@@ -388,25 +388,43 @@ export function isRoomInviteUrl(raw: string): boolean {
 /**
  * Extrae los parámetros de sala y base de datos de un enlace de invitación.
  */
-export function parseRoomInviteUrl(raw: string): { roomCode?: string; endpointUrl?: string } | null {
+export function parseRoomInviteUrl(raw: string): {
+  roomCode?: string;
+  endpointUrl?: string;
+  role?: 'technician' | 'supervisor';
+} | null {
   if (!isRoomInviteUrl(raw)) return null;
   try {
     const trimmed = raw.trim();
     const url = new URL(trimmed.startsWith('http') ? trimmed : `https://${trimmed}`);
     const room = url.searchParams.get('room');
     const db = url.searchParams.get('db') || url.searchParams.get('endpoint');
+    const rawRole = url.searchParams.get('role')?.toLowerCase();
+    const role: 'technician' | 'supervisor' | undefined =
+      rawRole === 'supervisor' || rawRole === 'admin'
+        ? 'supervisor'
+        : rawRole === 'technician' || rawRole === 'tech' || rawRole === 'counter'
+          ? 'technician'
+          : undefined;
+
     if (!room && !db) return null;
     return {
       roomCode: room ? normalizeRoomCode(room) : undefined,
       endpointUrl: db ? normalizeEndpointBaseUrl(db) : undefined,
+      role,
     };
   } catch {
     const matchRoom = raw.match(/[?&]room=([a-zA-Z0-9_.-]+)/i);
     const matchDb = raw.match(/[?&](?:db|endpoint)=([^&]+)/i);
+    const matchRole = raw.match(/[?&]role=(technician|supervisor|tech|counter)/i);
     if (!matchRoom && !matchDb) return null;
+    const r = matchRole ? matchRole[1].toLowerCase() : '';
+    const role: 'technician' | 'supervisor' | undefined =
+      r === 'supervisor' ? 'supervisor' : r ? 'technician' : undefined;
     return {
       roomCode: matchRoom ? normalizeRoomCode(matchRoom[1]) : undefined,
       endpointUrl: matchDb ? normalizeEndpointBaseUrl(decodeURIComponent(matchDb[1])) : undefined,
+      role,
     };
   }
 }
@@ -417,16 +435,24 @@ export function parseRoomInviteUrl(raw: string): { roomCode?: string; endpointUr
 export async function joinRoomFromInvite(
   roomCodeOrUrl: string,
   endpointUrl?: string,
-): Promise<{ success: boolean; roomCode?: string }> {
+  explicitRole?: 'technician' | 'supervisor',
+): Promise<{ success: boolean; roomCode?: string; role?: 'technician' | 'supervisor' }> {
   let targetRoom = roomCodeOrUrl;
   let targetEndpoint = endpointUrl;
+  let targetRole = explicitRole;
 
   if (isRoomInviteUrl(roomCodeOrUrl)) {
     const parsed = parseRoomInviteUrl(roomCodeOrUrl);
     if (parsed) {
       if (parsed.roomCode) targetRoom = parsed.roomCode;
       if (parsed.endpointUrl) targetEndpoint = parsed.endpointUrl;
+      if (parsed.role && !targetRole) targetRole = parsed.role;
     }
+  }
+
+  // Por defecto al unirse por invitación externa se asigna rol de 'technician' para proteger el centro de gestión
+  if (!targetRole) {
+    targetRole = 'technician';
   }
 
   const code = normalizeRoomCode(targetRoom);
@@ -434,16 +460,19 @@ export async function joinRoomFromInvite(
   const currentSettings = await loadSettings();
   const cleanEndpoint = targetEndpoint ? normalizeEndpointBaseUrl(targetEndpoint) : currentSettings.syncEndpointUrl;
 
+  const isSupervisor = targetRole === 'supervisor';
   await saveSettings({
     syncEnabled: true,
     syncAuto: true,
     syncRoomCode: code,
     syncEndpointUrl: cleanEndpoint,
+    userRole: targetRole,
+    supervisorMode: isSupervisor,
   });
 
   startLiveCloudSync({ roomCode: code, endpointUrl: cleanEndpoint });
   void syncNow({ roomCode: code, endpointUrl: cleanEndpoint }).catch(() => {});
-  return { success: true, roomCode: code };
+  return { success: true, roomCode: code, role: targetRole };
 }
 
 export async function registerRoomInDbIndex(
@@ -592,7 +621,11 @@ export function buildRoomEndpointUrl(baseUrl: string, roomCode: string): string 
 /**
  * Construye un enlace directo para invitar a técnicos o supervisores con 1 clic o código QR.
  */
-export function buildRoomInviteUrl(roomCode: string, endpointUrl?: string): string {
+export function buildRoomInviteUrl(
+  roomCode: string,
+  endpointUrl?: string,
+  role: 'technician' | 'supervisor' = 'technician',
+): string {
   const code = normalizeRoomCode(roomCode);
   const cleanDb = normalizeEndpointBaseUrl(endpointUrl || '');
   const base =
@@ -602,6 +635,7 @@ export function buildRoomInviteUrl(roomCode: string, endpointUrl?: string): stri
   const params = new URLSearchParams();
   if (code) params.set('room', code);
   if (cleanDb) params.set('db', cleanDb);
+  if (role) params.set('role', role);
   const qs = params.toString();
   return qs ? `${base}?${qs}` : base;
 }

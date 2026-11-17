@@ -277,10 +277,12 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
       const res = await joinRoomFromInvite(raw);
       if (res.success) {
         feedback('ok');
+        const assignedRole = res.role || invite.role || 'technician';
+        const roleLabel = assignedRole === 'supervisor' ? L('Supervisor', 'Supervisor') : L('Técnico', 'Technician');
         toast(
           L(
-            `¡Conectado a la sala compartida ${res.roomCode || invite.roomCode}!`,
-            `Connected to shared room ${res.roomCode || invite.roomCode}!`,
+            `¡Conectado como ${roleLabel} a la sala ${res.roomCode || invite.roomCode}! Listo para escanear.`,
+            `Connected as ${roleLabel} to room ${res.roomCode || invite.roomCode}! Ready to scan.`,
           ),
           'ok',
           5000,

@@ -82,6 +82,15 @@ export const settingsView: View = {
       'data-testid': 'settings-supervisor-mode-toggle',
     }) as HTMLInputElement;
 
+    const isSupervisor = isSupervisorModeEnabled();
+    const roleSelect = h('select', {
+      class: 'input input-sm',
+      'data-testid': 'settings-role-select',
+    },
+      h('option', { value: 'supervisor', selected: isSupervisor }, L('Supervisor (Centro de Gestión y Auditoría)', 'Supervisor (Management & Audit Hub)')),
+      h('option', { value: 'technician', selected: !isSupervisor }, L('Cliente-Técnico (Escaneo protegido)', 'Client-Technician (Protected scanning)')),
+    ) as HTMLSelectElement;
+
     const roomDatalist = h('datalist', { id: 'settings-rooms-datalist' });
     const roomStatusBadge = h('div', { class: 'small muted', style: 'margin-top: 4px; min-height: 18px;' });
 
@@ -158,6 +167,9 @@ export const settingsView: View = {
       const prevLang = s.language ?? 'auto';
       const nextLang = (langSelect.value as LangPref) || 'auto';
 
+      const selectedRole = (roleSelect.value as 'supervisor' | 'technician') || 'technician';
+      const isSup = selectedRole === 'supervisor';
+
       await saveSettings({
         counterName: nameInput.value.trim(),
         onlineLookup: lookupCheck.checked,
@@ -171,7 +183,8 @@ export const settingsView: View = {
         syncAuto: syncAutoCheck.checked,
         syncRoomCode: cleanRoom,
         syncEndpointUrl: cleanEndpoint,
-        supervisorMode: supervisorCheck.checked,
+        supervisorMode: supervisorCheck.checked || isSup,
+        userRole: selectedRole,
         language: nextLang,
       });
 
@@ -203,11 +216,26 @@ export const settingsView: View = {
       })();
     });
 
+    roleSelect.addEventListener('change', () => {
+      void (async () => {
+        const nextRole = (roleSelect.value as 'supervisor' | 'technician') || 'technician';
+        const isSup = nextRole === 'supervisor';
+        supervisorCheck.checked = isSup;
+        await saveSettings({ userRole: nextRole, supervisorMode: isSup });
+        document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
+        toast(isSup ? L('Modo Supervisor / Centro de Gestión activado', 'Supervisor / Management Hub mode enabled') : L('Modo Cliente-Técnico protegido activado', 'Protected Client-Technician mode enabled'), 'ok');
+        rerender();
+      })();
+    });
+
     supervisorCheck.addEventListener('change', () => {
       void (async () => {
-        await saveSettings({ supervisorMode: supervisorCheck.checked });
+        const isSup = supervisorCheck.checked;
+        const nextRole = isSup ? 'supervisor' : 'technician';
+        roleSelect.value = nextRole;
+        await saveSettings({ supervisorMode: isSup, userRole: nextRole });
         document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
-        toast(supervisorCheck.checked ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
+        toast(isSup ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
         rerender();
       })();
     });
@@ -391,13 +419,18 @@ export const settingsView: View = {
               h('span', null, L('Nombre del técnico / contador', 'Technician / Counter name')),
               nameInput,
             ),
-            supervisorUI
-              ? h('label', { class: 'field compact-field' },
-                  h('span', null, L('Moneda (Reporte)', 'Currency (Report)')),
-                  currInput,
-                )
-              : null,
+            h('label', { class: 'field compact-field' },
+              h('span', null, L('Rol en este dispositivo', 'Role on this device')),
+              roleSelect,
+            ),
           ),
+
+          supervisorUI
+            ? h('label', { class: 'field compact-field' },
+                h('span', null, L('Moneda (Reporte)', 'Currency (Report)')),
+                currInput,
+              )
+            : null,
 
           h('label', { class: 'field compact-field' },
             h('span', null, L('Idioma de la aplicación', 'Application language')),
