@@ -26,6 +26,12 @@ export interface Settings {
   supervisorMode?: boolean;
   /** Rol operativo del dispositivo: 'supervisor' (centro de gestión) o 'technician' (cliente de conteo protegido) */
   userRole?: 'supervisor' | 'technician';
+  /** PIN de 4 dígitos para proteger el acceso a la sesión de Supervisor en móviles (por defecto: '1234') */
+  supervisorPin?: string;
+  /** ID de la sesión activa del técnico guardada al alternar a supervisor en móvil */
+  techSessionId?: string | null;
+  /** ID de la sesión activa del supervisor guardada al alternar a técnico en móvil */
+  supervisorSessionId?: string | null;
   /** Preferencia de idioma ('auto' sigue al idioma del dispositivo) */
   language?: LangPref;
 }
@@ -45,6 +51,9 @@ export const DEFAULT_SETTINGS: Settings = {
   syncAuto: true,
   supervisorMode: false,
   language: 'auto',
+  supervisorPin: '1234',
+  techSessionId: null,
+  supervisorSessionId: null,
 };
 
 let cache: Settings | null = null;

@@ -20,6 +20,7 @@ import {
 import { notifyLanguageChanged } from './app';
 import { importCatalogFlow } from './catalog';
 import { isMobileCatalogReadOnly, isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
+import { promptSupervisorPin, switchToSupervisorSession, switchToTechnicianSession } from './supervisorAuth';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, shareOrDownload, toast,
 } from './dom';
@@ -90,6 +91,16 @@ export const settingsView: View = {
       h('option', { value: 'supervisor', selected: isSupervisor }, L('Supervisor (Centro de Gestión y Auditoría)', 'Supervisor (Management & Audit Hub)')),
       h('option', { value: 'technician', selected: !isSupervisor }, L('Cliente-Técnico (Escaneo protegido)', 'Client-Technician (Protected scanning)')),
     ) as HTMLSelectElement;
+
+    const pinInput = h('input', {
+      class: 'input input-sm',
+      type: 'password',
+      maxlength: 4,
+      pattern: '[0-9]*',
+      inputmode: 'numeric',
+      value: s.supervisorPin || '1234',
+      placeholder: '1234',
+    }) as HTMLInputElement;
 
     const roomDatalist = h('datalist', { id: 'settings-rooms-datalist' });
     const roomStatusBadge = h('div', { class: 'small muted', style: 'margin-top: 4px; min-height: 18px;' });
@@ -185,6 +196,7 @@ export const settingsView: View = {
         syncEndpointUrl: cleanEndpoint,
         supervisorMode: supervisorCheck.checked || isSup,
         userRole: selectedRole,
+        supervisorPin: pinInput.value.trim() || '1234',
         language: nextLang,
       });
 
@@ -220,10 +232,21 @@ export const settingsView: View = {
       void (async () => {
         const nextRole = (roleSelect.value as 'supervisor' | 'technician') || 'technician';
         const isSup = nextRole === 'supervisor';
-        supervisorCheck.checked = isSup;
-        await saveSettings({ userRole: nextRole, supervisorMode: isSup });
+        if (isSup && !isSupervisorModeEnabled() && isMobileViewport()) {
+          const ok = await promptSupervisorPin();
+          if (!ok) {
+            roleSelect.value = 'technician';
+            supervisorCheck.checked = false;
+            return;
+          }
+          await switchToSupervisorSession();
+        } else if (!isSup) {
+          await switchToTechnicianSession();
+        } else {
+          await saveSettings({ userRole: nextRole, supervisorMode: isSup });
+        }
+        supervisorCheck.checked = isSupervisorModeEnabled();
         document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
-        toast(isSup ? L('Modo Supervisor / Centro de Gestión activado', 'Supervisor / Management Hub mode enabled') : L('Modo Cliente-Técnico protegido activado', 'Protected Client-Technician mode enabled'), 'ok');
         rerender();
       })();
     });
@@ -231,11 +254,21 @@ export const settingsView: View = {
     supervisorCheck.addEventListener('change', () => {
       void (async () => {
         const isSup = supervisorCheck.checked;
-        const nextRole = isSup ? 'supervisor' : 'technician';
-        roleSelect.value = nextRole;
-        await saveSettings({ supervisorMode: isSup, userRole: nextRole });
+        if (isSup && !isSupervisorModeEnabled() && isMobileViewport()) {
+          const ok = await promptSupervisorPin();
+          if (!ok) {
+            supervisorCheck.checked = false;
+            roleSelect.value = 'technician';
+            return;
+          }
+          await switchToSupervisorSession();
+        } else if (!isSup) {
+          await switchToTechnicianSession();
+        } else {
+          await saveSettings({ supervisorMode: isSup, userRole: isSup ? 'supervisor' : 'technician' });
+        }
+        roleSelect.value = isSupervisorModeEnabled() ? 'supervisor' : 'technician';
         document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
-        toast(isSup ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
         rerender();
       })();
     });
@@ -426,9 +459,15 @@ export const settingsView: View = {
           ),
 
           supervisorUI
-            ? h('label', { class: 'field compact-field' },
-                h('span', null, L('Moneda (Reporte)', 'Currency (Report)')),
-                currInput,
+            ? h('div', { class: 'settings-row-2col' },
+                h('label', { class: 'field compact-field' },
+                  h('span', null, L('Moneda (Reporte)', 'Currency (Report)')),
+                  currInput,
+                ),
+                h('label', { class: 'field compact-field' },
+                  h('span', null, L('PIN de Supervisor (Móvil)', 'Supervisor PIN (Mobile)')),
+                  pinInput,
+                ),
               )
             : null,
 

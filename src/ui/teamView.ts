@@ -62,6 +62,7 @@ import {
   toast,
 } from './dom';
 import { isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
+import { promptSupervisorPin, switchToSupervisorSession, switchToTechnicianSession } from './supervisorAuth';
 import { newSessionFlow } from './home';
 import { navigate, type View } from './router';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
@@ -512,6 +513,7 @@ export const teamView: View = {
             h(
               'div',
               { class: 'row wrap', style: 'gap: 8px; align-items: center;' },
+              status.state === 'connected' ? h('span', { class: 'sup-radar-dot' }) : null,
               h('span', { class: pillClass }, pillLabel),
               s.syncRoomCode
                 ? h('span', { class: 'badge info', style: 'font-weight: 800;' }, `${L('SALA:', 'ROOM:')} ${roomCode}`)
@@ -526,8 +528,10 @@ export const teamView: View = {
             ),
             h(
               'h2',
-              { style: 'margin: 4px 0 0 0; font-size: 18px;' },
-              L('Centro de Monitoreo del Supervisor', 'Supervisor Monitoring Center'),
+              { style: 'margin: 4px 0 0 0; font-size: 18px; font-weight: 800; letter-spacing: -0.02em;' },
+              isSupervisorModeEnabled()
+                ? L('Centro de Gestión del Supervisor', 'Supervisor Management Center')
+                : L('Terminal Cliente-Técnico', 'Technician Client Terminal'),
             ),
           ),
           h(
@@ -537,19 +541,25 @@ export const teamView: View = {
               ? h(
                   'button',
                   {
-                    class: `btn sm ${s.supervisorMode ? 'primary' : 'ghost'}`,
+                    class: `btn sm ${isSupervisorModeEnabled() ? 'primary' : 'ghost'}`,
                     type: 'button',
                     'data-testid': 'team-supervisor-toggle',
                     onclick: async () => {
-                      const next = !Boolean(s.supervisorMode);
-                      await saveSettings({ supervisorMode: next });
+                      const isSup = isSupervisorModeEnabled();
+                      if (!isSup) {
+                        const ok = await promptSupervisorPin();
+                        if (!ok) return;
+                        await switchToSupervisorSession();
+                      } else {
+                        await switchToTechnicianSession();
+                      }
                       s = await loadSettings();
-                      document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
                       renderStatusHeader(getCloudConnectionStatus());
-                      toast(next ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
+                      await refreshDashboard();
                     },
                   },
-                  s.supervisorMode ? L('Modo Supervisor: ON', 'Supervisor Mode: ON') : L('Vista Técnico (Supervisor OFF)', 'Technician View (Supervisor OFF)'),
+                  icon('lock'),
+                  isSupervisorModeEnabled() ? L('Bloquear (Modo Técnico)', 'Lock (Technician Mode)') : L('Acceso Supervisor (PIN)', 'Supervisor Access (PIN)'),
                 )
               : null,
             s.syncRoomCode
@@ -939,6 +949,75 @@ export const teamView: View = {
       const criticalCount = reportLines.filter((r) => r.idealStatus === 'critical').length;
       const deficitCount = reportLines.filter((r) => r.idealStatus === 'deficit').length;
       const alertSkusCount = criticalCount + deficitCount;
+
+      if (!isSupervisorModeEnabled()) {
+        clear(kpiGridWrap);
+        clear(tabsBarWrap);
+        clear(tabContentWrap);
+        clear(
+          noSessionBannerWrap,
+          h(
+            'div',
+            { class: 'card', style: 'padding: 24px; border-radius: 14px; margin-bottom: 16px; border: 1px solid var(--border); box-shadow: var(--shadow-sm);' },
+            h(
+              'div',
+              { class: 'row wrap', style: 'align-items: center; justify-content: space-between; gap: 16px;' },
+              h(
+                'div',
+                { style: 'max-width: 600px;' },
+                h('div', { class: 'badge info', style: 'margin-bottom: 8px; font-weight: 700;' }, L('Modo Cliente-Técnico Activo', 'Client-Technician Mode Active')),
+                h('h3', { style: 'margin: 0 0 6px 0; font-size: 20px; font-weight: 800;' }, L('Terminal de Conteo Protegido', 'Protected Counting Terminal')),
+                h('p', { class: 'muted small', style: 'margin: 0 0 12px 0; line-height: 1.5;' },
+                  L(
+                    'Tu dispositivo está configurado como terminal de conteo operativo. Las lecturas se transmiten en tiempo real a la sala del supervisor. La sesión de supervisor y la administración de catálogo están separadas y protegidas con PIN.',
+                    'Your device is configured as an operational counting terminal. Barcode scans are streamed in real-time to the supervisor room. The supervisor session and catalog administration are separated and protected with a PIN.',
+                  ),
+                ),
+                h('div', { class: 'row wrap', style: 'gap: 8px;' },
+                  h('span', { class: 'chip' }, `${L('Sala:', 'Room:')} ${s.syncRoomCode || 'Local'}`),
+                  current ? h('span', { class: 'chip' }, `${L('Tu sesión:', 'Your session:')} ${current.name}`) : null,
+                  h('span', { class: 'chip' }, `${curCounts.length} ${L('lecturas enviadas', 'scans sent')}`),
+                ),
+              ),
+              h(
+                'div',
+                { class: 'col', style: 'gap: 8px; align-items: stretch; min-width: 200px;' },
+                h(
+                  'button',
+                  {
+                    class: 'btn primary',
+                    style: 'min-height: 46px; font-weight: 700;',
+                    onclick: () => navigate('/contar'),
+                  },
+                  icon('scan'),
+                  L('Ir a Escanear / Contar', 'Go to Scan / Count'),
+                ),
+                isMobileViewport()
+                  ? h(
+                      'button',
+                      {
+                        class: 'btn ghost',
+                        style: 'min-height: 40px;',
+                        onclick: async () => {
+                          const ok = await promptSupervisorPin();
+                          if (ok) {
+                            await switchToSupervisorSession();
+                            s = await loadSettings();
+                            renderStatusHeader(getCloudConnectionStatus());
+                            await refreshDashboard();
+                          }
+                        },
+                      },
+                      icon('lock'),
+                      L('Acceder como Supervisor (PIN)', 'Access as Supervisor (PIN)'),
+                    )
+                  : null,
+              ),
+            ),
+          ),
+        );
+        return;
+      }
 
       // 1. Renderizar 4 KPIs limpios del Supervisor
       clear(

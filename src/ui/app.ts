@@ -20,6 +20,7 @@ import { movementsView } from './movementsView';
 import { reportView } from './reportView';
 import { currentPath, navigate, registerRoute, startRouter } from './router';
 import { settingsView } from './settingsView';
+import { promptSupervisorPin, switchToSupervisorSession, switchToTechnicianSession } from './supervisorAuth';
 import { teamView } from './teamView';
 
 export interface PlatformInfo {
@@ -337,12 +338,15 @@ export async function bootstrapApp(): Promise<void> {
       'data-testid': 'mobile-supervisor-toggle',
       onclick: async () => {
         const isSup = isSupervisorModeEnabled();
-        const next = !isSup;
-        const nextRole = next ? 'supervisor' : 'technician';
-        await saveSettings({ supervisorMode: next, userRole: nextRole });
+        if (!isSup) {
+          const authorized = await promptSupervisorPin();
+          if (!authorized) return;
+          await switchToSupervisorSession();
+        } else {
+          await switchToTechnicianSession();
+        }
         applyPlatformAttributes();
         syncMobileSupervisorLabel();
-        toast(next ? L('Modo Supervisor activado en móvil', 'Supervisor mode enabled on mobile') : L('Vista Técnico móvil activada', 'Mobile technician view enabled'), 'ok');
         closeMoreSheet();
         navigate(currentPath() || '/');
       },

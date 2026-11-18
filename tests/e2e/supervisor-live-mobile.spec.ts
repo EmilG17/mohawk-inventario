@@ -54,6 +54,17 @@ test.describe('Supervisor Live Scanner Telemetry & Mobile Supervisor Mode', () =
 
     const supPage = await context.newPage();
     await supPage.goto('/#/equipo');
+
+    // Desbloquear centro de supervisor con PIN si es vista móvil
+    const supToggle = supPage.getByTestId('team-supervisor-toggle');
+    if (await supToggle.isVisible().catch(() => false)) {
+      await supToggle.click();
+      const pinInput = supPage.locator('.pin-hidden-input');
+      if (await pinInput.isVisible({ timeout: 600 }).catch(() => false)) {
+        await pinInput.fill('1234');
+      }
+    }
+
     await expect(supPage.getByTestId('team-live-scanners')).toBeVisible();
 
     // Técnico escanea WD-40 (079567011002) sin presionar Registrar todavía
@@ -97,6 +108,17 @@ test.describe('Supervisor Live Scanner Telemetry & Mobile Supervisor Mode', () =
     });
 
     await page.goto('/#/equipo');
+
+    // Desbloquear centro de supervisor con PIN si es vista móvil
+    const supToggle2 = page.getByTestId('team-supervisor-toggle');
+    if (await supToggle2.isVisible().catch(() => false)) {
+      await supToggle2.click();
+      const pinInput = page.locator('.pin-hidden-input');
+      if (await pinInput.isVisible({ timeout: 600 }).catch(() => false)) {
+        await pinInput.fill('1234');
+      }
+    }
+
     const presetBtn = page.getByTestId('team-preset-hhf-btn');
     await expect(presetBtn).toBeVisible();
     await presetBtn.click();
@@ -128,6 +150,12 @@ test.describe('Supervisor Live Scanner Telemetry & Mobile Supervisor Mode', () =
     await page.getByTestId('nav-more').click();
     await expect(page.getByTestId('mobile-supervisor-toggle')).toBeVisible();
     await page.getByTestId('mobile-supervisor-toggle').click();
+
+    // Ingresar PIN de supervisor protegido en móvil (por defecto 1234)
+    const pinInput = page.locator('.pin-hidden-input');
+    if (await pinInput.isVisible({ timeout: 600 }).catch(() => false)) {
+      await pinInput.fill('1234');
+    }
 
     await expect(page.locator('#app')).toHaveAttribute('data-supervisor', 'true');
     await expect(page.getByTestId('home-quick-unify')).toBeVisible();
