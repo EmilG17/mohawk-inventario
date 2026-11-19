@@ -4,6 +4,24 @@ import { loadSettings, saveSettings, settingsSync } from '../settings';
 import { isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
 import { h, icon, openDialog, toast } from './dom';
 
+const MOBILE_PIN_SESSION_KEY = 'mhk_mobile_pin_verified';
+
+export function isMobilePinSessionVerified(): boolean {
+  try {
+    return typeof sessionStorage !== 'undefined' && sessionStorage.getItem(MOBILE_PIN_SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+export function clearMobilePinSession(): void {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(MOBILE_PIN_SESSION_KEY);
+    }
+  } catch {}
+}
+
 export function isValidSupervisorPin(pin: string): boolean {
   return /^\d{4}$/.test(String(pin || '').trim());
 }
@@ -24,7 +42,7 @@ export function verifySupervisorPin(input: string): boolean {
 }
 
 function dispatchAuthEvents(role: 'supervisor' | 'technician'): void {
-  if (typeof window === 'undefined' || typeof CustomEvent === 'undefined') return;
+  if (typeof window === 'undefined' || typeof window.dispatchEvent !== 'function' || typeof CustomEvent === 'undefined') return;
   window.dispatchEvent(new CustomEvent('mhk:rolechange', { detail: { role } }));
   window.dispatchEvent(new CustomEvent('mhk:sessionchange'));
 }
@@ -33,6 +51,7 @@ function dispatchAuthEvents(role: 'supervisor' | 'technician'): void {
  * Muestra el diálogo moderno con teclado numérico para autenticar al Supervisor en dispositivos móviles.
  */
 export function promptSupervisorPin(): Promise<boolean> {
+  void loadSettings();
   return new Promise((resolve) => {
     let currentInput = '';
     let resolved = false;
@@ -74,6 +93,11 @@ export function promptSupervisorPin(): Promise<boolean> {
       if (isResetting || resolved || currentInput.length !== 4) return;
       if (verifySupervisorPin(currentInput)) {
         resolved = true;
+        try {
+          if (typeof sessionStorage !== 'undefined') {
+            sessionStorage.setItem(MOBILE_PIN_SESSION_KEY, '1');
+          }
+        } catch {}
         dialog.close();
         resolve(true);
       } else {
@@ -227,6 +251,11 @@ export function promptSupervisorPin(): Promise<boolean> {
  * Separa la sesión del técnico y activa la sesión de Supervisor en dispositivos móviles.
  */
 export async function switchToSupervisorSession(): Promise<boolean> {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(MOBILE_PIN_SESSION_KEY, '1');
+    }
+  } catch {}
   const s = await loadSettings();
   if (s.userRole === 'supervisor' && s.supervisorMode === true) {
     if (typeof document !== 'undefined') {
@@ -270,6 +299,7 @@ export async function switchToSupervisorSession(): Promise<boolean> {
  * Bloquea la sesión de Supervisor y restaura la sesión del técnico en el dispositivo móvil.
  */
 export async function switchToTechnicianSession(): Promise<boolean> {
+  clearMobilePinSession();
   const s = await loadSettings();
   if (s.userRole === 'technician' && s.supervisorMode === false) {
     if (typeof document !== 'undefined') {

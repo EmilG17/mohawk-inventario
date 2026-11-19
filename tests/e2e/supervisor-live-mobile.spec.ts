@@ -140,6 +140,28 @@ test.describe('Supervisor Live Scanner Telemetry & Mobile Supervisor Mode', () =
     }
 
     await page.goto('/#/');
+    // Simular que previamente quedó guardado userRole: 'supervisor' en IndexedDB y verificar que móvil sigue exigiendo PIN al abrir
+    await page.evaluate(async () => {
+      sessionStorage.removeItem('mhk_mobile_pin_verified');
+      const req = indexedDB.open('mohawk-inventario');
+      await new Promise<void>((resolve, reject) => {
+        req.onsuccess = () => {
+          const db = req.result;
+          const tx = db.transaction(['meta'], 'readwrite');
+          const store = tx.objectStore('meta');
+          const getReq = store.get('settings');
+          getReq.onsuccess = () => {
+            store.put({ ...(getReq.result || {}), userRole: 'supervisor', supervisorMode: true }, 'settings');
+          };
+          tx.oncomplete = () => resolve();
+          tx.onerror = () => reject(tx.error);
+        };
+        req.onerror = () => reject(req.error);
+      });
+    });
+    await page.reload();
+
+    await expect(page.locator('#app')).toHaveAttribute('data-supervisor', 'false');
     await expect(page.getByTestId('workflow-bar')).toBeHidden();
     await expect(page.getByTestId('home-quick-unify')).toHaveCount(0);
     await expect(page.getByTestId('home-quick-labels')).toHaveCount(0);
@@ -151,11 +173,14 @@ test.describe('Supervisor Live Scanner Telemetry & Mobile Supervisor Mode', () =
     await expect(page.getByTestId('mobile-supervisor-toggle')).toBeVisible();
     await page.getByTestId('mobile-supervisor-toggle').click();
 
-    // Ingresar PIN de supervisor protegido en móvil (por defecto 1234)
-    const pinInput = page.locator('.pin-hidden-input');
-    if (await pinInput.isVisible({ timeout: 600 }).catch(() => false)) {
-      await pinInput.fill('1234');
-    }
+    // Verificar rechazo de PIN incorrecto (0000) antes de aceptar el PIN válido (1234)
+    const pinInput = page.locator('dialog[open] .pin-hidden-input');
+    await expect(pinInput).toBeAttached();
+    await pinInput.fill('0000');
+    await expect(page.locator('dialog[open] .pin-error-msg')).toContainText(/PIN incorrecto|Incorrect PIN/i);
+    await expect(page.locator('#app')).toHaveAttribute('data-supervisor', 'false');
+    await page.waitForTimeout(600);
+    await pinInput.fill('1234');
 
     await expect(page.locator('#app')).toHaveAttribute('data-supervisor', 'true');
     await expect(page.getByTestId('home-quick-unify')).toBeVisible();

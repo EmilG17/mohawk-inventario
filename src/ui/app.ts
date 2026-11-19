@@ -1,7 +1,7 @@
 import { getActiveSession } from '../db/db';
 import { L, applyDocumentLang } from '../i18n/i18n';
 import { startPendingWatcher } from '../lookup/pendingQueue';
-import { loadSettings } from '../settings';
+import { loadSettings, saveSettings, settingsSync } from '../settings';
 import {
   consumeUrlSyncParams,
   getCloudConnectionStatus,
@@ -10,7 +10,7 @@ import {
   startLiveCloudSync,
 } from '../sync/cloudSync';
 import { catalogView } from './catalog';
-import { isStrictTechnicianClient, isSupervisorModeEnabled } from './catalogMode';
+import { isMobileViewport, isStrictTechnicianClient, isSupervisorModeEnabled } from './catalogMode';
 import { countView } from './count';
 import { clear, h, icon, toast } from './dom';
 import { homeView } from './home';
@@ -20,7 +20,12 @@ import { movementsView } from './movementsView';
 import { reportView } from './reportView';
 import { currentPath, navigate, registerRoute, startRouter } from './router';
 import { settingsView } from './settingsView';
-import { promptSupervisorPin, switchToSupervisorSession, switchToTechnicianSession } from './supervisorAuth';
+import {
+  isMobilePinSessionVerified,
+  promptSupervisorPin,
+  switchToSupervisorSession,
+  switchToTechnicianSession,
+} from './supervisorAuth';
 import { teamView } from './teamView';
 
 export interface PlatformInfo {
@@ -65,9 +70,12 @@ export function notifyLanguageChanged(): void {
 const MOBILE_PRIMARY_PATHS = new Set(['/', '/contar', '/movimientos', '/catalogo']);
 
 export async function bootstrapApp(): Promise<void> {
-  const initialSettings = await loadSettings();
+  let initialSettings = await loadSettings();
   applyDocumentLang();
   const urlJoin = await consumeUrlSyncParams();
+  if (isMobileViewport() && !isMobilePinSessionVerified()) {
+    initialSettings = await saveSettings({ supervisorMode: false });
+  }
   if (!urlJoin && initialSettings.syncEnabled && initialSettings.syncRoomCode) {
     startLiveCloudSync({
       roomCode: initialSettings.syncRoomCode,
@@ -117,11 +125,23 @@ export async function bootstrapApp(): Promise<void> {
   applyPlatformAttributes();
 
   let resizeTimer: any = null;
+  let wasMobileViewport = isMobileViewport();
   window.addEventListener('resize', () => {
+    const nowMobile = isMobileViewport();
+    const crossedToMobile = !wasMobileViewport && nowMobile;
+    wasMobileViewport = nowMobile;
+    const shouldLockOnMobile = crossedToMobile && !isMobilePinSessionVerified() && Boolean(settingsSync().supervisorMode);
+    if (shouldLockOnMobile) {
+      void saveSettings({ supervisorMode: false });
+    }
     clearTimeout(resizeTimer);
     resizeTimer = setTimeout(() => {
       applyPlatformAttributes();
+      syncMobileSupervisorLabel();
       if (window.innerWidth >= 900) closeMoreSheet();
+      if (shouldLockOnMobile && !document.querySelector('dialog[open]')) {
+        navigate(currentPath() || '/');
+      }
     }, 120);
   });
 

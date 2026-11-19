@@ -15,14 +15,15 @@ export function isMobileViewport(): boolean {
 /**
  * Indica si las funciones y controles de Supervisor deben mostrarse en la interfaz.
  * En escritorio/tablet (>= 900px) está activo por defecto salvo que se fije el rol 'technician'.
- * En móvil (< 900px) solo cuando el usuario activa "Modo Supervisor" o su rol es 'supervisor'.
+ * En móvil (< 900px) solo cuando el usuario desbloquea explícitamente "Modo Supervisor" con PIN.
  */
 export function isSupervisorModeEnabled(): boolean {
   const s = settingsSync();
+  if (isMobileViewport()) {
+    return Boolean(s.supervisorMode);
+  }
   if (s.userRole === 'technician') return false;
-  if (s.userRole === 'supervisor') return true;
-  if (!isMobileViewport()) return true;
-  return Boolean(s.supervisorMode);
+  return true;
 }
 
 /** Indica si el dispositivo está explicitamente configurado como Cliente-Técnico restringido. */

@@ -81,4 +81,30 @@ describe('Supervisor PIN Authentication and Session Separation Suite', () => {
     expect(restoredSupSession?.id).toBe(supSession.id);
     expect(restoredSupSession?.name).toBe('Auditoría General Planta');
   });
+
+  it('en móvil (<900px) bloquea el acceso de supervisor aunque userRole sea supervisor si supervisorMode es false', async () => {
+    const prevWin = (globalThis as any).window;
+    (globalThis as any).window = { ...(prevWin || {}), innerWidth: 390 };
+    try {
+      await saveSettings({
+        userRole: 'supervisor',
+        supervisorMode: false,
+        supervisorPin: '4321',
+      });
+      // En móvil nunca debe dar acceso automático por userRole: 'supervisor' sin desbloquear supervisorMode con PIN
+      expect(isSupervisorModeEnabled()).toBe(false);
+      expect(isTechnicianRole()).toBe(true);
+      expect(verifySupervisorPin('1234')).toBe(false);
+      expect(verifySupervisorPin('0000')).toBe(false);
+      expect(verifySupervisorPin('4321')).toBe(true);
+
+      await switchToSupervisorSession();
+      expect(isSupervisorModeEnabled()).toBe(true);
+
+      await switchToTechnicianSession();
+      expect(isSupervisorModeEnabled()).toBe(false);
+    } finally {
+      (globalThis as any).window = prevWin;
+    }
+  });
 });

@@ -28,6 +28,8 @@ import {
   isSupervisorModeEnabled,
 } from './catalogMode';
 import {
+  clearMobilePinSession,
+  getSupervisorPin,
   isValidSupervisorPin,
   promptSupervisorPin,
   switchToSupervisorSession,
@@ -275,6 +277,26 @@ export const settingsView: View = {
       })();
     });
 
+    pinInput.addEventListener('change', () => {
+      void (async () => {
+        if (!isSupervisorModeEnabled()) return;
+        const rawPin = pinInput.value.trim();
+        if (!isValidSupervisorPin(rawPin)) {
+          toast(
+            L(
+              'El PIN de supervisor debe tener exactamente 4 dígitos numéricos.',
+              'Supervisor PIN must be exactly 4 numeric digits.',
+            ),
+            'error',
+          );
+          pinInput.value = getSupervisorPin();
+          return;
+        }
+        await saveSettings({ supervisorPin: rawPin });
+        toast(L('PIN de supervisor actualizado', 'Supervisor PIN updated'), 'ok');
+      })();
+    });
+
     roleSelect.addEventListener('change', () => {
       void (async () => {
         const nextRole = (roleSelect.value as 'supervisor' | 'technician') || 'technician';
@@ -288,6 +310,9 @@ export const settingsView: View = {
           }
           await switchToSupervisorSession();
         } else if (!isSup) {
+          if (supervisorUI && isValidSupervisorPin(pinInput.value.trim())) {
+            await saveSettings({ supervisorPin: pinInput.value.trim() });
+          }
           await switchToTechnicianSession();
         }
         supervisorCheck.checked = isSupervisorModeEnabled();
@@ -308,6 +333,9 @@ export const settingsView: View = {
           }
           await switchToSupervisorSession();
         } else if (!isSup) {
+          if (supervisorUI && isValidSupervisorPin(pinInput.value.trim())) {
+            await saveSettings({ supervisorPin: pinInput.value.trim() });
+          }
           await switchToTechnicianSession();
         }
         roleSelect.value = isSupervisorModeEnabled() ? 'supervisor' : 'technician';
@@ -659,6 +687,7 @@ export const settingsView: View = {
                       await db.clear('sessions');
                       await db.clear('meta');
                       clearLocalStorageRoomMirrors();
+                      clearMobilePinSession();
                       _resetSettingsCache();
                       toast(L('Datos borrados', 'Data cleared'));
                       location.reload();
