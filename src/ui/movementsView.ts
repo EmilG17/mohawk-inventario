@@ -20,6 +20,7 @@ import {
   type MovementSummary,
   type MovementType,
 } from '../db/movements';
+import { loadSettings } from '../settings';
 import { displayBarcode, normalizeBarcode } from '../io/normalize';
 import { computeIdealStatus, type IdealStatus } from '../report';
 import {
@@ -32,6 +33,7 @@ import {
   type ScannerHandle,
 } from '../scanner/scanner';
 import { createWedgeController, type WedgeController } from '../scanner/wedge';
+import { isMobileCatalogReadOnly, isStrictTechnicianClient, isSupervisorModeEnabled } from './catalogMode';
 import {
   clear,
   confirmDialog,
@@ -126,6 +128,16 @@ export async function findProductByCode(code: string): Promise<Product | undefin
   );
 }
 
+function resolveBaseStock(hasSession: boolean, countedQty: number | undefined, product?: Product): number {
+  if (hasSession && countedQty !== undefined) {
+    return countedQty;
+  }
+  if (product && typeof product.expectedQty === 'number') {
+    return product.expectedQty;
+  }
+  return 0;
+}
+
 /**
  * Vista de Entradas / Salidas (Kardex) y Conciliación con Inventario Ideal
  */
@@ -135,6 +147,9 @@ export const movementsView: View = {
   async render(root: HTMLElement, params: URLSearchParams): Promise<void> {
     viewRootEl = root;
     lastMovDataFp = '';
+
+    await loadSettings();
+    if (viewRootEl !== root) return;
 
     const actionParam = params?.get('action');
 
@@ -254,17 +269,14 @@ function setupKeyboardWedge() {
 /**
  * Maneja una lectura recibida desde teclado USB o simulación
  */
-async function handleWedgeScan(code: string, target?: HTMLElement | null) {
+async function handleWedgeScan(code: string, _target?: HTMLElement | null) {
   beep('ok');
   vibrate('ok');
 
   if (activeModalDialog && activeModalDialog.open) {
     const skuInput = activeModalDialog.querySelector('#m-sku-input') as HTMLInputElement | null;
-    // Proteger escritura manual previa si #m-sku-input ya contiene un valor completo mayor que la ráfaga
-    const existing = skuInput?.value.trim() ?? '';
-    const useExisting = target?.id === 'm-sku-input' && existing.length > code.length && existing.endsWith(code);
-    const resolvedCode = useExisting ? existing : code;
-    if (skuInput && !useExisting) {
+    const resolvedCode = code;
+    if (skuInput) {
       skuInput.value = resolvedCode;
       skuInput.dispatchEvent(new Event('input', { bubbles: true }));
       skuInput.dispatchEvent(new Event('change', { bubbles: true }));
@@ -309,30 +321,33 @@ async function renderMainView(): Promise<void> {
   const counts: CountEntry[] = session ? await countsForSession(session.id) : [];
   if (viewRootEl !== targetRoot || seq !== movRenderSeq) return;
 
-  // Mapear conteos físicos actuales por SKU y código de barras
-  const countQtyBySku = new Map<string, number>();
+  // Mapear conteos físicos actuales por SKU / clave y código de barras
+  const countQtyByKey = new Map<string, number>();
   const countQtyByBarcode = new Map<string, number>();
   for (const c of counts) {
     countQtyByBarcode.set(c.barcode, (countQtyByBarcode.get(c.barcode) ?? 0) + c.qty);
+    const normBc = normalizeBarcode(c.barcode);
+    if (normBc && normBc !== c.barcode) {
+      countQtyByBarcode.set(normBc, (countQtyByBarcode.get(normBc) ?? 0) + c.qty);
+    }
   }
 
-  // Mapa de productos por barcode y por sku
+  // Mapa de productos por barcode y por sku (respaldando productos solo con barcode)
   const productBySku = new Map<string, Product>();
-  for (const p of products) {
-    if (p.sku) {
-      productBySku.set(p.sku.toUpperCase(), p);
-    }
-    const cQty = countQtyByBarcode.get(p.barcode) ?? 0;
-    if (p.sku && cQty > 0) {
-      const upperSku = p.sku.toUpperCase();
-      countQtyBySku.set(upperSku, (countQtyBySku.get(upperSku) ?? 0) + cQty);
-    }
-  }
-
-  // Recopilar todos los SKUs (Catálogo + Movimientos)
   const allSkusSet = new Set<string>();
   for (const p of products) {
-    if (p.sku) allSkusSet.add(p.sku.toUpperCase());
+    const key = (p.sku || p.barcode || '').trim().toUpperCase();
+    if (!key) continue;
+    productBySku.set(key, p);
+    if (p.sku) {
+      productBySku.set(p.sku.trim().toUpperCase(), p);
+    }
+    allSkusSet.add(key);
+    const normBc = normalizeBarcode(p.barcode);
+    const cQty = countQtyByBarcode.get(p.barcode) ?? (normBc ? countQtyByBarcode.get(normBc) : undefined);
+    if (cQty !== undefined) {
+      countQtyByKey.set(key, (countQtyByKey.get(key) ?? 0) + cQty);
+    }
   }
   for (const [sku] of summariesMap.entries()) {
     if (sku) allSkusSet.add(sku.toUpperCase());
@@ -367,13 +382,9 @@ async function renderMainView(): Promise<void> {
       outCount: 0,
     };
 
-    // Stock actual: conteo físico si existe sesión, o existencia teórica esperada del catálogo, o 0
-    let currentStock = 0;
-    if (session && countQtyBySku.has(sku)) {
-      currentStock = countQtyBySku.get(sku)!;
-    } else if (p && typeof p.expectedQty === 'number') {
-      currentStock = p.expectedQty;
-    }
+    // Stock actual: conteo físico si existe sesión con lecturas del producto, o existencia teórica esperada, o 0
+    const countedQty = session && countQtyByKey.has(sku) ? countQtyByKey.get(sku) : undefined;
+    const currentStock = resolveBaseStock(Boolean(session), countedQty, p);
 
     const totalIn = summary.totalIn;
     const totalOut = summary.totalOut;
@@ -546,28 +557,46 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
     },
   }) as HTMLInputElement;
 
+  const allChipBtn = h('button', {
+    class: `chip ${tableFilter === 'todos' ? 'active' : ''}`,
+    onclick: () => { tableFilter = 'todos'; updateChips(); updateTableRows(); },
+  }, `${L('Todos', 'All')} (${rows.length})`) as HTMLButtonElement;
+  const deficitChipBtn = h('button', {
+    class: `chip ${tableFilter === 'deficit_critical' ? 'active' : ''}`,
+    onclick: () => { tableFilter = 'deficit_critical'; updateChips(); updateTableRows(); },
+  }, `${L('Déficit / Críticos', 'Deficit / Critical')} (${deficitCount})`) as HTMLButtonElement;
+  const optimalChipBtn = h('button', {
+    class: `chip ${tableFilter === 'optimal' ? 'active' : ''}`,
+    onclick: () => { tableFilter = 'optimal'; updateChips(); updateTableRows(); },
+  }, `${L('Óptimos', 'Optimal')} (${optimalCount})`) as HTMLButtonElement;
+  const excessChipBtn = h('button', {
+    class: `chip ${tableFilter === 'excess' ? 'active' : ''}`,
+    onclick: () => { tableFilter = 'excess'; updateChips(); updateTableRows(); },
+  }, `${L('Exceso', 'Excess')} (${excessCount})`) as HTMLButtonElement;
+  const withMovChipBtn = h('button', {
+    class: `chip ${tableFilter === 'with_movements' ? 'active' : ''}`,
+    onclick: () => { tableFilter = 'with_movements'; updateChips(); updateTableRows(); },
+  }, `${L('Con Movimientos', 'With Movements')} (${withMovementsCount})`) as HTMLButtonElement;
+
   const chipsContainer = h('div', { class: 'chips' },
-    h('button', {
-      class: `chip ${tableFilter === 'todos' ? 'active' : ''}`,
-      onclick: () => { tableFilter = 'todos'; updateChips(); updateTableRows(); },
-    }, `${L('Todos', 'All')} (${rows.length})`),
-    h('button', {
-      class: `chip ${tableFilter === 'deficit_critical' ? 'active' : ''}`,
-      onclick: () => { tableFilter = 'deficit_critical'; updateChips(); updateTableRows(); },
-    }, `${L('Déficit / Críticos', 'Deficit / Critical')} (${deficitCount})`),
-    h('button', {
-      class: `chip ${tableFilter === 'optimal' ? 'active' : ''}`,
-      onclick: () => { tableFilter = 'optimal'; updateChips(); updateTableRows(); },
-    }, `${L('Óptimos', 'Optimal')} (${optimalCount})`),
-    h('button', {
-      class: `chip ${tableFilter === 'excess' ? 'active' : ''}`,
-      onclick: () => { tableFilter = 'excess'; updateChips(); updateTableRows(); },
-    }, `${L('Exceso', 'Excess')} (${excessCount})`),
-    h('button', {
-      class: `chip ${tableFilter === 'with_movements' ? 'active' : ''}`,
-      onclick: () => { tableFilter = 'with_movements'; updateChips(); updateTableRows(); },
-    }, `${L('Con Movimientos', 'With Movements')} (${withMovementsCount})`),
+    allChipBtn,
+    deficitChipBtn,
+    optimalChipBtn,
+    excessChipBtn,
+    withMovChipBtn,
   );
+
+  const updateChipCounts = () => {
+    const def = rows.filter((r) => r.status === 'deficit' || r.status === 'critical').length;
+    const opt = rows.filter((r) => r.status === 'optimal').length;
+    const exc = rows.filter((r) => r.status === 'excess').length;
+    const mov = rows.filter((r) => r.totalIn > 0 || r.totalOut > 0).length;
+    allChipBtn.textContent = `${L('Todos', 'All')} (${rows.length})`;
+    deficitChipBtn.textContent = `${L('Déficit / Críticos', 'Deficit / Critical')} (${def})`;
+    optimalChipBtn.textContent = `${L('Óptimos', 'Optimal')} (${opt})`;
+    excessChipBtn.textContent = `${L('Exceso', 'Excess')} (${exc})`;
+    withMovChipBtn.textContent = `${L('Con Movimientos', 'With Movements')} (${mov})`;
+  };
 
   const updateChips = () => {
     const buttons = chipsContainer.querySelectorAll('.chip');
@@ -637,7 +666,7 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
     } else {
       emptyMsg.style.display = 'none';
       for (const row of filtered) {
-        tableBody.appendChild(createComparativeRow(row));
+        tableBody.appendChild(createComparativeRow(row, rows, updateChipCounts));
       }
     }
   };
@@ -659,7 +688,11 @@ function renderComparativeSection(rows: ComparativeRow[]): HTMLElement {
 /**
  * Crea una fila HTML de la tabla comparativa con edición inline de inventario ideal
  */
-function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
+function createComparativeRow(
+  row: ComparativeRow,
+  allRows: ComparativeRow[] = [row],
+  onIdealUpdated?: () => void,
+): HTMLTableRowElement {
   const tr = h('tr', { 'data-sku': row.sku });
 
   // SKU cell
@@ -692,7 +725,8 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
     style: 'text-align: right; font-weight: 800; font-size: 13px;',
   }, fmtNum(row.dynamicStock));
 
-  // Inventario Ideal (Input Inline)
+  // Inventario Ideal (Input Inline solo para Supervisor en modo escritorio/edición)
+  const canEditIdeal = isSupervisorModeEnabled() && !isMobileCatalogReadOnly();
   const idealInput = h('input', {
     class: 'inline-ideal',
     type: 'number',
@@ -736,6 +770,7 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
   // Persistencia instantánea de Inventario Ideal al cambiar/desenfocar
   let lastSavedVal = row.idealQty;
   const onIdealChange = async () => {
+    if (!canEditIdeal) return;
     const rawVal = idealInput.value.trim();
     const parsed = parseFloat(rawVal);
     const newQty = isNaN(parsed) || parsed < 0 ? 0 : Math.round(parsed * 1000) / 1000;
@@ -755,16 +790,23 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
     });
 
     renderGapAndStatus();
+    onIdealUpdated?.();
     toast(L(`Inventario ideal de ${row.sku} actualizado a ${newQty}`, `Ideal stock for ${row.sku} updated to ${newQty}`), 'ok', 1400);
 
-    // Actualizar live KPI card si está en DOM
-    updateLiveDeficitKpi();
+    // Actualizar live KPI card con el conjunto completo de filas
+    updateLiveDeficitKpi(allRows);
   };
 
-  idealInput.addEventListener('change', () => void onIdealChange());
-  idealInput.addEventListener('blur', () => void onIdealChange());
+  if (canEditIdeal) {
+    idealInput.addEventListener('change', () => void onIdealChange());
+    idealInput.addEventListener('blur', () => void onIdealChange());
+  }
 
-  const idealCell = h('td', { style: 'text-align: right;' }, idealInput);
+  const idealCell = h(
+    'td',
+    { style: 'text-align: right;' },
+    canEditIdeal ? idealInput : h('span', { class: 'muted' }, fmtNum(row.idealQty)),
+  );
 
   // Acciones: + Entrada y - Salida rápidos
   const actionsCell = h('td', { style: 'text-align: center; white-space: nowrap;' },
@@ -807,18 +849,24 @@ function createComparativeRow(row: ComparativeRow): HTMLTableRowElement {
 }
 
 /**
- * Actualiza el contador del KPI de déficit en vivo si cambió el inventario ideal
+ * Actualiza el contador del KPI de déficit en vivo usando el catálogo completo de filas
  */
-function updateLiveDeficitKpi() {
-  const table = viewRootEl?.querySelector('.comp-table');
-  if (!table) return;
-  const badges = table.querySelectorAll('tbody tr td:nth-child(9) .badge');
+function updateLiveDeficitKpi(allRows?: ComparativeRow[]) {
   let count = 0;
-  badges.forEach((b) => {
-    if (b.classList.contains('warn') || b.classList.contains('error')) {
-      count++;
+  if (allRows) {
+    for (const r of allRows) {
+      if (r.status === 'deficit' || r.status === 'critical') count++;
     }
-  });
+  } else {
+    const table = viewRootEl?.querySelector('.comp-table');
+    if (!table) return;
+    const badges = table.querySelectorAll('tbody tr td:nth-child(9) .badge');
+    badges.forEach((b) => {
+      if (b.classList.contains('warn') || b.classList.contains('error')) {
+        count++;
+      }
+    });
+  }
   const deficitEl = viewRootEl?.querySelector('#kpi-deficit');
   if (deficitEl) {
     deficitEl.textContent = `${count} SKUs`;
@@ -1000,28 +1048,30 @@ function renderBitacoraSection(
             )
             : null,
         ),
-        h('div', { style: 'display: flex; justify-content: flex-end; margin-top: 8px;' },
-          h('button', {
-            class: 'btn sm danger ghost',
-            onclick: async () => {
-              const ok = await confirmDialog(
-                L('Eliminar movimiento', 'Delete movement'),
-                L(
-                  `¿Deseas revertir y eliminar este movimiento de ${isEntry ? 'Entrada' : 'Salida'} (${m.quantity} ${m.sku})?`,
-                  `Revert and delete this ${isEntry ? 'Stock In' : 'Stock Out'} movement (${m.quantity} ${m.sku})?`,
-                ),
-                L('Eliminar', 'Delete'),
-                true,
-              );
-              if (ok) {
-                await deleteMovement(m.id);
-                triggerBackgroundSync();
-                toast(L('Movimiento eliminado correctamente', 'Movement deleted'), 'ok');
-                await renderMainView();
-              }
-            },
-          }, icon('trash'), L('Eliminar', 'Delete')),
-        ),
+        !isStrictTechnicianClient()
+          ? h('div', { style: 'display: flex; justify-content: flex-end; margin-top: 8px;' },
+              h('button', {
+                class: 'btn sm danger ghost',
+                onclick: async () => {
+                  const ok = await confirmDialog(
+                    L('Eliminar movimiento', 'Delete movement'),
+                    L(
+                      `¿Deseas revertir y eliminar este movimiento de ${isEntry ? 'Entrada' : 'Salida'} (${m.quantity} ${m.sku})?`,
+                      `Revert and delete this ${isEntry ? 'Stock In' : 'Stock Out'} movement (${m.quantity} ${m.sku})?`,
+                    ),
+                    L('Eliminar', 'Delete'),
+                    true,
+                  );
+                  if (ok) {
+                    await deleteMovement(m.id);
+                    triggerBackgroundSync();
+                    toast(L('Movimiento eliminado correctamente', 'Movement deleted'), 'ok');
+                    await renderMainView();
+                  }
+                },
+              }, icon('trash'), L('Eliminar', 'Delete')),
+            )
+          : null,
       );
 
       listContainer.appendChild(itemCard);
@@ -1075,6 +1125,8 @@ export async function openMovementRegistrationModal(
     let dynamicStock = 0;
     let idealStock = 0;
     let cameraRunning = false;
+    let camAttemptSeq = 0;
+    let skuResolveSeq = 0;
 
     const [products, session, summaries, idealLevels] = await Promise.all([
       allProducts(),
@@ -1181,6 +1233,7 @@ export async function openMovementRegistrationModal(
   );
 
   const stopCameraStream = () => {
+    camAttemptSeq++;
     if (activeModalScanner) {
       try {
         activeModalScanner.stop();
@@ -1201,6 +1254,7 @@ export async function openMovementRegistrationModal(
       stopCameraStream();
       return;
     }
+    const attempt = ++camAttemptSeq;
     camBox.style.display = 'flex';
     camToggleBtn.replaceChildren(icon('stop'), L('Detener', 'Stop'));
     cameraRunning = true;
@@ -1212,11 +1266,11 @@ export async function openMovementRegistrationModal(
         beep('ok');
         vibrate('ok');
         skuInput.value = code;
-        void resolveSkuInput(code);
+        void resolveSkuInput(code, false);
         stopCameraStream();
       });
 
-      if (!cameraRunning || !activeModalDialog || !activeModalDialog.open) {
+      if (attempt !== camAttemptSeq || !cameraRunning || !activeModalDialog || !activeModalDialog.open) {
         try {
           scanner.stop();
         } catch {
@@ -1232,7 +1286,7 @@ export async function openMovementRegistrationModal(
       }
     } catch (err) {
       console.error(err);
-      toast('No se pudo acceder a la cámara: ' + (err as Error).message, 'error');
+      toast(L('No se pudo acceder a la cámara: ', 'Could not access camera: ') + (err as Error).message, 'error');
       stopCameraStream();
     }
   };
@@ -1247,18 +1301,21 @@ export async function openMovementRegistrationModal(
     }
     previewCard.style.display = 'block';
 
-    const skuUpper = (detectedProduct?.sku || skuInput.value.trim()).toUpperCase();
+    const skuUpper = (detectedProduct?.sku || detectedProduct?.barcode || skuInput.value.trim()).toUpperCase();
     const summary = summaries.get(skuUpper) ?? { totalIn: 0, totalOut: 0 };
 
     // Stock actual
+    let countedQty: number | undefined;
     if (session && detectedProduct) {
-      const barcodeCounts = counts.filter((c) => c.barcode === detectedProduct?.barcode);
-      initialStock = barcodeCounts.reduce((a, c) => a + c.qty, 0);
-    } else if (detectedProduct && typeof detectedProduct.expectedQty === 'number') {
-      initialStock = detectedProduct.expectedQty;
-    } else {
-      initialStock = 0;
+      const targetNorm = normalizeBarcode(detectedProduct.barcode);
+      const barcodeCounts = counts.filter(
+        (c) => c.barcode === detectedProduct?.barcode || (targetNorm && normalizeBarcode(c.barcode) === targetNorm),
+      );
+      if (barcodeCounts.length > 0) {
+        countedQty = barcodeCounts.reduce((a, c) => a + c.qty, 0);
+      }
     }
+    initialStock = resolveBaseStock(Boolean(session), countedQty, detectedProduct);
 
     dynamicStock = Math.round((initialStock + summary.totalIn - summary.totalOut) * 1000) / 1000;
     idealStock =
@@ -1281,16 +1338,18 @@ export async function openMovementRegistrationModal(
     );
   };
 
-  const resolveSkuInput = async (val: string) => {
+  const resolveSkuInput = async (val: string, fromManualInput = false) => {
     const clean = val.trim();
+    const seq = ++skuResolveSeq;
     if (!clean) {
       detectedProduct = undefined;
       updatePreview();
       return;
     }
     const found = await findProductByCode(clean);
+    if (seq !== skuResolveSeq || activeModalDialog !== dlg) return;
     detectedProduct = found;
-    if (found && found.sku) {
+    if (!fromManualInput && found && found.sku) {
       skuInput.value = found.sku;
     }
     updatePreview();
@@ -1299,19 +1358,19 @@ export async function openMovementRegistrationModal(
       cameraOn: cameraRunning,
       origin: cameraRunning ? 'camara' : 'manual',
       barcode: found?.barcode || clean,
-      sku: found?.sku || clean.toUpperCase(),
+      sku: found?.sku || found?.barcode || clean.toUpperCase(),
       description: found?.description,
       qty: parseFloat(qtyInput.value) || 1,
       sessionName: 'Movimientos Kardex',
     });
   };
-  (dlg as any).__resolveSku = resolveSkuInput;
+  (dlg as any).__resolveSku = (val: string) => resolveSkuInput(val, false);
 
   skuInput.addEventListener('input', () => {
-    void resolveSkuInput(skuInput.value);
+    void resolveSkuInput(skuInput.value, true);
   });
   skuInput.addEventListener('change', () => {
-    void resolveSkuInput(skuInput.value);
+    void resolveSkuInput(skuInput.value, false);
   });
 
   // 4. Cantidad con Stepper
@@ -1329,7 +1388,7 @@ export async function openMovementRegistrationModal(
     type: 'button',
     onclick: () => {
       const cur = parseFloat(qtyInput.value) || 1;
-      qtyInput.value = String(Math.max(1, cur - 1));
+      qtyInput.value = String(Math.max(1, Math.round((cur - 1) * 1000) / 1000));
     },
   }, '−');
 
@@ -1338,7 +1397,7 @@ export async function openMovementRegistrationModal(
     type: 'button',
     onclick: () => {
       const cur = parseFloat(qtyInput.value) || 0;
-      qtyInput.value = String(cur + 1);
+      qtyInput.value = String(Math.round((cur + 1) * 1000) / 1000);
     },
   }, '+');
 
@@ -1426,6 +1485,25 @@ export async function openMovementRegistrationModal(
         folio: folioInput.value.trim(),
         notes: notesInput.value.trim(),
       });
+      const prevSum = summaries.get(rawSku) ?? {
+        totalIn: 0,
+        totalOut: 0,
+        netMovements: 0,
+        movementCount: 0,
+        inCount: 0,
+        outCount: 0,
+      };
+      const nextIn = movementType === 'IN' ? Math.round((prevSum.totalIn + qty) * 1000) / 1000 : prevSum.totalIn;
+      const nextOut = movementType === 'OUT' ? Math.round((prevSum.totalOut + qty) * 1000) / 1000 : prevSum.totalOut;
+      summaries.set(rawSku, {
+        ...prevSum,
+        totalIn: nextIn,
+        totalOut: nextOut,
+        netMovements: Math.round((nextIn - nextOut) * 1000) / 1000,
+        movementCount: prevSum.movementCount + 1,
+        inCount: prevSum.inCount + (movementType === 'IN' ? 1 : 0),
+        outCount: prevSum.outCount + (movementType === 'OUT' ? 1 : 0),
+      });
       void publishLiveScannerState({
         status: 'registered',
         cameraOn: cameraRunning,
@@ -1508,6 +1586,7 @@ export async function openMovementRegistrationModal(
   );
 
   dlg.addEventListener('close', () => {
+    skuResolveSeq++;
     stopCameraStream();
     if (activeModalDialog === dlg) {
       activeModalDialog = null;

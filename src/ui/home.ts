@@ -6,12 +6,19 @@ import {
   createSession,
   getActiveSession,
   reopenSession,
+  setActiveSession,
 } from '../db/db';
 import { L, getLocaleTag } from '../i18n/i18n';
 import { getAllMovements } from '../db/movements';
 import { pendingCount } from '../lookup/pendingQueue';
 import { loadSettings, saveSettings } from '../settings';
-import { archiveSessionToCloud, getCloudConnectionStatus, onCloudRoomUpdate } from '../sync/cloudSync';
+import {
+  archiveSessionToCloud,
+  getCloudConnectionStatus,
+  onCloudRoomUpdate,
+  onCloudStatusChange,
+} from '../sync/cloudSync';
+import { getCachedRoomState } from '../sync/roomMirror';
 import { computeRoomDataSig } from './cloudSignal';
 import { detectPlatformInfo } from './app';
 import { openBarcodeSheetDialog } from './barcodeSheet';
@@ -67,9 +74,37 @@ export async function newSessionFlow(): Promise<boolean> {
 
 let currentRoot: HTMLElement | null = null;
 let unsubscribeHomeCloud: (() => void) | null = null;
+let unsubscribeHomeStatus: (() => void) | null = null;
+let homeOnlineListener: (() => void) | null = null;
+let homeOfflineListener: (() => void) | null = null;
 let homeRenderSeq = 0;
 let homeCloudTimer: ReturnType<typeof setTimeout> | null = null;
 let lastHomeDataFp = '';
+
+function cleanupHomeSubscriptions(): void {
+  if (homeCloudTimer) {
+    clearTimeout(homeCloudTimer);
+    homeCloudTimer = null;
+  }
+  if (unsubscribeHomeCloud) {
+    unsubscribeHomeCloud();
+    unsubscribeHomeCloud = null;
+  }
+  if (unsubscribeHomeStatus) {
+    unsubscribeHomeStatus();
+    unsubscribeHomeStatus = null;
+  }
+  if (typeof window !== 'undefined') {
+    if (homeOnlineListener) {
+      window.removeEventListener('online', homeOnlineListener);
+      homeOnlineListener = null;
+    }
+    if (homeOfflineListener) {
+      window.removeEventListener('offline', homeOfflineListener);
+      homeOfflineListener = null;
+    }
+  }
+}
 
 async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Promise<void> {
   const [s, session, products, pending, sessions, movements] = await Promise.all([
@@ -541,7 +576,7 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                             {
                               class: 'btn sm primary',
                               onclick: async () => {
-                                await reopenSession(ps.id);
+                                await setActiveSession(ps.id);
                                 toast(`${L('Sesión activa', 'Active session')}: ${ps.name}`, 'ok');
                                 navigate('/contar');
                               },
@@ -627,42 +662,43 @@ async function renderHomeContent(root: HTMLElement, seq = ++homeRenderSeq): Prom
                 : null,
             ),
 
-            // Tarjeta PWA (solo cuando aplica)
-            install.canPrompt
-              ? h(
-                'section',
-                { class: 'card accent dash-section-card' },
-                h('h3', { class: 'dash-card-title' }, L('Instalar Aplicación', 'Install App')),
-                h(
-                  'p',
-                  { class: 'small' },
-                  L('Instala la app en tu dispositivo para acceso directo y uso offline.', 'Install the app on your device for direct access and offline use.'),
-                ),
-                h(
-                  'button',
-                  { class: 'btn primary sm', onclick: promptInstall },
-                  L('Instalar PWA', 'Install PWA'),
-                ),
-              )
-              : install.iosHint
-                ? h(
-                  'section',
-                  { class: 'card accent dash-section-card' },
-                  h('h3', { class: 'dash-card-title' }, L('Instalar en iPhone', 'Install on iPhone')),
-                  h(
-                    'p',
-                    { class: 'small' },
-                    L('En Safari toca ', 'In Safari tap '),
-                    h('b', null, L('Compartir', 'Share')),
-                    L(' y ', ' and '),
-                    h('b', null, L('“Agregar a pantalla de inicio”', '“Add to Home Screen”')),
-                    '.',
-                  ),
-                )
-                : null,
           ),
         )
           : null,
+
+        // Tarjeta PWA disponible también para clientes-técnicos móviles
+        install.canPrompt
+          ? h(
+            'section',
+            { class: 'card accent dash-section-card' },
+            h('h3', { class: 'dash-card-title' }, L('Instalar Aplicación', 'Install App')),
+            h(
+              'p',
+              { class: 'small' },
+              L('Instala la app en tu dispositivo para acceso directo y uso offline.', 'Install the app on your device for direct access and offline use.'),
+            ),
+            h(
+              'button',
+              { class: 'btn primary sm', onclick: promptInstall },
+              L('Instalar PWA', 'Install PWA'),
+            ),
+          )
+          : install.iosHint
+            ? h(
+              'section',
+              { class: 'card accent dash-section-card' },
+              h('h3', { class: 'dash-card-title' }, L('Instalar en iPhone', 'Install on iPhone')),
+              h(
+                'p',
+                { class: 'small' },
+                L('En Safari toca ', 'In Safari tap '),
+                h('b', null, L('Compartir', 'Share')),
+                L(' y ', ' and '),
+                h('b', null, L('“Agregar a pantalla de inicio”', '“Add to Home Screen”')),
+                '.',
+              ),
+            )
+            : null,
       ),
     );
 }
@@ -672,15 +708,22 @@ export const homeView: View = {
   async render(root) {
     currentRoot = root;
     const seq = ++homeRenderSeq;
-    lastHomeDataFp = '';
-    if (unsubscribeHomeCloud) {
-      unsubscribeHomeCloud();
-      unsubscribeHomeCloud = null;
-    }
-    if (homeCloudTimer) {
-      clearTimeout(homeCloudTimer);
-      homeCloudTimer = null;
-    }
+    cleanupHomeSubscriptions();
+
+    const cached = getCachedRoomState();
+    lastHomeDataFp = cached ? computeRoomDataSig(cached) : '';
+
+    const scheduleHomeRefresh = () => {
+      if (currentRoot !== root) return;
+      if (typeof document !== 'undefined' && document.querySelector?.('dialog[open]')) return;
+      if (homeCloudTimer) clearTimeout(homeCloudTimer);
+      homeCloudTimer = setTimeout(() => {
+        homeCloudTimer = null;
+        if (currentRoot !== root) return;
+        void renderHomeContent(root);
+      }, 0);
+    };
+
     unsubscribeHomeCloud = onCloudRoomUpdate((roomState) => {
       if (currentRoot !== root) return;
       if (typeof document !== 'undefined' && document.querySelector?.('dialog[open]')) return;
@@ -689,25 +732,33 @@ export const homeView: View = {
         if (nextFp && nextFp === lastHomeDataFp) return;
         lastHomeDataFp = nextFp;
       }
-      if (homeCloudTimer) clearTimeout(homeCloudTimer);
-      homeCloudTimer = setTimeout(() => {
-        homeCloudTimer = null;
-        if (currentRoot !== root) return;
-        void renderHomeContent(root);
-      }, 0);
+      scheduleHomeRefresh();
     });
+
+    let lastCloudState = getCloudConnectionStatus().state;
+    let firstStatusEmission = true;
+    unsubscribeHomeStatus = onCloudStatusChange((st) => {
+      if (firstStatusEmission) {
+        firstStatusEmission = false;
+        return;
+      }
+      if (st.state === lastCloudState) return;
+      lastCloudState = st.state;
+      scheduleHomeRefresh();
+    });
+
+    if (typeof window !== 'undefined') {
+      homeOnlineListener = scheduleHomeRefresh;
+      homeOfflineListener = scheduleHomeRefresh;
+      window.addEventListener('online', homeOnlineListener);
+      window.addEventListener('offline', homeOfflineListener);
+    }
+
     await renderHomeContent(root, seq);
   },
   destroy() {
     currentRoot = null;
     homeRenderSeq++;
-    if (homeCloudTimer) {
-      clearTimeout(homeCloudTimer);
-      homeCloudTimer = null;
-    }
-    if (unsubscribeHomeCloud) {
-      unsubscribeHomeCloud();
-      unsubscribeHomeCloud = null;
-    }
+    cleanupHomeSubscriptions();
   },
 };

@@ -93,9 +93,15 @@ test.describe('Ergonomía diferenciada Móvil (<900px) vs PC (>=900px)', () => {
     await page.getByRole('button', { name: 'Cargar catálogo de ejemplo' }).click();
     await expect(page).toHaveURL(/#\/catalogo/);
 
-    // Activar Modo Supervisor en móvil + Mostrar teórico/ideal para verificar Inventario Ideal en #pcard a 320px
+    // Activar Modo Supervisor en móvil con PIN + Mostrar teórico/ideal para verificar Inventario Ideal en #pcard a 320px
     await page.goto('/#/ajustes');
-    await page.getByTestId('settings-supervisor-mode-toggle').check();
+    await page.getByTestId('settings-supervisor-mode-toggle').click();
+    await expect(page.locator('dialog[open] .pin-keypad')).toBeVisible();
+    const overflowPinModal = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
+    expect(overflowPinModal, 'Overflow con modal PIN abierto en 320x533').toBeLessThanOrEqual(1);
+    await page.locator('dialog[open] .pin-hidden-input').fill('1234');
+    await expect(page.locator('dialog[open]')).toHaveCount(0);
+    await expect(page.getByTestId('settings-supervisor-mode-toggle')).toBeChecked();
     await page.getByRole('checkbox', { name: /Mostrar teórico/i }).check();
 
     await page.goto('/#/');

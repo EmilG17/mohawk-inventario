@@ -1,8 +1,8 @@
 import { L } from '../i18n/i18n';
-import { deleteProduct, getProduct, putProduct, type Product } from '../db/db';
-import { getIdealLevels, setIdealLevels } from '../db/movements';
+import { deleteProduct, getDB, getProduct, putProduct, type Product } from '../db/db';
+import { getIdealLevels, setIdealLevels, updateMovements } from '../db/movements';
 import { resolveDescription } from '../lookup/lookup';
-import { displayBarcode, parseNumber } from '../io/normalize';
+import { displayBarcode, normalizeBarcode, parseNumber } from '../io/normalize';
 import { generateInternalCode, renderCode128Svg } from '../barcode/code128';
 import { downloadPng, downloadSvg, printLabel } from '../barcode/barcodeExport';
 import {
@@ -200,13 +200,19 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
               : `${btProfile.labelWidthIn}in ${btProfile.labelHeightIn}in portrait`;
 
         const isIntermec = pageSize.includes('3.25') || pageSize.includes('3.97');
-        const svgMarkup = renderCode128Svg(txt, txt, {
-          height: isIntermec ? btProfile.barHeightPx : 34,
-          fontSize: 10,
-          width: isIntermec ? btProfile.moduleWidthPx : 2,
-          includeText: isIntermec ? btProfile.includeHumanReadable : true,
-          margin: 2,
-        });
+        let svgMarkup = '';
+        try {
+          svgMarkup = renderCode128Svg(txt, txt, {
+            height: isIntermec ? btProfile.barHeightPx : 34,
+            fontSize: 10,
+            width: isIntermec ? btProfile.moduleWidthPx : 2,
+            includeText: isIntermec ? btProfile.includeHumanReadable : true,
+            margin: 2,
+          });
+        } catch {
+          toast(L('El código contiene caracteres no compatibles con Code128.', 'Barcode contains characters incompatible with Code128.'), 'error');
+          return;
+        }
 
         const withFooter =
           includeFooterCheck.checked ||
@@ -232,8 +238,12 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       type: 'button',
       onclick: () => {
         const c = barcodeInput.value.trim() || p.barcode;
-        downloadSvg(getCurrentSvg(), `${c}_etiqueta`);
-        toast(L('SVG descargado', 'SVG downloaded'), 'ok');
+        try {
+          downloadSvg(getCurrentSvg(), `${c}_etiqueta`);
+          toast(L('SVG descargado', 'SVG downloaded'), 'ok');
+        } catch {
+          toast(L('Código incompatible con Code128', 'Barcode incompatible with Code128'), 'error');
+        }
       },
     }, icon('download'), L('Descargar SVG', 'Download SVG'));
 
@@ -242,8 +252,12 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       type: 'button',
       onclick: async () => {
         const c = barcodeInput.value.trim() || p.barcode;
-        await downloadPng(getCurrentSvg(), `${c}_etiqueta`, 3);
-        toast(L('PNG (300 DPI) descargado', 'PNG (300 DPI) downloaded'), 'ok');
+        try {
+          await downloadPng(getCurrentSvg(), `${c}_etiqueta`, 3);
+          toast(L('PNG (300 DPI) descargado', 'PNG (300 DPI) downloaded'), 'ok');
+        } catch {
+          toast(L('Código incompatible con Code128', 'Barcode incompatible with Code128'), 'error');
+        }
       },
     }, icon('download'), L('Descargar PNG', 'Download PNG'));
 
@@ -328,7 +342,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
       type: 'button',
       title: L('Cargar archivo BarTender (.btw) para calibrar etiqueta', 'Load BarTender (.btw) file to calibrate label'),
       onclick: () => btUploadInput.click(),
-    }, icon('upload'), L('Cargar .btw', 'Load .btw'), btUploadInput);
+    }, icon('upload'), L('Cargar .btw', 'Load .btw'));
 
     const body = h('div', { class: 'form' },
       readOnly
@@ -346,7 +360,7 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
         h('div', { class: 'row' }, barcodeInput, readOnly ? null : genBtn),
       ),
       barcodePreview,
-      h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn, btUploadBtn),
+      h('div', { class: 'barcode-actions' }, printSingleBtn, dlSvgBtn, dlPngBtn, addQueueBtn, sheetBtn, btUploadBtn, btUploadInput),
       h(
         'label',
         { class: 'check-inline muted small', style: 'margin: 2px 0 2px 0;' },
@@ -396,34 +410,83 @@ export function editProductDialog(code: string, initial?: Product): Promise<Edit
               label: L('Guardar', 'Save'), kind: 'primary',
               onClick: async () => {
                 const rawBarcodeInput = barcodeInput.value.trim();
-                const newBarcode =
-                  rawBarcodeInput && rawBarcodeInput === initialCodeVal && (code || p.barcode)
-                    ? (code || p.barcode)
-                    : (rawBarcodeInput || code || p.barcode);
-                if (!newBarcode) {
+                const oldBarcode = code || p.barcode;
+                const candidateBarcode =
+                  rawBarcodeInput && rawBarcodeInput === initialCodeVal && oldBarcode
+                    ? oldBarcode
+                    : (rawBarcodeInput.startsWith('SKU:')
+                        ? rawBarcodeInput
+                        : normalizeBarcode(rawBarcodeInput) || rawBarcodeInput || oldBarcode);
+                if (!candidateBarcode) {
                   toast(L('El producto debe tener un código de barras', 'Product must have a barcode'), 'error');
                   return true;
                 }
+                if (oldBarcode && candidateBarcode !== oldBarcode) {
+                  const collision = await getProduct(candidateBarcode);
+                  if (collision) {
+                    const overwrite = await confirmDialog(
+                      L('Código ya existente', 'Barcode already exists'),
+                      L(
+                        `Ya existe otro producto con el código "${displayBarcode(candidateBarcode)}" (${collision.description || collision.sku || 'Sin descripción'}). ¿Reemplazarlo y reasignar lecturas?`,
+                        `Another product already uses barcode "${displayBarcode(candidateBarcode)}" (${collision.description || collision.sku || 'No description'}). Replace it and reassign scans?`,
+                      ),
+                      L('Reemplazar', 'Replace'),
+                      true,
+                    );
+                    if (!overwrite) return true;
+                  }
+                }
+
                 const desc = f.description.value.trim();
                 const parsedExpected = parseNumber(f.expected.value);
                 const parsedCost = parseNumber(f.cost.value);
                 const next: Product = {
                   ...p,
-                  barcode: newBarcode,
+                  barcode: candidateBarcode,
                   description: desc,
                   sku: f.sku.value.trim(),
                   unit: f.unit.value.trim(),
                   expectedQty: parsedExpected,
                   unitCost: parsedCost,
+                  uncataloged: desc ? false : Boolean(p.uncataloged),
                   updatedAt: Date.now(),
                 };
                 if (parsedExpected === undefined) delete next.expectedQty;
                 if (parsedCost === undefined) delete next.unitCost;
-                if (desc !== p.description) next.source = desc ? 'manual' : 'pendiente';
-                else if (!desc) next.source = 'pendiente';
+                if (desc) {
+                  next.uncataloged = false;
+                  if (desc !== p.description || next.source === 'pendiente') {
+                    next.source = p.source === 'catalogo' && desc === p.description ? 'catalogo' : 'manual';
+                  }
+                } else {
+                  next.source = 'pendiente';
+                  next.uncataloged = true;
+                }
 
-                if (code && newBarcode !== code) {
-                  await deleteProduct(code);
+                if (oldBarcode && candidateBarcode !== oldBarcode) {
+                  const db = await getDB();
+                  const tx = db.transaction('counts', 'readwrite');
+                  const allCounts = await tx.store.getAll();
+                  for (const c of allCounts) {
+                    if (c.barcode === oldBarcode) {
+                      await tx.store.put({ ...c, barcode: candidateBarcode });
+                    }
+                  }
+                  await tx.done;
+
+                  await updateMovements((movs) => {
+                    let changed = false;
+                    const updatedMovs = movs.map((m) => {
+                      if (m.barcode === oldBarcode) {
+                        changed = true;
+                        return { ...m, barcode: candidateBarcode };
+                      }
+                      return m;
+                    });
+                    return changed ? updatedMovs : movs;
+                  });
+
+                  await deleteProduct(oldBarcode);
                 }
                 await putProduct(next);
                 const idealPatch: Record<string, number> = {};

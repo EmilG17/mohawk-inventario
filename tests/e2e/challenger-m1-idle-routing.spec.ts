@@ -50,6 +50,17 @@ test.describe('Challenger M1: UI State Consistency, Routing & Idle Hardware Wedg
 
     // 1.4 Route /equipo
     await page.goto('/#/equipo');
+    const isDesktop = (page.viewportSize()?.width ?? 0) >= 900;
+    if (!isDesktop) {
+      await expect(page.locator('.session-list')).toBeHidden();
+      const supToggle = page.getByTestId('team-supervisor-toggle');
+      await expect(supToggle).toBeVisible();
+      await supToggle.click();
+      const pinInput = page.locator('.pin-hidden-input');
+      if (await pinInput.isVisible({ timeout: 600 }).catch(() => false)) {
+        await pinInput.fill('1234');
+      }
+    }
     await expect(page.getByRole('heading', { level: 2, name: 'Sin sesión activa' })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Iniciar nueva sesión' }).first()).toBeVisible();
     await expect(page.locator('.session-list')).toBeVisible();

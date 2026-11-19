@@ -25,6 +25,11 @@ export function isSupervisorModeEnabled(): boolean {
   return Boolean(s.supervisorMode);
 }
 
+/** Indica si el dispositivo está explicitamente configurado como Cliente-Técnico restringido. */
+export function isStrictTechnicianClient(): boolean {
+  return settingsSync().userRole === 'technician';
+}
+
 /** Indica si el usuario actual opera como Cliente-Técnico protegido. */
 export function isTechnicianRole(): boolean {
   return !isSupervisorModeEnabled();

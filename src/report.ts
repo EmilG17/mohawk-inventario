@@ -97,6 +97,7 @@ export function computeIdealStatus(params: {
   maxQty?: number;
 }): IdealStatus {
   const { currentStock, idealQty, minQty, maxQty } = params;
+  if (!Number.isFinite(currentStock) || !Number.isFinite(idealQty)) return 'optimal';
   if (idealQty <= 0 && currentStock === 0) return 'optimal';
 
   // 1. Critical: stockout o bajo umbral mínimo de seguridad (<= minQty o <= 25% de ideal)
@@ -121,6 +122,47 @@ export function computeIdealStatus(params: {
 }
 
 /**
+ * Crea un resolvedor de código canónico de barras usando los mismos alias de catálogo
+ * (ceros iniciales, SKU directo, prefijo SKU:) que utiliza `buildReport`.
+ */
+export function createCanonicalBarcodeResolver(products: Product[]): (raw: string) => string {
+  const aliasToCanonical = new Map<string, string>();
+  const sortedProds = [...products].sort((a, b) => Number(Boolean(a.uncataloged)) - Number(Boolean(b.uncataloged)));
+
+  for (const p of sortedProds) {
+    if (!p?.barcode) continue;
+    aliasToCanonical.set(p.barcode, p.barcode);
+    aliasToCanonical.set(p.barcode.toUpperCase(), p.barcode);
+    const noZeros = p.barcode.replace(/^0+/, '');
+    if (noZeros && !aliasToCanonical.has(noZeros)) {
+      aliasToCanonical.set(noZeros, p.barcode);
+    }
+    if (p.sku) {
+      const upperSku = p.sku.trim().toUpperCase();
+      if (upperSku) {
+        if (!aliasToCanonical.has(upperSku)) aliasToCanonical.set(upperSku, p.barcode);
+        if (!aliasToCanonical.has(`SKU:${upperSku}`)) aliasToCanonical.set(`SKU:${upperSku}`, p.barcode);
+      }
+    }
+  }
+
+  return (raw: string): string => {
+    const clean = (raw || '').trim();
+    if (!clean) return raw;
+    if (aliasToCanonical.has(clean)) return aliasToCanonical.get(clean)!;
+    const upper = clean.toUpperCase();
+    if (aliasToCanonical.has(upper)) return aliasToCanonical.get(upper)!;
+    const noZeros = clean.replace(/^0+/, '');
+    if (noZeros && aliasToCanonical.has(noZeros)) return aliasToCanonical.get(noZeros)!;
+    if (upper.startsWith('SKU:')) {
+      const bare = upper.slice(4).trim();
+      if (aliasToCanonical.has(bare)) return aliasToCanonical.get(bare)!;
+    }
+    return clean;
+  };
+}
+
+/**
  * Cruza catálogo, conteos físicos y opcionalmente movimientos y niveles ideales.
  * @param optionsOrIncludeNotCounted booleano para compatibilidad previa o BuildReportOptions
  */
@@ -139,44 +181,15 @@ export function buildReport(
   const idealLevels = opts.idealLevels;
 
   const pMap = new Map<string, Product>();
-  const aliasToCanonical = new Map<string, string>();
-
-  // Registrar primero productos catalogados oficiales para que tengan prioridad de conciliación
   const sortedProds = [...products].sort((a, b) => Number(Boolean(a.uncataloged)) - Number(Boolean(b.uncataloged)));
   for (const p of sortedProds) {
-    pMap.set(p.barcode, p);
-    aliasToCanonical.set(p.barcode, p.barcode);
-    aliasToCanonical.set(p.barcode.toUpperCase(), p.barcode);
-    const noZeros = p.barcode.replace(/^0+/, '');
-    if (noZeros && !aliasToCanonical.has(noZeros)) {
-      aliasToCanonical.set(noZeros, p.barcode);
-    }
-    if (p.sku) {
-      const upperSku = p.sku.trim().toUpperCase();
-      if (upperSku) {
-        if (!aliasToCanonical.has(upperSku)) aliasToCanonical.set(upperSku, p.barcode);
-        if (!aliasToCanonical.has(`SKU:${upperSku}`)) aliasToCanonical.set(`SKU:${upperSku}`, p.barcode);
-      }
-    }
+    if (p?.barcode) pMap.set(p.barcode, p);
   }
-
-  const resolveCanonicalCode = (raw: string): string => {
-    const clean = (raw || '').trim();
-    if (!clean) return raw;
-    if (aliasToCanonical.has(clean)) return aliasToCanonical.get(clean)!;
-    const upper = clean.toUpperCase();
-    if (aliasToCanonical.has(upper)) return aliasToCanonical.get(upper)!;
-    const noZeros = clean.replace(/^0+/, '');
-    if (noZeros && aliasToCanonical.has(noZeros)) return aliasToCanonical.get(noZeros)!;
-    if (upper.startsWith('SKU:')) {
-      const bare = upper.slice(4).trim();
-      if (aliasToCanonical.has(bare)) return aliasToCanonical.get(bare)!;
-    }
-    return clean;
-  };
+  const resolveCanonicalCode = createCanonicalBarcodeResolver(sortedProds);
 
   const byCode = new Map<string, { qty: number; counters: Set<string>; scans: number }>();
   for (const c of counts) {
+    if (!c || typeof c.qty !== 'number' || !Number.isFinite(c.qty)) continue;
     const code = resolveCanonicalCode(c.barcode);
     const a = byCode.get(code) ?? { qty: 0, counters: new Set<string>(), scans: 0 };
     a.qty += c.qty;
@@ -359,11 +372,12 @@ export function computeMovementsKpis(
 ): MovementsKpiSummary {
   const costMap = new Map<string, number>();
   for (const r of rows) {
-    if (r.sku && r.unitCost !== undefined) {
-      costMap.set(r.sku, r.unitCost);
+    if (r.unitCost === undefined || !Number.isFinite(r.unitCost)) continue;
+    if (r.sku?.trim()) {
+      costMap.set(r.sku.trim().toUpperCase(), r.unitCost);
     }
-    if (r.barcode && r.unitCost !== undefined) {
-      costMap.set(r.barcode, r.unitCost);
+    if (r.barcode?.trim()) {
+      costMap.set(r.barcode.trim().toUpperCase(), r.unitCost);
     }
   }
 
@@ -375,7 +389,9 @@ export function computeMovementsKpis(
   let totalValueOut = 0;
 
   for (const m of movements) {
-    const cost = m.cost ?? costMap.get(m.sku) ?? (m.barcode ? costMap.get(m.barcode) : undefined) ?? 0;
+    const skuKey = (m.sku || '').trim().toUpperCase();
+    const bcKey = (m.barcode || '').trim().toUpperCase();
+    const cost = m.cost ?? costMap.get(skuKey) ?? (bcKey ? costMap.get(bcKey) : undefined) ?? 0;
     if (m.type === 'IN') {
       totalEntriesCount++;
       totalUnitsIn += m.quantity;

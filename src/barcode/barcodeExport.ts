@@ -148,6 +148,11 @@ export function printLabel(
     document.body.appendChild(printRoot);
   }
 
+  const cleanupSinglePrint = () => {
+    const el = document.getElementById('single-print-root');
+    if (el) el.innerHTML = '';
+  };
+
   const usePrecut3in1 =
     options?.precut3in1 === true ||
     (options?.precut3in1 !== false && !options?.customClass && !options?.pageSize);
@@ -169,6 +174,9 @@ export function printLabel(
         <div class="sheet-label composite-3in1-label">${precutHtml}</div>
       </div>
     `;
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('afterprint', cleanupSinglePrint, { once: true });
+    }
     window.print();
     return;
   }
@@ -199,6 +207,10 @@ export function printLabel(
       ${footerHtml}
     </div>
   `;
+
+  if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+    window.addEventListener('afterprint', cleanupSinglePrint, { once: true });
+  }
 
   // Disparar ventana nativa de impresión
   window.print();

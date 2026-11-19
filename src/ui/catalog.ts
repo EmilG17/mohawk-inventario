@@ -11,6 +11,7 @@ import {
 import { importCatalogFile, parseAppFile, reconcileCatalogProducts } from '../io/mergeCounts';
 import { displayBarcode, parseNumber } from '../io/normalize';
 import { processPending } from '../lookup/pendingQueue';
+import { loadSettings } from '../settings';
 import { onCloudRoomUpdate, syncCatalogWithDb, triggerBackgroundSync } from '../sync/cloudSync';
 import { computeRoomDataSig } from './cloudSignal';
 import {
@@ -19,13 +20,14 @@ import {
 import { isMobileCatalogReadOnly } from './catalogMode';
 import { editProductDialog, sourceBadge } from './productDialog';
 import { openBarcodeSheetDialog } from './barcodeSheet';
-import { addToPrintQueue, getPrintQueueTotalCount } from '../barcode/printQueue';
+import { addToPrintQueue, getPrintQueueTotalCount, subscribePrintQueue } from '../barcode/printQueue';
 import type { View } from './router';
 import { navigate } from './router';
 
 let filter: 'todos' | 'sin_desc' | 'no_cat' = 'todos';
 let query = '';
 let unsubscribeCatalogCloud: (() => void) | null = null;
+let unsubscribeCatalogQueue: (() => void) | null = null;
 let unsubscribeCatalogResize: (() => void) | null = null;
 let catalogMounted = false;
 let catalogRenderSeq = 0;
@@ -84,8 +86,12 @@ export async function importCatalogFlow(onCompleted?: () => void): Promise<void>
       if (replace) {
         const keep = (await allProducts()).filter((p) => p.uncataloged);
         n = await importCatalogFile({ ...f, products: stampedProducts }, 'replace');
-        if (keep.length) await bulkPutProducts(keep, 'merge');
-        await reconcileCatalogProducts(stampedProducts);
+        const stampedSet = new Set(stampedProducts.map((p) => p.barcode));
+        const uncollidedKeep = keep.filter((k) => !stampedSet.has(k.barcode));
+        if (uncollidedKeep.length) {
+          await bulkPutProducts(uncollidedKeep, 'merge');
+          await reconcileCatalogProducts(stampedProducts);
+        }
       } else {
         const rec = await reconcileCatalogProducts(stampedProducts);
         n = rec.added + rec.updated;
@@ -113,14 +119,14 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
   const body = h('div', { class: 'form' });
 
   const render = () => {
-    const headers = (rows[headerRow] ?? []).map((x, i) => String(x || `Columna ${i + 1}`));
+    const headers = (rows[headerRow] ?? []).map((x, i) => String(x || `${L('Columna', 'Column')} ${i + 1}`));
     const fieldSel = (f: Field) =>
       h('label', { class: 'field' }, h('span', null, FIELD_LABELS[f], f === 'barcode' || f === 'description' ? ' *' : ''),
         h('select', {
           class: 'input',
           onchange: (e: Event) => { mapping[f] = Number((e.target as HTMLSelectElement).value); render(); },
         },
-        h('option', { value: '-1', selected: (mapping[f] ?? -1) < 0 }, '— No usar —'),
+        h('option', { value: '-1', selected: (mapping[f] ?? -1) < 0 }, L('— No usar —', '— Skip —')),
         headers.map((t, i) => h('option', { value: String(i), selected: (mapping[f] ?? -1) === i }, t))));
     let preview: Product[] = [];
     let warnings: string[] = [];
@@ -137,7 +143,7 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
     clear(body,
       h('p', { class: 'muted small' }, fileName),
       wb.sheetNames.length > 1
-        ? h('label', { class: 'field' }, h('span', null, 'Hoja'),
+        ? h('label', { class: 'field' }, h('span', null, L('Hoja', 'Sheet')),
           h('select', {
             class: 'input',
             onchange: (e: Event) => {
@@ -149,7 +155,7 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
             },
           }, wb.sheetNames.map((s) => h('option', { value: s, selected: s === sheet }, s))))
         : null,
-      h('label', { class: 'field' }, h('span', null, 'Fila de encabezados'),
+      h('label', { class: 'field' }, h('span', null, L('Fila de encabezados', 'Header row')),
         h('input', {
           class: 'input', type: 'number', min: 1, max: Math.max(1, rows.length), value: String(headerRow + 1),
           onchange: (e: Event) => {
@@ -159,10 +165,10 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
           },
         })),
       h('div', { class: 'grid2' }, (Object.keys(FIELD_LABELS) as Field[]).map(fieldSel)),
-      error ? h('p', { class: 'error-text' }, error) : h('p', null, h('b', null, `${preview.length} productos`), ' listos para importar', skipped ? ` · ${skipped} filas vacías omitidas` : ''),
+      error ? h('p', { class: 'error-text' }, error) : h('p', null, h('b', null, `${preview.length} ${L('productos', 'products')}`), ` ${L('listos para importar', 'ready to import')}`, skipped ? ` · ${skipped} ${L('filas vacías omitidas', 'empty rows skipped')}` : ''),
       preview.length
         ? h('div', { class: 'table-wrap' }, h('table', { class: 'tbl' },
-          h('thead', null, h('tr', null, h('th', null, 'Código'), h('th', null, 'Descripción'), h('th', null, 'Inventario Ideal'))),
+          h('thead', null, h('tr', null, h('th', null, L('Código', 'Barcode')), h('th', null, L('Descripción', 'Description')), h('th', null, L('Inventario Ideal', 'Ideal Stock')))),
           h('tbody', null, preview.slice(0, 5).map((p) => h('tr', null,
             h('td', null, p.barcode.startsWith('SKU:') ? p.sku : displayBarcode(p.barcode)),
             h('td', null, p.description || '—'),
@@ -170,38 +176,42 @@ function mappingDialog(wb: Workbook, fileName: string, onCompleted?: () => void)
         ))
         : null,
       warnings.length
-        ? h('details', { class: 'warn-box' }, h('summary', null, `${warnings.length} advertencia(s)`),
+        ? h('details', { class: 'warn-box' }, h('summary', null, `${warnings.length} ${L('advertencia(s)', 'warning(s)')}`),
           h('ul', null, warnings.slice(0, 50).map((w) => h('li', { class: 'small' }, w))))
         : null,
       h('div', { class: 'radio-row' },
-        h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'replace', onchange: () => (mode = 'replace') }), ' Reemplazar catálogo'),
-        h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'merge', onchange: () => (mode = 'merge') }), ' Combinar / conciliar'),
+        h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'replace', onchange: () => (mode = 'replace') }), ` ${L('Reemplazar catálogo', 'Replace catalog')}`),
+        h('label', null, h('input', { type: 'radio', name: 'mode', checked: mode === 'merge', onchange: () => (mode = 'merge') }), ` ${L('Combinar / conciliar', 'Merge / reconcile')}`),
       ),
-      h('p', { class: 'muted small' }, 'Concilia automáticamente los productos escaneados previamente por código de barras o SKU.'),
+      h('p', { class: 'muted small' }, L('Concilia automáticamente los productos escaneados previamente por código de barras o SKU.', 'Automatically reconciles previously scanned items by barcode or SKU.')),
     );
   };
   render();
 
-  openDialog('Importar catálogo', body, [
-    { label: 'Cancelar' },
+  openDialog(L('Importar catálogo', 'Import catalog'), body, [
+    { label: L('Cancelar', 'Cancel') },
     {
-      label: 'Importar y Conciliar', kind: 'primary',
+      label: L('Importar y Conciliar', 'Import & Reconcile'), kind: 'primary',
       onClick: async () => {
         try {
           const r = rowsToProducts(rows, headerRow, mapping);
-          if (!r.products.length) { toast('No hay productos para importar', 'warn'); return true; }
+          if (!r.products.length) { toast(L('No hay productos para importar', 'No products to import'), 'warn'); return true; }
           const now = Date.now();
           const stampedProducts = r.products.map((p) => ({ ...p, updatedAt: now }));
           if (mode === 'replace') {
             const keep = (await allProducts()).filter((p) => p.uncataloged);
+            const stampedSet = new Set(stampedProducts.map((p) => p.barcode));
+            const uncollidedKeep = keep.filter((k) => !stampedSet.has(k.barcode));
             await bulkPutProducts(stampedProducts, 'replace');
-            if (keep.length) await bulkPutProducts(keep, 'merge');
-            await reconcileCatalogProducts(stampedProducts);
+            if (uncollidedKeep.length) {
+              await bulkPutProducts(uncollidedKeep, 'merge');
+              await reconcileCatalogProducts(stampedProducts);
+            }
           } else {
             await reconcileCatalogProducts(stampedProducts);
           }
           triggerBackgroundSync();
-          toast(`${stampedProducts.length} productos importados y conciliados`, 'ok');
+          toast(L(`${stampedProducts.length} productos importados y conciliados`, `${stampedProducts.length} products imported and reconciled`), 'ok');
           void processPending();
           if (onCompleted) onCompleted();
           else navigate('/catalogo');
@@ -631,6 +641,8 @@ export const catalogView: View = {
     catalogMounted = true;
     const seq = ++catalogRenderSeq;
     lastCatalogDataFp = '';
+    await loadSettings();
+    if (!catalogMounted || seq !== catalogRenderSeq) return;
     const readOnlyMobile = isMobileCatalogReadOnly();
     let [products, idealLevels] = await Promise.all([allProducts(), getIdealLevels()]);
     if (!catalogMounted || seq !== catalogRenderSeq) return;
@@ -638,6 +650,20 @@ export const catalogView: View = {
     const list = h('ul', { class: 'plist' });
     const countEl = h('span', { class: 'muted small' });
     const queueBadgeEl = h('span', { class: 'badge info queue-count-badge', hidden: true });
+    const noDescChip = h('button', {
+      class: `chip ${filter === 'sin_desc' ? 'active' : ''}`,
+      onclick: () => { filter = 'sin_desc'; navigate('/catalogo'); },
+    });
+    const lookupPendingBtn = h('button', {
+      class: 'btn sm',
+      hidden: readOnlyMobile,
+      onclick: async () => {
+        toast(L('Buscando descripciones…', 'Looking up descriptions…'));
+        const n = await processPending();
+        toast(L(`${n} descripción(es) encontradas`, `${n} description(s) found`), n ? 'ok' : 'warn');
+        await refreshData();
+      },
+    }, icon('globe'));
     const updateQueueBadge = () => {
       const total = getPrintQueueTotalCount();
       queueBadgeEl.hidden = total <= 0;
@@ -671,6 +697,12 @@ export const catalogView: View = {
 
     const draw = () => {
       updateQueueBadge();
+      const noDescCount = products.filter((p) => !p.description).length;
+      noDescChip.textContent = `${L('Sin descripción', 'No description')} (${noDescCount})`;
+      noDescChip.className = `chip ${filter === 'sin_desc' ? 'active' : ''}`;
+      lookupPendingBtn.hidden = readOnlyMobile || noDescCount === 0;
+      lookupPendingBtn.replaceChildren(icon('globe'), `${L('Buscar en internet', 'Look up online')} (${noDescCount})`);
+
       const items = visibleProducts()
         .sort((a, b) => (a.description || '~').localeCompare(b.description || '~'));
 
@@ -786,9 +818,11 @@ export const catalogView: View = {
                 selected.delete(p.barcode);
                 await refreshData();
               } else if (res) {
-                Object.assign(p, res);
-                idealLevels = await getIdealLevels();
-                draw();
+                if (res.barcode !== p.barcode && selected.has(p.barcode)) {
+                  selected.delete(p.barcode);
+                  selected.add(res.barcode);
+                }
+                await refreshData(false);
               }
             },
           },
@@ -819,7 +853,6 @@ export const catalogView: View = {
 
     const chip = (id: typeof filter, label: string) =>
       h('button', { class: `chip ${filter === id ? 'active' : ''}`, onclick: () => { filter = id; navigate('/catalogo'); } }, label);
-    const noDesc = products.filter((p) => !p.description).length;
 
     const selectToolbar = h('div', { class: 'select-toolbar' },
       h('label', { class: 'check-inline' }, selectAllCheck, selectAllLabel),
@@ -890,17 +923,7 @@ export const catalogView: View = {
                   openBarcodeSheetDialog(visible.length ? visible : products);
                 },
               }, icon('scan'), L('Rótulos y hojas', 'Labels & sheets')),
-              !readOnlyMobile && noDesc > 0
-                ? h('button', {
-                    class: 'btn sm',
-                    onclick: async () => {
-                      toast(L('Buscando descripciones…', 'Looking up descriptions…'));
-                      const n = await processPending();
-                      toast(L(`${n} descripción(es) encontradas`, `${n} description(s) found`), n ? 'ok' : 'warn');
-                      await refreshData();
-                    },
-                  }, icon('globe'), `${L('Buscar en internet', 'Look up online')} (${noDesc})`)
-                : null,
+              !readOnlyMobile ? lookupPendingBtn : null,
               h('button', {
                 class: 'btn ghost sm',
                 'data-testid': 'catalog-settings-link',
@@ -916,7 +939,7 @@ export const catalogView: View = {
             class: 'input', type: 'search', 'data-testid': 'catalog-search', placeholder: L('Buscar por descripción, código o No. de parte', 'Search by description, barcode, or Part #'), value: query,
             oninput: (e: Event) => { query = (e.target as HTMLInputElement).value; draw(); },
           }),
-          h('div', { class: 'chips' }, chip('todos', L('Todos', 'All')), chip('sin_desc', `${L('Sin descripción', 'No description')} (${noDesc})`), chip('no_cat', L('No catalogados', 'Uncataloged'))),
+          h('div', { class: 'chips' }, chip('todos', L('Todos', 'All')), noDescChip, chip('no_cat', L('No catalogados', 'Uncataloged'))),
         ),
         selectToolbar,
         h('div', { class: 'plist-table-head', 'aria-hidden': 'true' },
@@ -929,6 +952,13 @@ export const catalogView: View = {
       ),
     );
     draw();
+
+    if (unsubscribeCatalogQueue) unsubscribeCatalogQueue();
+    unsubscribeCatalogQueue = subscribePrintQueue(() => {
+      if (catalogMounted && seq === catalogRenderSeq) {
+        updateQueueBadge();
+      }
+    });
 
     if (unsubscribeCatalogCloud) unsubscribeCatalogCloud();
     if (catalogCloudTimer) {
@@ -978,6 +1008,10 @@ export const catalogView: View = {
     if (unsubscribeCatalogCloud) {
       unsubscribeCatalogCloud();
       unsubscribeCatalogCloud = null;
+    }
+    if (unsubscribeCatalogQueue) {
+      unsubscribeCatalogQueue();
+      unsubscribeCatalogQueue = null;
     }
     if (unsubscribeCatalogResize) {
       unsubscribeCatalogResize();

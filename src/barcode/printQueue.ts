@@ -19,12 +19,19 @@ function notify(): void {
   }
 }
 
+function cloneItem(item: PrintQueueItem): PrintQueueItem {
+  return {
+    product: { ...item.product },
+    quantity: item.quantity,
+  };
+}
+
 /**
  * Carga los elementos de la cola de impresión desde la memoria o localStorage.
  */
 export function getPrintQueue(): PrintQueueItem[] {
   if (memoryQueue !== null) {
-    return [...memoryQueue];
+    return memoryQueue.map(cloneItem);
   }
 
   if (typeof localStorage !== 'undefined') {
@@ -36,10 +43,10 @@ export function getPrintQueue(): PrintQueueItem[] {
           memoryQueue = parsed
             .filter((item) => item && item.product && typeof item.product.barcode === 'string')
             .map((item) => ({
-              product: item.product,
+              product: { ...item.product },
               quantity: Math.max(1, Math.floor(Number(item.quantity) || 1)),
             }));
-          return [...memoryQueue];
+          return memoryQueue.map(cloneItem);
         }
       }
     } catch {
@@ -48,7 +55,7 @@ export function getPrintQueue(): PrintQueueItem[] {
   }
 
   memoryQueue = [];
-  return [...memoryQueue];
+  return [];
 }
 
 /**
@@ -58,7 +65,7 @@ export function savePrintQueue(items: PrintQueueItem[]): void {
   const valid = items
     .filter((item) => item && item.product && item.quantity > 0)
     .map((item) => ({
-      product: item.product,
+      product: { ...item.product },
       quantity: Math.max(1, Math.floor(item.quantity)),
     }));
 

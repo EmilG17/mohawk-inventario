@@ -275,6 +275,7 @@ const {
 });
 
 vi.mock('../../src/db/db', () => ({
+  getDeviceId: vi.fn(async () => 'test-device'),
   allProducts: vi.fn(async () => [
     { barcode: '7501055312345', sku: 'SKU-100', description: 'Tornillo hexagonal 1/4', source: 'catalogo', unit: 'PZA', updatedAt: Date.now() },
   ]),

@@ -2,6 +2,8 @@ import * as XLSX from 'xlsx';
 import {
   allProducts,
   bulkPutProducts,
+  canonicalCountId,
+  clearProductTombstones,
   countsForSession,
   createSession,
   getActiveSession,
@@ -11,7 +13,8 @@ import {
   type Product,
   type Session,
 } from '../db/db';
-import { getAllMovements, saveAllMovements } from '../db/movements';
+import { updateMovements } from '../db/movements';
+import { mergeCatalogProduct } from '../sync/roomMerge';
 import { APP_ID, type CatalogFile, type CountFile } from './exportResults';
 import { normalizeBarcode, parseNumber } from './normalize';
 
@@ -51,6 +54,13 @@ function normKey(s: string): string {
     .normalize('NFD')
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]/g, '');
+}
+
+function sanitizeIdToken(s: string): string {
+  return String(s || '')
+    .replace(/[.#$/[\]\s]+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_+|_+$/g, '');
 }
 
 function getRowField(row: Record<string, any>, aliases: string[]): any {
@@ -196,7 +206,7 @@ export async function parseTechnicianReportBuffer(
         });
       }
 
-      const idSeed = `xlsx_${normKey(fileName)}_${idx}_${barcode}_${normKey(counter)}_${qty}_${normKey(dateStr)}`;
+      const idSeed = `xlsx_${sanitizeIdToken(normKey(fileName))}_${idx}_${sanitizeIdToken(barcode)}_${sanitizeIdToken(normKey(counter))}_${sanitizeIdToken(String(qty))}_${sanitizeIdToken(normKey(dateStr))}`;
       counts.push({
         id: idSeed,
         sessionId: 'imported',
@@ -229,7 +239,7 @@ export async function parseTechnicianReportBuffer(
       const barcode = rawCode ? normalizeBarcode(rawCode) : rawSku ? `SKU:${rawSku.toUpperCase()}` : '';
       if (!barcode || !qty || qty <= 0) return;
 
-      const idSeed = `sheet_${normKey(fileName)}_${idx}_${barcode}_${normKey(counter)}_${qty}`;
+      const idSeed = `sheet_${sanitizeIdToken(normKey(fileName))}_${idx}_${sanitizeIdToken(barcode)}_${sanitizeIdToken(normKey(counter))}_${sanitizeIdToken(String(qty))}`;
       counts.push({
         id: idSeed,
         sessionId: 'imported',
@@ -280,6 +290,26 @@ export interface MergeResult {
 export interface ReconcileCatalogResult {
   added: number;
   updated: number;
+}
+
+function productsEqual(a: Product, b: Product): boolean {
+  return (
+    a.barcode === b.barcode &&
+    (a.sku || '') === (b.sku || '') &&
+    (a.description || '') === (b.description || '') &&
+    (a.unit || '') === (b.unit || '') &&
+    a.expectedQty === b.expectedQty &&
+    a.minQty === b.minQty &&
+    a.maxQty === b.maxQty &&
+    a.unitCost === b.unitCost &&
+    a.brand === b.brand &&
+    a.imageUrl === b.imageUrl &&
+    Boolean(a.uncataloged) === Boolean(b.uncataloged) &&
+    a.source === b.source &&
+    a.lookedUpAt === b.lookedUpAt &&
+    Boolean(a.notFoundOnline) === Boolean(b.notFoundOnline) &&
+    (a.updatedAt ?? 0) === (b.updatedAt ?? 0)
+  );
 }
 
 /**
@@ -333,9 +363,6 @@ export async function reconcileCatalogProducts(
       continue;
     }
 
-    const incomingIsOfficial = !p.uncataloged && (p.source === 'catalogo' || p.source === 'manual');
-    const localIsPending = local.source === 'pendiente' || Boolean(local.uncataloged);
-
     // Elegir el barcode canónico (preferir el código de barras real frente a un placeholder SKU:...)
     const targetBarcode =
       local.barcode.startsWith('SKU:') && !p.barcode.startsWith('SKU:')
@@ -352,100 +379,9 @@ export async function reconcileCatalogProducts(
       barcodeRemap.set(p.barcode, targetBarcode);
     }
 
-    const incTs = p.updatedAt ?? 0;
-    const locTs = local.updatedAt ?? 0;
-    let merged: Product;
+    const merged = mergeCatalogProduct(local, p, targetBarcode);
 
-    if (incTs > locTs) {
-      merged = {
-        ...local,
-        ...p,
-        barcode: targetBarcode,
-        description: p.description || local.description,
-        sku: p.sku || local.sku,
-        unit: p.unit || local.unit,
-        expectedQty: p.expectedQty,
-        minQty: p.minQty,
-        maxQty: p.maxQty,
-        unitCost: p.unitCost,
-        brand: p.brand ?? local.brand,
-        imageUrl: p.imageUrl ?? local.imageUrl,
-        uncataloged: p.uncataloged !== undefined ? p.uncataloged : local.uncataloged,
-        source:
-          p.source === 'pendiente' && local.source !== 'pendiente' && !p.description
-            ? local.source
-            : p.source,
-        updatedAt: incTs,
-      };
-      if (merged.expectedQty === undefined) delete merged.expectedQty;
-      if (merged.minQty === undefined) delete merged.minQty;
-      if (merged.maxQty === undefined) delete merged.maxQty;
-      if (merged.unitCost === undefined) delete merged.unitCost;
-      if (merged.brand === undefined) delete merged.brand;
-      if (merged.imageUrl === undefined) delete merged.imageUrl;
-    } else if (locTs > incTs) {
-      const promoteUncataloged = localIsPending && incomingIsOfficial;
-      const nextDesc = local.description || p.description;
-      const nextSource: Product['source'] = promoteUncataloged
-        ? p.source
-        : local.source === 'pendiente' && p.source !== 'pendiente'
-          ? p.source
-          : local.source;
-      merged = {
-        ...local,
-        barcode: targetBarcode,
-        description: nextDesc,
-        sku: local.sku || p.sku,
-        unit: local.unit || p.unit,
-        expectedQty: local.expectedQty !== undefined ? local.expectedQty : p.expectedQty,
-        minQty: local.minQty !== undefined ? local.minQty : p.minQty,
-        maxQty: local.maxQty !== undefined ? local.maxQty : p.maxQty,
-        unitCost: local.unitCost !== undefined ? local.unitCost : p.unitCost,
-        brand: local.brand || p.brand,
-        imageUrl: local.imageUrl || p.imageUrl,
-        uncataloged: promoteUncataloged ? false : local.uncataloged,
-        source: nextSource,
-        updatedAt: locTs,
-      };
-    } else {
-      const nextDesc =
-        p.description && (localIsPending || incomingIsOfficial || !local.description)
-          ? p.description
-          : local.description || p.description;
-
-      const nextSource: Product['source'] =
-        p.source === 'catalogo' || local.source === 'catalogo'
-          ? 'catalogo'
-          : local.source === 'pendiente' && p.source !== 'pendiente'
-            ? p.source
-            : local.source;
-
-      const nextUncataloged =
-        p.uncataloged === false || local.uncataloged === false || nextSource === 'catalogo'
-          ? false
-          : Boolean(local.uncataloged && p.uncataloged);
-
-      merged = {
-        ...local,
-        ...p,
-        barcode: targetBarcode,
-        description: nextDesc,
-        sku: p.sku || local.sku,
-        unit: p.unit || local.unit,
-        expectedQty: p.expectedQty !== undefined ? p.expectedQty : local.expectedQty,
-        minQty: p.minQty !== undefined ? p.minQty : local.minQty,
-        maxQty: p.maxQty !== undefined ? p.maxQty : local.maxQty,
-        unitCost: p.unitCost !== undefined ? p.unitCost : local.unitCost,
-        brand: p.brand || local.brand,
-        imageUrl: p.imageUrl || local.imageUrl,
-        uncataloged: nextUncataloged,
-        source: nextSource,
-      };
-      const sameTs = incTs || locTs;
-      if (sameTs) merged.updatedAt = sameTs;
-    }
-
-    if (JSON.stringify(merged) !== JSON.stringify(local)) {
+    if (!productsEqual(merged, local)) {
       toPut.push(merged);
       byBarcode.set(targetBarcode, merged);
       if (merged.sku) bySku.set(merged.sku.trim().toUpperCase(), merged);
@@ -453,48 +389,51 @@ export async function reconcileCatalogProducts(
     }
   }
 
-  if (toDeleteBarcodes.size > 0) {
-    const txDel = db.transaction('products', 'readwrite');
+  if (toDeleteBarcodes.size > 0 || toPut.length > 0 || barcodeRemap.size > 0) {
+    const stores: ('products' | 'counts')[] =
+      barcodeRemap.size > 0 ? ['products', 'counts'] : ['products'];
+    const tx = db.transaction(stores, 'readwrite');
+    const prodStore = tx.objectStore('products');
     for (const oldBc of toDeleteBarcodes) {
-      await txDel.store.delete(oldBc);
+      await prodStore.delete(oldBc);
     }
-    await txDel.done;
-  }
-
-  if (toPut.length > 0) {
-    const txPut = db.transaction('products', 'readwrite');
     for (const item of toPut) {
-      await txPut.store.put(item);
+      await prodStore.put(item);
     }
-    await txPut.done;
+    if (barcodeRemap.size > 0) {
+      const countStore = tx.objectStore('counts');
+      const allCounts = await countStore.getAll();
+      for (const c of allCounts) {
+        const mapped = barcodeRemap.get(c.barcode);
+        if (mapped && mapped !== c.barcode) {
+          await countStore.put({ ...c, barcode: mapped });
+        }
+      }
+    }
+    await tx.done;
+
+    if (toPut.length > 0) {
+      await clearProductTombstones(
+        toPut.map((item) => ({ barcode: item.barcode, updatedAt: item.updatedAt ?? Date.now() })),
+      );
+    }
   }
 
-  // Si algún código temporal SKU:... se remapeó a su código de barras oficial, actualizar conteos y movimientos locales
+  // Si algún código temporal SKU:... se remapeó a su código de barras oficial, actualizar movimientos de forma atómica
   if (barcodeRemap.size > 0) {
-    const allCounts = await db.getAll('counts');
-    const txCounts = db.transaction('counts', 'readwrite');
-    for (const c of allCounts) {
-      const mapped = barcodeRemap.get(c.barcode);
-      if (mapped && mapped !== c.barcode) {
-        await txCounts.store.put({ ...c, barcode: mapped });
-      }
-    }
-    await txCounts.done;
-
-    const allMovs = await getAllMovements();
-    let movChanged = false;
-    const nextMovs = allMovs.map((m) => {
-      if (!m.barcode) return m;
-      const mapped = barcodeRemap.get(m.barcode);
-      if (mapped && mapped !== m.barcode) {
-        movChanged = true;
-        return { ...m, barcode: mapped };
-      }
-      return m;
+    await updateMovements((allMovs) => {
+      let movChanged = false;
+      const nextMovs = allMovs.map((m) => {
+        if (!m.barcode) return m;
+        const mapped = barcodeRemap.get(m.barcode);
+        if (mapped && mapped !== m.barcode) {
+          movChanged = true;
+          return { ...m, barcode: mapped };
+        }
+        return m;
+      });
+      return movChanged ? nextMovs : allMovs;
     });
-    if (movChanged) {
-      await saveAllMovements(nextMovs);
-    }
   }
 
   return { added, updated };
@@ -524,8 +463,10 @@ export async function mergeCountFiles(targetSessionId: string, files: CountFile[
   for (const f of files) {
     const fallbackCounter = f.session?.counter || 'Técnico';
     for (const c of f.counts) {
-      const existingDirect = await tx.store.get(c.id);
-      const scopedId = `${targetSessionId}__${c.id}`;
+      if (!c || typeof c.id !== 'string' || !c.id.trim()) continue;
+      const canonId = canonicalCountId(c.id);
+      const existingDirect = (await tx.store.get(c.id)) ?? (canonId !== c.id ? await tx.store.get(canonId) : undefined);
+      const scopedId = `${targetSessionId}__${canonId}`;
       const existingScoped = await tx.store.get(scopedId);
 
       const existingRecord =
@@ -534,10 +475,16 @@ export async function mergeCountFiles(targetSessionId: string, files: CountFile[
           : existingScoped;
 
       if (existingRecord) {
-        if (c.timestamp > existingRecord.timestamp && c.qty !== existingRecord.qty) {
+        const nextCounter = c.counter?.trim();
+        const changed =
+          c.qty !== existingRecord.qty ||
+          c.barcode !== existingRecord.barcode ||
+          (nextCounter && nextCounter !== existingRecord.counter);
+        if (c.timestamp > existingRecord.timestamp && changed) {
           existingRecord.qty = c.qty;
+          existingRecord.barcode = c.barcode;
           existingRecord.timestamp = c.timestamp;
-          if (c.counter?.trim()) existingRecord.counter = c.counter.trim();
+          if (nextCounter) existingRecord.counter = nextCounter;
           await tx.store.put(existingRecord);
           res.updated = (res.updated || 0) + 1;
         } else {
@@ -546,7 +493,7 @@ export async function mergeCountFiles(targetSessionId: string, files: CountFile[
         continue;
       }
 
-      const finalId = existingDirect ? scopedId : c.id;
+      const finalId = existingDirect ? scopedId : canonId;
       const counterName = c.counter?.trim() || fallbackCounter;
       const entry: CountEntry = {
         ...c,

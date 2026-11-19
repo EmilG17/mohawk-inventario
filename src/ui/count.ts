@@ -1,5 +1,5 @@
 import {
-  addCount, allProducts, closeSession, countsForSession, deleteCount, findBySku, getActiveSession, getProduct, putCount,
+  addCount, allProducts, closeSession, countsForSession, deleteCount, findBySku, getActiveSession, getDeviceId, getProduct, putCount,
   type CountEntry, type Product, type Session,
 } from '../db/db';
 import { L } from '../i18n/i18n';
@@ -50,11 +50,15 @@ let els: {
 };
 const debounce = createDebouncer(1500);
 let wantCamera = false;
+let cameraStarting = false;
+let isProcessingScan = false;
+let myDeviceId = '';
 let unsubscribeCountCloud: (() => void) | null = null;
 let viewMounted = false;
 let countRenderSeq = 0;
 let cameraAttemptSeq = 0;
 let countCloudTimer: ReturnType<typeof setTimeout> | null = null;
+let pendingTelemetryTimer: ReturnType<typeof setTimeout> | null = null;
 let lastCountDataFp = '';
 const wedge = createWedgeController({
   minLength: 4,
@@ -68,8 +72,27 @@ const wedge = createWedgeController({
 const COOLDOWN_MS = 2000;
 let cooldownUntil = 0;
 let cooldownTimer: number | null = null;
+let readyHideTimer: ReturnType<typeof setTimeout> | null = null;
+
+function clearReadyHideTimer(): void {
+  if (readyHideTimer !== null) {
+    clearTimeout(readyHideTimer);
+    readyHideTimer = null;
+  }
+}
+
+function clearPendingTelemetryTimer(): void {
+  if (pendingTelemetryTimer !== null) {
+    clearTimeout(pendingTelemetryTimer);
+    pendingTelemetryTimer = null;
+  }
+}
 
 export function isScanLocked(): boolean {
+  if (isProcessingScan) return true;
+  if (typeof document !== 'undefined' && document.querySelector('dialog[open]')) {
+    return true;
+  }
   // 1) Solo un producto a la vez: si hay un producto en tarjeta sin confirmar en modo normal, bloquear escáner
   if (pending !== null && !settingsSync().quickMode) {
     return true;
@@ -88,6 +111,7 @@ function updateCooldownUi(justFinished = false): void {
   const remaining = cooldownUntil - now;
 
   if (remaining > 0) {
+    clearReadyHideTimer();
     els.videoWrap.classList.add('cooldown');
     els.videoWrap.classList.remove('locked');
     els.cooldownBadge.hidden = false;
@@ -95,16 +119,20 @@ function updateCooldownUi(justFinished = false): void {
     const sec = (remaining / 1000).toFixed(1);
     els.cooldownBadge.innerHTML = `<span class="cooldown-ico">II</span> ${L('Pausa:', 'Pause:')} <b>${sec}s</b>`;
   } else if (justFinished) {
+    clearReadyHideTimer();
     els.videoWrap.classList.remove('cooldown');
     els.cooldownBadge.hidden = false;
     els.cooldownBadge.className = 'cam-cooldown ready';
     els.cooldownBadge.innerHTML = `<span class="cooldown-ico">✓</span> ${L('Listo para escanear', 'Ready to scan')}`;
-    setTimeout(() => {
+    readyHideTimer = setTimeout(() => {
+      readyHideTimer = null;
+      if (!viewMounted || !els?.cooldownBadge) return;
       if (Date.now() >= cooldownUntil && (!pending || s.quickMode)) {
-        if (els?.cooldownBadge) els.cooldownBadge.hidden = true;
+        els.cooldownBadge.hidden = true;
       }
     }, 450);
   } else if (pending && !s.quickMode) {
+    clearReadyHideTimer();
     els.videoWrap.classList.add('locked');
     els.videoWrap.classList.remove('cooldown');
     els.cooldownBadge.hidden = false;
@@ -162,50 +190,55 @@ function emitScannerState(
 
 // ---------------- cámara ----------------
 async function startCamera() {
-  if (scanner || !viewMounted) return;
+  if (scanner || cameraStarting || !viewMounted) return;
+  cameraStarting = true;
   const attempt = ++cameraAttemptSeq;
-  unlockAudio();
-  if (!cameraAvailable()) {
-    els.camMsg.textContent = window.isSecureContext
-      ? L('Este navegador no permite usar la cámara. Usa la captura manual o un lector Bluetooth.', 'This browser cannot access the camera. Use manual entry or a Bluetooth scanner.')
-      : L('La cámara requiere que la app se abra con https://', 'Camera requires opening the app over https://');
-    els.videoWrap.classList.add('off');
-    return;
-  }
-  els.camMsg.textContent = L('Iniciando cámara…', 'Starting camera…');
-  els.videoWrap.classList.remove('off');
   try {
-    const started = await startScanner(els.video, (text) => onDetected(text));
-    if (!viewMounted || attempt !== cameraAttemptSeq) {
-      try { started.stop(); } catch {}
+    unlockAudio();
+    if (!cameraAvailable()) {
+      els.camMsg.textContent = window.isSecureContext
+        ? L('Este navegador no permite usar la cámara. Usa la captura manual o un lector Bluetooth.', 'This browser cannot access the camera. Use manual entry or a Bluetooth scanner.')
+        : L('La cámara requiere que la app se abra con https://', 'Camera requires opening the app over https://');
+      els.videoWrap.classList.add('off');
       return;
     }
-    scanner = started;
-    wantCamera = true;
-    sessionStorage.setItem('camera', '1');
-    els.camMsg.textContent = '';
-    els.camBtn.replaceChildren(icon('stop'), L('Detener cámara', 'Stop camera'));
-    els.torchBtn.hidden = !scanner.torchSupported;
-    emitScannerState(
-      pending ? 'pending_confirm' : 'scanning',
-      pending
-        ? {
-            barcode: pending.code,
-            sku: pending.product?.sku || pending.code,
-            description: pending.product?.description,
-            qty: pending.qty,
-            origin: pending.origin,
-          }
-        : { origin: 'camara' },
-    );
-  } catch (e) {
-    if (!viewMounted || attempt !== cameraAttemptSeq) return;
-    const err = e as Error;
-    scanner = null;
-    els.videoWrap.classList.add('off');
-    els.camMsg.textContent = err.name === 'NotAllowedError'
-      ? L('Permiso de cámara denegado. Habilítalo en la configuración del navegador.', 'Camera permission denied. Enable it in browser settings.')
-      : err.name === 'NotFoundError' ? L('No se encontró cámara en este dispositivo.', 'No camera found on this device.') : `${L('No se pudo iniciar la cámara:', 'Could not start camera:')} ${err.message}`;
+    els.camMsg.textContent = L('Iniciando cámara…', 'Starting camera…');
+    els.videoWrap.classList.remove('off');
+    try {
+      const started = await startScanner(els.video, (text) => onDetected(text));
+      if (!viewMounted || attempt !== cameraAttemptSeq) {
+        try { started.stop(); } catch {}
+        return;
+      }
+      scanner = started;
+      wantCamera = true;
+      sessionStorage.setItem('camera', '1');
+      els.camMsg.textContent = '';
+      els.camBtn.replaceChildren(icon('stop'), L('Detener cámara', 'Stop camera'));
+      els.torchBtn.hidden = !scanner.torchSupported;
+      emitScannerState(
+        pending ? 'pending_confirm' : 'scanning',
+        pending
+          ? {
+              barcode: pending.code,
+              sku: pending.product?.sku || pending.code,
+              description: pending.product?.description,
+              qty: pending.qty,
+              origin: pending.origin,
+            }
+          : { origin: 'camara' },
+      );
+    } catch (e) {
+      if (!viewMounted || attempt !== cameraAttemptSeq) return;
+      const err = e as Error;
+      scanner = null;
+      els.videoWrap.classList.add('off');
+      els.camMsg.textContent = err.name === 'NotAllowedError'
+        ? L('Permiso de cámara denegado. Habilítalo en la configuración del navegador.', 'Camera permission denied. Enable it in browser settings.')
+        : err.name === 'NotFoundError' ? L('No se encontró cámara en este dispositivo.', 'No camera found on this device.') : `${L('No se pudo iniciar la cámara:', 'Could not start camera:')} ${err.message}`;
+    }
+  } finally {
+    cameraStarting = false;
   }
 }
 
@@ -251,7 +284,7 @@ function onVisibility() {
 // ---------------- flujo de escaneo ----------------
 function onDetected(text: string) {
   if (isScanLocked()) return;
-  if (isCompactCountQr(text)) {
+  if (isRoomInviteUrl(text) || isCompactCountQr(text)) {
     if (!debounce(text)) return;
     void processCode(text, 'camara');
     return;
@@ -265,6 +298,7 @@ function feedback(kind: 'ok' | 'warn') {
   const s = settingsSync();
   if (s.beep) beep(kind);
   if (s.vibrate) vibrate(kind);
+  if (!els?.videoWrap) return;
   els.videoWrap.classList.remove('flash-ok', 'flash-warn');
   void els.videoWrap.offsetWidth;
   els.videoWrap.classList.add(kind === 'ok' ? 'flash-ok' : 'flash-warn');
@@ -287,6 +321,7 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
           'ok',
           5000,
         );
+        if (viewMounted) navigate('/contar');
         return;
       }
     }
@@ -328,32 +363,39 @@ export async function processCode(raw: string, origin: 'camara' | 'teclado' | 'm
     }
   }
 
-  const known = await getProduct(code);
-  feedback(known && !known.uncataloged ? 'ok' : 'warn');
+  isProcessingScan = true;
+  let token = 0;
+  let known: Product | undefined;
+  try {
+    known = await getProduct(code);
+    feedback(known && !known.uncataloged ? 'ok' : 'warn');
 
-  const token = ++tokenSeq;
-  pending = { code, qty: 1, product: known, status: known?.description ? 'catalogo' : 'buscando', token, origin };
+    token = ++tokenSeq;
+    pending = { code, qty: 1, product: known, status: known?.description ? 'catalogo' : 'buscando', token, origin };
 
-  if (s.quickMode) {
-    const entry = await addCount({ sessionId: session.id, barcode: code, qty: 1, counter: session.counter });
-    lastQuick = entry;
-    emitScannerState('registered', {
-      barcode: code,
-      sku: known?.sku || code,
-      description: known?.description,
-      qty: 1,
-      origin,
-    });
-    triggerCooldown(COOLDOWN_MS);
-    triggerBackgroundSync(session.id);
-  } else {
-    emitScannerState('pending_confirm', {
-      barcode: code,
-      sku: known?.sku || code,
-      description: known?.description,
-      qty: 1,
-      origin,
-    });
+    if (s.quickMode) {
+      const entry = await addCount({ sessionId: session.id, barcode: code, qty: 1, counter: session.counter });
+      lastQuick = entry;
+      emitScannerState('registered', {
+        barcode: code,
+        sku: known?.sku || code,
+        description: known?.description,
+        qty: 1,
+        origin,
+      });
+      triggerCooldown(COOLDOWN_MS);
+      triggerBackgroundSync(session.id);
+    } else {
+      emitScannerState('pending_confirm', {
+        barcode: code,
+        sku: known?.sku || code,
+        description: known?.description,
+        qty: 1,
+        origin,
+      });
+    }
+  } finally {
+    isProcessingScan = false;
   }
   renderCard();
 
@@ -385,6 +427,7 @@ let lastQuick: CountEntry | null = null;
 
 async function commitPending(silent = false, skipUi = false): Promise<void> {
   if (!pending || !session) return;
+  clearPendingTelemetryTimer();
   const p = pending;
   pending = null;
   if (settingsSync().quickMode) {
@@ -455,14 +498,26 @@ function renderCard(): void {
   const desc = prod?.description;
   const codeLabel = p.code.startsWith('SKU:') ? p.code.slice(4) : displayBarcode(p.code);
 
-  const emitPendingQty = () => {
-    emitScannerState('pending_confirm', {
-      barcode: p.code,
-      sku: p.product?.sku || p.code,
-      description: p.product?.description,
-      qty: p.qty,
-      origin: p.origin,
-    });
+  const emitPendingQty = (immediate = false) => {
+    clearPendingTelemetryTimer();
+    const send = () => {
+      if (!pending || pending.token !== p.token) return;
+      emitScannerState('pending_confirm', {
+        barcode: p.code,
+        sku: p.product?.sku || p.code,
+        description: p.product?.description,
+        qty: p.qty,
+        origin: p.origin,
+      });
+    };
+    if (immediate) {
+      send();
+    } else {
+      pendingTelemetryTimer = setTimeout(() => {
+        pendingTelemetryTimer = null;
+        send();
+      }, 180);
+    }
   };
 
   const descInput = h('input', { class: 'input', placeholder: L('Descripción del producto', 'Product description'), maxlength: 200 });
@@ -485,7 +540,7 @@ function renderCard(): void {
       const n = parseNumber(qtyInput.value);
       if (n !== undefined && n >= 0) {
         p.qty = n;
-        emitPendingQty();
+        emitPendingQty(false);
       }
     },
     onkeydown: (e: KeyboardEvent) => { if (e.key === 'Enter') { e.preventDefault(); void commitPending(); } },
@@ -553,9 +608,9 @@ function renderCard(): void {
       )
       : [
         h('div', { class: 'qty-row' },
-          h('button', { class: 'btn round', 'aria-label': L('Menos', 'Decrease'), onclick: () => { p.qty = Math.max(0, Math.round((p.qty - 1) * 1000) / 1000); qtyInput.value = String(p.qty); emitPendingQty(); } }, '−'),
+          h('button', { class: 'btn round', 'aria-label': L('Menos', 'Decrease'), onclick: () => { p.qty = Math.max(0, Math.round((p.qty - 1) * 1000) / 1000); qtyInput.value = String(p.qty); emitPendingQty(true); } }, '−'),
           qtyInput,
-          h('button', { class: 'btn round', 'aria-label': L('Más', 'Increase'), onclick: () => { p.qty = Math.round((p.qty + 1) * 1000) / 1000; qtyInput.value = String(p.qty); emitPendingQty(); } }, '+'),
+          h('button', { class: 'btn round', 'aria-label': L('Más', 'Increase'), onclick: () => { p.qty = Math.round((p.qty + 1) * 1000) / 1000; qtyInput.value = String(p.qty); emitPendingQty(true); } }, '+'),
         ),
         h('div', { class: 'qty-quick-chips', 'aria-label': L('Incremento rápido', 'Quick increment') },
           [5, 10, 25].map((step) =>
@@ -566,14 +621,14 @@ function renderCard(): void {
               onclick: () => {
                 p.qty = Math.round((p.qty + step) * 1000) / 1000;
                 qtyInput.value = String(p.qty);
-                emitPendingQty();
+                emitPendingQty(true);
               },
             }, `+${step}`),
           ),
         ),
         h('p', { class: 'muted small center' }, L('Confirma la cantidad con + / − y presiona Registrar.', 'Confirm quantity with + / − and press Record.')),
         h('div', { class: 'row' },
-          h('button', { class: 'btn ghost', onclick: () => { pending = null; emitScannerState(scanner ? 'scanning' : 'idle'); renderCard(); triggerCooldown(COOLDOWN_MS); } }, L('Cancelar', 'Cancel')),
+          h('button', { class: 'btn ghost', onclick: () => { clearPendingTelemetryTimer(); pending = null; emitScannerState(scanner ? 'scanning' : 'idle'); renderCard(); triggerCooldown(COOLDOWN_MS); } }, L('Cancelar', 'Cancel')),
           supervisorUI
             ? h('button', { class: 'btn ghost', onclick: () => editAndRefresh(p.code) }, icon('edit'), L('Producto', 'Product'))
             : null,
@@ -621,7 +676,23 @@ async function renderRecent(): Promise<void> {
   );
 }
 
+function canEditCountEntry(c: CountEntry): boolean {
+  if (isSupervisorModeEnabled()) return true;
+  if (!c.deviceId || !myDeviceId) return true;
+  return c.deviceId === myDeviceId;
+}
+
 function editEntry(c: CountEntry, p?: Product) {
+  if (!canEditCountEntry(c)) {
+    toast(
+      L(
+        'Solo puedes editar tus propias lecturas (el Supervisor puede modificar las de todo el equipo).',
+        'You can only edit your own scans (the Supervisor can edit team entries).',
+      ),
+      'info',
+    );
+    return;
+  }
   const qty = h('input', { class: 'input qty', type: 'text', inputmode: 'decimal', value: String(c.qty) });
   const actions: { label: string; kind?: 'primary' | 'danger'; onClick: () => boolean | void | Promise<boolean | void> }[] = [
     {
@@ -660,6 +731,9 @@ function editEntry(c: CountEntry, p?: Product) {
 async function manualEntry(text: string) {
   const q = text.trim();
   if (!q) return;
+  if (isRoomInviteUrl(q) || isCompactCountQr(q)) {
+    return processCode(q, 'manual');
+  }
   const code = normalizeBarcode(q);
   if (await getProduct(code)) return processCode(code, 'manual');
   const bySku = (await findBySku(q)) ?? (await findBySku(q.toUpperCase()));
@@ -688,34 +762,41 @@ async function manualEntry(text: string) {
   ), [{ label: L('Cerrar', 'Close') }]);
 }
 
+let activeRenderPromise: Promise<void> | null = null;
+
 export const countView: View = {
   title: () => L('Contar', 'Count'),
   async render(root) {
-    const seq = ++countRenderSeq;
-    viewMounted = true;
-    lastCountDataFp = '';
-    await loadSettings();
-    if (!viewMounted || seq !== countRenderSeq) return;
-    session = await getActiveSession();
-    if (!viewMounted || seq !== countRenderSeq) return;
-    if (!session) {
-      clear(root, h('section', { class: 'card idle-gate' },
-        h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, L('Sin sesión activa', 'No active session')),
-        h('h2', null, L('No hay sesión activa', 'No active session')),
-        h('p', { class: 'muted' }, L('Para comenzar a escanear códigos de barras o registrar cantidades físicas, necesitas una sesión de conteo abierta.', 'To start scanning barcodes or recording physical counts, you need an open counting session.')),
-        h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
-          icon('scan'), L('Iniciar nueva sesión', 'Start new session')),
-        h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
-          h('button', { class: 'btn', onclick: () => navigate('/equipo') }, icon('users'), L('Seleccionar o reanudar sesión', 'Select or resume session')),
-          h('button', { class: 'btn ghost', onclick: () => navigate('/catalogo') }, icon('list'), L('Ver catálogo de productos', 'View product catalog')),
-        ),
-      ));
-      return;
-    }
-    const s = settingsSync();
-    countIdealLevels = await getIdealLevels();
-    if (!viewMounted || seq !== countRenderSeq) return;
-    const supervisorUI = isSupervisorModeEnabled();
+    const run = async () => {
+      const seq = ++countRenderSeq;
+      viewMounted = true;
+      lastCountDataFp = '';
+      const [, devId, activeSess, idealLv] = await Promise.all([
+        loadSettings(),
+        getDeviceId(),
+        getActiveSession(),
+        getIdealLevels(),
+      ]);
+      if (!viewMounted || seq !== countRenderSeq) return;
+      myDeviceId = devId;
+      session = activeSess;
+      countIdealLevels = idealLv;
+      if (!session) {
+        clear(root, h('section', { class: 'card idle-gate' },
+          h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, L('Sin sesión activa', 'No active session')),
+          h('h2', null, L('No hay sesión activa', 'No active session')),
+          h('p', { class: 'muted' }, L('Para comenzar a escanear códigos de barras o registrar cantidades físicas, necesitas una sesión de conteo abierta.', 'To start scanning barcodes or recording physical counts, you need an open counting session.')),
+          h('button', { class: 'btn primary xl', onclick: async () => { if (await newSessionFlow()) navigate('/contar'); } },
+            icon('scan'), L('Iniciar nueva sesión', 'Start new session')),
+          h('div', { class: 'row wrap', style: 'margin-top: 10px;' },
+            h('button', { class: 'btn', onclick: () => navigate('/equipo') }, icon('users'), L('Seleccionar o reanudar sesión', 'Select or resume session')),
+            h('button', { class: 'btn ghost', onclick: () => navigate('/catalogo') }, icon('list'), L('Ver catálogo de productos', 'View product catalog')),
+          ),
+        ));
+        return;
+      }
+      const s = settingsSync();
+      const supervisorUI = isSupervisorModeEnabled();
     const video = h('video', { playsinline: true, muted: true, autoplay: true }) as HTMLVideoElement;
     const camMsg = h('div', { class: 'cam-msg' }, L('Escáner físico listo · Cámara apagada', 'Hardware scanner ready · Camera off'));
     const cooldownBadge = h('div', { class: 'cam-cooldown', hidden: true });
@@ -833,23 +914,34 @@ export const countView: View = {
         countCloudTimer = null;
         if (!viewMounted || !session || !els) return;
         void getIdealLevels().then((lv) => {
-          if (!viewMounted) return;
+          if (!viewMounted || !els?.card) return;
           countIdealLevels = lv;
-          if (pending) renderCard();
+          if (pending && !els.card.contains(document.activeElement)) {
+            renderCard();
+          }
         });
         void renderRecent();
       }, 0);
     });
-    document.addEventListener('visibilitychange', onVisibility);
-    wedge.attach();
-    renderCard();
-    await renderRecent();
-    if (viewMounted && seq === countRenderSeq && sessionStorage.getItem('camera') === '1') void startCamera();
+      document.addEventListener('visibilitychange', onVisibility);
+      wedge.attach();
+      renderCard();
+      await renderRecent();
+      if (viewMounted && seq === countRenderSeq && sessionStorage.getItem('camera') === '1') void startCamera();
+    };
+    const p = run();
+    activeRenderPromise = p.finally(() => {
+      if (activeRenderPromise === p) activeRenderPromise = null;
+    });
+    await activeRenderPromise;
   },
   async destroy() {
+    activeRenderPromise = null;
     viewMounted = false;
     countRenderSeq++;
     cameraAttemptSeq++;
+    clearPendingTelemetryTimer();
+    clearReadyHideTimer();
     if (countCloudTimer) {
       clearTimeout(countCloudTimer);
       countCloudTimer = null;
@@ -879,7 +971,22 @@ export const countView: View = {
 
 /** Para pruebas E2E: simula la lectura de un código por cámara. */
 if (typeof window !== 'undefined') {
-  (window as any).__simulateScan = (text: string) => onDetected(text);
+  (window as any).__simulateScan = async (text: string) => {
+    const deadline = Date.now() + 1500;
+    while (
+      (!viewMounted || activeRenderPromise) &&
+      typeof location !== 'undefined' &&
+      location.hash.startsWith('#/contar') &&
+      Date.now() < deadline
+    ) {
+      if (activeRenderPromise) {
+        await activeRenderPromise;
+      } else {
+        await new Promise((r) => setTimeout(r, 15));
+      }
+    }
+    onDetected(text);
+  };
   (window as any).__getScanState = () => ({
     isLocked: isScanLocked(),
     hasPending: pending !== null,

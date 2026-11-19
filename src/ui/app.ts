@@ -1,7 +1,7 @@
 import { getActiveSession } from '../db/db';
 import { L, applyDocumentLang } from '../i18n/i18n';
 import { startPendingWatcher } from '../lookup/pendingQueue';
-import { loadSettings, saveSettings, settingsSync } from '../settings';
+import { loadSettings } from '../settings';
 import {
   consumeUrlSyncParams,
   getCloudConnectionStatus,
@@ -10,7 +10,7 @@ import {
   startLiveCloudSync,
 } from '../sync/cloudSync';
 import { catalogView } from './catalog';
-import { isSupervisorModeEnabled } from './catalogMode';
+import { isStrictTechnicianClient, isSupervisorModeEnabled } from './catalogMode';
 import { countView } from './count';
 import { clear, h, icon, toast } from './dom';
 import { homeView } from './home';
@@ -94,13 +94,25 @@ export async function bootstrapApp(): Promise<void> {
   }
 
   const sidebarPlatformBadge = h('span', { class: 'sidebar-platform-badge' });
+  const allNavElements: { path: string; el: HTMLElement }[] = [];
+  const restrictedReportEls: HTMLElement[] = [];
+
   const applyPlatformAttributes = () => {
     const info = detectPlatformInfo();
+    const isSup = isSupervisorModeEnabled();
+    const strictTech = isStrictTechnicianClient();
     appEl.setAttribute('data-platform', info.platform);
     appEl.setAttribute('data-touch', String(info.isTouch));
-    appEl.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
+    appEl.setAttribute('data-supervisor', String(isSup));
+    appEl.setAttribute('data-strict-tech', String(strictTech));
     document.documentElement.setAttribute('data-platform', info.platform);
     sidebarPlatformBadge.textContent = info.label;
+    for (const item of allNavElements) {
+      if (item.path === '/reporte') item.el.hidden = strictTech;
+    }
+    for (const el of restrictedReportEls) {
+      el.hidden = strictTech;
+    }
   };
   applyPlatformAttributes();
 
@@ -162,7 +174,6 @@ export async function bootstrapApp(): Promise<void> {
   h('div', { class: 'sidebar-session-name' }, L('Cargando...', 'Loading...')),
   );
 
-  const allNavElements: { path: string; el: HTMLElement }[] = [];
   const labelBindings: Array<{ el: HTMLElement; es: string; en: string }> = [];
 
   const sidebarNavList = h('nav', { class: 'sidebar-nav', 'aria-label': L('Navegación de escritorio', 'Desktop navigation') },
@@ -286,9 +297,12 @@ export async function bootstrapApp(): Promise<void> {
           lbl,
           );
           allNavElements.push({ path: item.path, el: btn });
-          return idx > 0
-            ? [h('span', { class: 'workflow-arrow', 'aria-hidden': 'true' }, '›'), btn]
-            : [btn];
+          if (idx > 0) {
+            const arrow = h('span', { class: 'workflow-arrow', 'aria-hidden': 'true' }, '›');
+            if (item.path === '/reporte') restrictedReportEls.push(arrow);
+            return [arrow, btn];
+          }
+          return [btn];
         }).flat(),
       ),
     ),
@@ -360,6 +374,12 @@ export async function bootstrapApp(): Promise<void> {
     onclick: () => closeMoreSheet(),
   });
   const mobileMoreTitleEl = h('span', { class: 'bold small muted uppercase' }, L('Más secciones', 'More sections'));
+  const mobileCloseMoreBtn = h('button', {
+    class: 'btn ghost sm',
+    type: 'button',
+    'aria-label': L('Cerrar menú', 'Close menu'),
+    onclick: () => closeMoreSheet(),
+  }, '✕');
   const moreSheet = h('div', {
     class: 'mobile-more-sheet',
     hidden: true,
@@ -369,12 +389,7 @@ export async function bootstrapApp(): Promise<void> {
   },
   h('div', { class: 'mobile-more-head' },
     mobileMoreTitleEl,
-    h('button', {
-      class: 'btn ghost sm',
-      type: 'button',
-      'aria-label': L('Cerrar menú', 'Close menu'),
-      onclick: () => closeMoreSheet(),
-    }, '✕'),
+    mobileCloseMoreBtn,
   ),
   NAV_ITEMS.filter((it) => !MOBILE_PRIMARY_PATHS.has(it.path)).map((item) => {
     const lbl = h('span', null, L(item.labelEs, item.labelEn));
@@ -530,6 +545,12 @@ export async function bootstrapApp(): Promise<void> {
     sidebarBrandSubEl.textContent = L('Registro de Consumibles · Taller de Reparaciones', 'Consumables Registry · Repair Shop');
     sidebarSessionLabelEl.textContent = L('Sesión activa', 'Active session');
     mobileMoreTitleEl.textContent = L('Más secciones', 'More sections');
+    cloudBadge.title = L('Estado de sincronización en tiempo real (clic para abrir Monitor de Supervisor)', 'Live sync status (click to open Supervisor Monitor)');
+    sidebarNavList.setAttribute('aria-label', L('Navegación de escritorio', 'Desktop navigation'));
+    workflowBar.setAttribute('aria-label', L('Flujo de trabajo del inventario', 'Inventory workflow'));
+    moreSheet.setAttribute('aria-label', L('Más herramientas', 'More tools'));
+    mobileCloseMoreBtn.setAttribute('aria-label', L('Cerrar menú', 'Close menu'));
+    nav.setAttribute('aria-label', L('Navegación móvil principal', 'Main mobile navigation'));
     sidebarCollapseBtn.title = L('Ocultar panel lateral (Ctrl+B)', 'Hide side panel (Ctrl+B)');
     sidebarCollapseBtn.setAttribute('aria-label', L('Ocultar panel lateral', 'Hide side panel'));
     setSidebarHidden(sidebarHidden);
@@ -541,17 +562,34 @@ export async function bootstrapApp(): Promise<void> {
     void updateHeaderSession();
   };
 
+  const reloadCurrentRoute = () => {
+    const cur = currentPath() || '/';
+    const rawQuery = (location.hash.slice(1) || '').split('?')[1];
+    navigate(rawQuery ? `${cur}?${rawQuery}` : cur);
+  };
+
   const handleLangChange = () => {
     applyShellTranslations();
-    navigate(currentPath() || '/');
+    reloadCurrentRoute();
   };
   window.addEventListener('languagechange', handleLangChange);
   window.addEventListener('mhk:languagechange', handleLangChange);
+  window.addEventListener('mhk:rolechange', () => {
+    applyPlatformAttributes();
+    syncMobileSupervisorLabel();
+    void updateHeaderSession();
+  });
+  window.addEventListener('mhk:sessionchange', () => {
+    void updateHeaderSession();
+  });
+
+  applyPlatformAttributes();
 
   startRouter(main, (path, view) => {
     const viewTitle = typeof view.title === 'function' ? view.title() : view.title;
     document.title = `${viewTitle} · ${L('Inventario de Consumibles', 'Consumables Inventory')}`;
     const cur = path || '/';
+    applyPlatformAttributes();
     closeMoreSheet();
     allNavElements.forEach(({ path: p, el }) => {
       el.classList.toggle('active', p === cur);
@@ -583,7 +621,7 @@ export async function bootstrapApp(): Promise<void> {
     if (e.altKey && e.key >= '1' && e.key <= '7') {
       const idx = Number(e.key) - 1;
       const targetItem = NAV_ITEMS[idx];
-      if (targetItem) {
+      if (targetItem && !(targetItem.path === '/reporte' && isStrictTechnicianClient())) {
         e.preventDefault();
         navigate(targetItem.path);
       }

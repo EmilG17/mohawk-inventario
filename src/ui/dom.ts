@@ -7,6 +7,7 @@ type Attrs = Record<string, unknown> & { class?: string; style?: string };
 /** Creación de elementos DOM con escape automático de texto. */
 export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs | null = null, ...children: Child[]): HTMLElementTagNameMap[K] {
   const el = document.createElement(tag);
+  let deferredValue: string | undefined;
   if (attrs) {
     for (const [k, v] of Object.entries(attrs)) {
       if (v === undefined || v === null || v === false) continue;
@@ -15,7 +16,7 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs | 
       } else if (k === 'class') {
         el.className = String(v);
       } else if (k === 'value' && 'value' in el) {
-        (el as HTMLInputElement).value = String(v);
+        deferredValue = String(v);
       } else if (k === 'checked' || k === 'selected' || k === 'disabled') {
         (el as any)[k] = !!v;
       } else if (v === true) {
@@ -26,6 +27,9 @@ export function h<K extends keyof HTMLElementTagNameMap>(tag: K, attrs: Attrs | 
     }
   }
   append(el, children);
+  if (deferredValue !== undefined) {
+    (el as HTMLInputElement).value = deferredValue;
+  }
   return el;
 }
 
@@ -50,39 +54,105 @@ export function $(sel: string, root: ParentNode = document): HTMLElement {
 
 // ---------- avisos ----------
 let toastTimer: number | undefined;
+let toastHideTimer: number | undefined;
 export function toast(msg: string, kind: 'ok' | 'warn' | 'error' | 'info' = 'info', ms = 2500): void {
   let el = document.getElementById('toast');
   if (!el) {
-    el = h('div', { id: 'toast', role: 'status', 'aria-live': 'polite' });
+    el = h('div', { id: 'toast', popover: 'manual', role: 'status', 'aria-live': 'polite' });
     document.body.appendChild(el);
   }
   el.textContent = msg;
   el.className = `show ${kind}`;
+  try {
+    if (typeof (el as any).showPopover === 'function') {
+      (el as any).showPopover();
+    }
+  } catch {
+    /* ignore */
+  }
   clearTimeout(toastTimer);
-  toastTimer = window.setTimeout(() => (el!.className = ''), ms);
+  clearTimeout(toastHideTimer);
+  toastTimer = window.setTimeout(() => {
+    el!.classList.remove('show');
+    toastHideTimer = window.setTimeout(() => {
+      if (el && !el.classList.contains('show')) {
+        try {
+          if (typeof (el as any).hidePopover === 'function') {
+            (el as any).hidePopover();
+          }
+        } catch {
+          /* ignore */
+        }
+      }
+    }, 200);
+  }, ms);
 }
 
 // ---------- diálogos ----------
+let dialogIdSeq = 0;
+
 export function openDialog(title: string, body: Child, actions: { label: string; kind?: string; onClick?: () => boolean | void | Promise<boolean | void> }[]): HTMLDialogElement {
-  const dlg = h('dialog', { class: 'dlg' },
-    h('h3', null, title),
+  const headingId = `dlg-title-${++dialogIdSeq}`;
+  const previouslyFocused = typeof document !== 'undefined' ? (document.activeElement as HTMLElement | null) : null;
+  let busy = false;
+  const actionButtons: HTMLButtonElement[] = [];
+
+  const actionsEl = actions.length > 0
+    ? h('div', { class: 'dlg-actions' },
+        actions.map((a) => {
+          const btn = h('button', {
+            class: `btn ${a.kind ?? ''}`,
+            type: 'button',
+            onclick: async () => {
+              if (busy) return;
+              busy = true;
+              actionButtons.forEach((b) => { b.disabled = true; });
+              try {
+                const keepOpen = a.onClick ? await a.onClick() : false;
+                if (keepOpen !== true) {
+                  dlg.close();
+                } else {
+                  busy = false;
+                  actionButtons.forEach((b) => { b.disabled = false; });
+                }
+              } catch (err) {
+                busy = false;
+                actionButtons.forEach((b) => { b.disabled = false; });
+                throw err;
+              }
+            },
+          }, a.label) as HTMLButtonElement;
+          actionButtons.push(btn);
+          return btn;
+        }),
+      )
+    : null;
+
+  const dlg = h('dialog', { class: 'dlg', 'aria-labelledby': headingId },
+    h('h3', { id: headingId }, title),
     h('div', { class: 'dlg-body' }, body),
-    h('div', { class: 'dlg-actions' },
-      actions.map((a) =>
-        h('button', {
-          class: `btn ${a.kind ?? ''}`,
-          type: 'button',
-          onclick: async () => {
-            const keepOpen = a.onClick ? await a.onClick() : false;
-            if (keepOpen !== true) dlg.close();
-          },
-        }, a.label),
-      ),
-    ),
+    actionsEl,
   );
-  dlg.addEventListener('close', () => dlg.remove());
+  dlg.addEventListener('close', () => {
+    dlg.remove();
+    try {
+      if (previouslyFocused && previouslyFocused.isConnected && typeof previouslyFocused.focus === 'function') {
+        previouslyFocused.focus();
+      }
+    } catch {
+      /* ignore */
+    }
+  });
   document.body.appendChild(dlg);
-  dlg.showModal();
+  try {
+    if (typeof dlg.showModal === 'function') {
+      dlg.showModal();
+    } else {
+      dlg.setAttribute('open', '');
+    }
+  } catch {
+    dlg.setAttribute('open', '');
+  }
   return dlg;
 }
 
@@ -152,8 +222,16 @@ export async function shareOrDownload(data: Uint8Array | string | Blob, fileName
 
 export function pickFiles(accept: string, multiple = false): Promise<File[]> {
   return new Promise((resolve) => {
+    let settled = false;
     const input = h('input', { type: 'file', accept, multiple, style: 'display:none' });
-    input.addEventListener('change', () => { resolve([...(input.files ?? [])]); input.remove(); });
+    const finish = (files: File[]) => {
+      if (settled) return;
+      settled = true;
+      input.remove();
+      resolve(files);
+    };
+    input.addEventListener('change', () => finish([...(input.files ?? [])]));
+    input.addEventListener('cancel', () => finish([]));
     document.body.appendChild(input);
     input.click();
   });
@@ -164,7 +242,7 @@ export function fmtNum(n: number | undefined, dec = 2): string {
   return n.toLocaleString(getLocaleTag(), { maximumFractionDigits: dec });
 }
 export function fmtMoney(n: number | undefined): string {
-  if (n === undefined) return '—';
+  if (n === undefined || n === null || !Number.isFinite(n)) return '—';
   try {
     return n.toLocaleString(getLocaleTag(), { style: 'currency', currency: settingsSync().currency || 'MXN', maximumFractionDigits: 2 });
   } catch {

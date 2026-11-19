@@ -6,7 +6,8 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
   const hadController = Boolean(navigator.serviceWorker.controller);
   navigator.serviceWorker.addEventListener('controllerchange', () => {
     if (!hadController || reloading) return;
-    if (document.querySelector('dialog[open]')) return;
+    const pcardVisible = Boolean(document.getElementById('pcard')?.offsetParent);
+    if (document.querySelector('dialog[open]') || pcardVisible) return;
     reloading = true;
     window.location.reload();
   });
@@ -23,5 +24,9 @@ if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
 bootstrapApp().catch((err) => {
   console.error('Error al iniciar la app:', err);
   const root = document.getElementById('app');
-  if (root) root.textContent = 'Error al cargar la aplicación: ' + (err as Error).message;
+  if (root) {
+    const isEn = typeof navigator !== 'undefined' && /^en\b/i.test(navigator.language || '');
+    const prefix = isEn ? 'Failed to load application: ' : 'Error al cargar la aplicación: ';
+    root.textContent = prefix + (err as Error).message;
+  }
 });

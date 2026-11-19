@@ -63,6 +63,18 @@ export function getDB(): Promise<IDBPDatabase<InvDB>> {
         db.createObjectStore('sessions', { keyPath: 'id' });
         db.createObjectStore('meta');
       },
+      blocking(_currentVersion, _blockedVersion, event) {
+        try {
+          (event?.target as IDBDatabase | null)?.close();
+        } catch {}
+        dbPromise = null;
+      },
+      terminated() {
+        dbPromise = null;
+      },
+    }).catch((err) => {
+      dbPromise = null;
+      throw err;
     });
   }
   return dbPromise;
@@ -116,47 +128,77 @@ export async function getDeviceId(): Promise<string> {
   return deviceIdInflight;
 }
 
-type TombstonesMeta = {
+export interface TombstonesMeta {
   counts?: Record<string, number>;
   movements?: Record<string, number>;
   products?: Record<string, number>;
-};
+}
+
+export function canonicalCountId(id: string): string {
+  const parts = (id || '').split('__');
+  return parts[parts.length - 1] || id;
+}
+
+/**
+ * Lee y actualiza `cloud_sync_tombstones_v1` dentro de una única transacción IndexedDB readwrite
+ * para evitar pérdida de borrados ante concurrencia entre conteos, movimientos y sincronización.
+ */
+export async function updateTombstonesAtomic(
+  mutator: (current: TombstonesMeta) => TombstonesMeta | null,
+): Promise<TombstonesMeta> {
+  const db = await getDB();
+  const tx = db.transaction('meta', 'readwrite');
+  const raw = (await tx.store.get('cloud_sync_tombstones_v1')) as TombstonesMeta | undefined;
+  const current: TombstonesMeta = {
+    counts: { ...(raw?.counts || {}) },
+    movements: { ...(raw?.movements || {}) },
+    products: { ...(raw?.products || {}) },
+  };
+  const next = mutator(current);
+  if (next) {
+    await tx.store.put(next, 'cloud_sync_tombstones_v1');
+    await tx.done;
+    return next;
+  }
+  await tx.done;
+  return current;
+}
 
 async function recordProductTombstones(barcodes: string[], ts = Date.now()): Promise<void> {
   if (!barcodes.length) return;
   try {
-    const current = (await getMeta<TombstonesMeta>('cloud_sync_tombstones_v1')) || {};
-    const productsMap = { ...(current.products || {}) };
-    for (const bc of barcodes) {
-      if (!bc) continue;
-      productsMap[bc] = Math.max(productsMap[bc] || 0, ts);
-    }
-    await setMeta('cloud_sync_tombstones_v1', { ...current, products: productsMap });
+    await updateTombstonesAtomic((current) => {
+      const productsMap = { ...(current.products || {}) };
+      for (const bc of barcodes) {
+        if (!bc) continue;
+        productsMap[bc] = Math.max(productsMap[bc] || 0, ts);
+      }
+      return { ...current, products: productsMap };
+    });
   } catch {}
 }
 
-async function clearProductTombstones(
+export async function clearProductTombstones(
   entries: Array<string | { barcode: string; updatedAt: number }>,
   defaultUpdatedAt = Date.now(),
 ): Promise<void> {
   if (!entries.length) return;
   try {
-    const current = (await getMeta<TombstonesMeta>('cloud_sync_tombstones_v1')) || {};
-    if (!current.products || Object.keys(current.products).length === 0) return;
-    const productsMap = { ...current.products };
-    let changed = false;
-    for (const item of entries) {
-      const bc = typeof item === 'string' ? item : item.barcode;
-      const ts = typeof item === 'string' ? defaultUpdatedAt : item.updatedAt;
-      const tombTs = productsMap[bc];
-      if (tombTs !== undefined && ts >= tombTs) {
-        delete productsMap[bc];
-        changed = true;
+    await updateTombstonesAtomic((current) => {
+      if (!current.products || Object.keys(current.products).length === 0) return null;
+      const productsMap = { ...current.products };
+      let changed = false;
+      for (const item of entries) {
+        const bc = typeof item === 'string' ? item : item.barcode;
+        const ts = typeof item === 'string' ? defaultUpdatedAt : item.updatedAt;
+        const tombTs = productsMap[bc];
+        if (tombTs !== undefined && ts >= tombTs) {
+          delete productsMap[bc];
+          changed = true;
+        }
       }
-    }
-    if (changed) {
-      await setMeta('cloud_sync_tombstones_v1', { ...current, products: productsMap });
-    }
+      return changed ? { ...current, products: productsMap } : null;
+    });
   } catch {}
 }
 
@@ -231,8 +273,10 @@ export function mergeProduct(prev: Product, next: Product): Product {
 }
 export async function clearProducts(): Promise<void> {
   const db = await getDB();
-  const existingKeys = (await db.getAllKeys('products')) as string[];
-  await db.clear('products');
+  const tx = db.transaction('products', 'readwrite');
+  const existingKeys = (await tx.store.getAllKeys()) as string[];
+  await tx.store.clear();
+  await tx.done;
   if (existingKeys.length > 0) {
     await recordProductTombstones(existingKeys, Date.now());
   }
@@ -279,6 +323,7 @@ export async function bulkModifyProducts(barcodes: string[], patch: MassProductP
   const db = await getDB();
   const tx = db.transaction('products', 'readwrite');
   let count = 0;
+  const modifiedEntries: Array<{ barcode: string; updatedAt: number }> = [];
   for (const b of barcodes) {
     const p = await tx.store.get(b);
     if (!p) continue;
@@ -310,17 +355,24 @@ export async function bulkModifyProducts(barcodes: string[], patch: MassProductP
     if (patch.descriptionSuffix && p.description) p.description = `${p.description} ${patch.descriptionSuffix.trim()}`;
     p.updatedAt = Math.max(Date.now(), (p.updatedAt ?? 0) + 1);
     await tx.store.put(p);
+    modifiedEntries.push({ barcode: p.barcode, updatedAt: p.updatedAt });
     count++;
   }
   await tx.done;
+  if (modifiedEntries.length > 0) {
+    await clearProductTombstones(modifiedEntries);
+  }
   return count;
 }
 
 // ---------- sesiones ----------
 export async function createSession(name: string, counter: string): Promise<Session> {
   const s: Session = { id: uid(), name, counter, createdAt: Date.now(), closed: false };
-  await (await getDB()).put('sessions', s);
-  await setMeta('activeSession', s.id);
+  const db = await getDB();
+  const tx = db.transaction(['sessions', 'meta'], 'readwrite');
+  await tx.objectStore('sessions').put(s);
+  await tx.objectStore('meta').put(s.id, 'activeSession');
+  await tx.done;
   return s;
 }
 export async function getSession(id: string): Promise<Session | undefined> {
@@ -341,42 +393,53 @@ export async function setActiveSession(id: string | null): Promise<void> {
 }
 export async function closeSession(id: string): Promise<void> {
   const db = await getDB();
-  const s = await db.get('sessions', id);
-  if (!s) return;
+  const tx = db.transaction(['sessions', 'meta'], 'readwrite');
+  const s = await tx.objectStore('sessions').get(id);
+  if (!s) {
+    await tx.done;
+    return;
+  }
   s.closed = true;
   s.closedAt = Date.now();
-  await db.put('sessions', s);
-  const activeId = await getMeta<string>('activeSession');
+  await tx.objectStore('sessions').put(s);
+  const activeId = await tx.objectStore('meta').get('activeSession');
   if (activeId === id) {
-    await setMeta('activeSession', null);
+    await tx.objectStore('meta').put(null, 'activeSession');
   }
+  await tx.done;
 }
 
 export async function reopenSession(id: string): Promise<void> {
   const db = await getDB();
-  const s = await db.get('sessions', id);
-  if (!s) return;
+  const tx = db.transaction(['sessions', 'meta'], 'readwrite');
+  const s = await tx.objectStore('sessions').get(id);
+  if (!s) {
+    await tx.done;
+    return;
+  }
   s.closed = false;
-  await db.put('sessions', s);
-  await setMeta('activeSession', s.id);
+  delete s.closedAt;
+  await tx.objectStore('sessions').put(s);
+  await tx.objectStore('meta').put(s.id, 'activeSession');
+  await tx.done;
 }
 
 export const listSessions = allSessions;
 
 export async function deleteSession(id: string): Promise<void> {
   const db = await getDB();
-  const tx = db.transaction(['sessions', 'counts'], 'readwrite');
+  const tx = db.transaction(['sessions', 'counts', 'meta'], 'readwrite');
   await tx.objectStore('sessions').delete(id);
   const countStore = tx.objectStore('counts');
   const countKeys = await countStore.index('sessionId').getAllKeys(id);
   for (const k of countKeys) {
     await countStore.delete(k);
   }
-  await tx.done;
-  const activeId = await getMeta<string>('activeSession');
+  const activeId = await tx.objectStore('meta').get('activeSession');
   if (activeId === id) {
-    await setMeta('activeSession', null);
+    await tx.objectStore('meta').put(null, 'activeSession');
   }
+  await tx.done;
 }
 
 
@@ -400,11 +463,12 @@ export async function putCount(e: CountEntry): Promise<void> {
 export async function deleteCount(id: string): Promise<void> {
   await (await getDB()).delete('counts', id);
   try {
-    const cid = id.includes('__') ? id.split('__').pop() || id : id;
-    const tombstones = (await getMeta<{ counts?: Record<string, number> }>('cloud_sync_tombstones_v1')) || {};
-    tombstones.counts = tombstones.counts || {};
-    tombstones.counts[cid] = Date.now();
-    await setMeta('cloud_sync_tombstones_v1', tombstones);
+    const cid = canonicalCountId(id);
+    const ts = Date.now();
+    await updateTombstonesAtomic((current) => {
+      const countsMap = { ...(current.counts || {}), [cid]: ts };
+      return { ...current, counts: countsMap };
+    });
   } catch {}
 }
 export async function getCount(id: string): Promise<CountEntry | undefined> {

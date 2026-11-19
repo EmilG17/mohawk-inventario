@@ -1,4 +1,4 @@
-import { getDeviceId, getMeta, setMeta, uid } from './db';
+import { getDeviceId, getMeta, setMeta, uid, updateTombstonesAtomic } from './db';
 
 export const MOVEMENTS_META_KEY = 'movements_ledger_v1';
 export const IDEAL_LEVELS_META_KEY = 'sku_ideal_levels_v1';
@@ -63,8 +63,29 @@ export async function getAllMovements(): Promise<Movement[]> {
   return Array.isArray(ledger) ? ledger : [];
 }
 
-export async function saveAllMovements(movements: Movement[]): Promise<void> {
+async function _saveAllMovementsUnlocked(movements: Movement[]): Promise<void> {
   await setMeta(MOVEMENTS_META_KEY, movements);
+}
+
+export async function saveAllMovements(movements: Movement[]): Promise<void> {
+  return withMovementMutex(async () => {
+    await _saveAllMovementsUnlocked(movements);
+  });
+}
+
+/**
+ * Ejecuta una lectura-modificación-escritura atómica del libro Kardex bajo el mutex compartido,
+ * evitando que sincronizaciones en segundo plano sobrescriban movimientos recién capturados.
+ */
+export async function updateMovements(
+  mutator: (current: Movement[]) => Movement[] | Promise<Movement[]>,
+): Promise<Movement[]> {
+  return withMovementMutex(async () => {
+    const current = await getAllMovements();
+    const next = await mutator(current);
+    await _saveAllMovementsUnlocked(next);
+    return next;
+  });
 }
 
 export async function recordMovement(data: NewMovement): Promise<Movement> {
@@ -95,12 +116,31 @@ export async function recordMovement(data: NewMovement): Promise<Movement> {
     deviceId,
   };
 
-  return withMovementMutex(async () => {
+  const saved = await withMovementMutex(async () => {
     const current = await getAllMovements();
-    current.push(movement);
-    await saveAllMovements(current);
+    const existingIdx = current.findIndex((m) => m.id === movement.id);
+    if (existingIdx >= 0) {
+      current[existingIdx] = movement;
+    } else {
+      current.push(movement);
+    }
+    await _saveAllMovementsUnlocked(current);
     return movement;
   });
+
+  if (data.id) {
+    try {
+      await updateTombstonesAtomic((current) => {
+        if (!current.movements || current.movements[saved.id] === undefined) return null;
+        if (saved.timestamp < current.movements[saved.id]) return null;
+        const movTomb = { ...current.movements };
+        delete movTomb[saved.id];
+        return { ...current, movements: movTomb };
+      });
+    } catch {}
+  }
+
+  return saved;
 }
 
 export async function recordEntry(params: {
@@ -168,20 +208,24 @@ export async function listMovements(filter?: MovementFilter): Promise<Movement[]
   const searchQuery = filter.search?.trim().toLowerCase();
 
   const filtered = all.filter((m) => {
-    if (skuQuery && m.sku !== skuQuery) return false;
+    const mSku = (m.sku || '').trim().toUpperCase();
+    const mTech = (m.technicianOrSupplier || '').toLowerCase();
+    const mArea = (m.machineOrArea || '').toLowerCase();
+    const mFolio = (m.folio || '').toLowerCase();
+    if (skuQuery && mSku !== skuQuery) return false;
     if (filter.type && m.type !== filter.type) return false;
-    if (techQuery && !m.technicianOrSupplier.toLowerCase().includes(techQuery)) return false;
-    if (areaQuery && !m.machineOrArea.toLowerCase().includes(areaQuery)) return false;
-    if (folioQuery && !m.folio.toLowerCase().includes(folioQuery)) return false;
+    if (techQuery && !mTech.includes(techQuery)) return false;
+    if (areaQuery && !mArea.includes(areaQuery)) return false;
+    if (folioQuery && !mFolio.includes(folioQuery)) return false;
     if (filter.startDate !== undefined && m.timestamp < filter.startDate) return false;
     if (filter.endDate !== undefined && m.timestamp > filter.endDate) return false;
     if (searchQuery) {
       const match =
-        m.sku.toLowerCase().includes(searchQuery) ||
+        (m.sku || '').toLowerCase().includes(searchQuery) ||
         (m.barcode && m.barcode.toLowerCase().includes(searchQuery)) ||
-        m.technicianOrSupplier.toLowerCase().includes(searchQuery) ||
-        m.machineOrArea.toLowerCase().includes(searchQuery) ||
-        m.folio.toLowerCase().includes(searchQuery) ||
+        mTech.includes(searchQuery) ||
+        mArea.includes(searchQuery) ||
+        mFolio.includes(searchQuery) ||
         (m.notes && m.notes.toLowerCase().includes(searchQuery));
       if (!match) return false;
     }
@@ -202,15 +246,13 @@ export async function deleteMovement(id: string): Promise<boolean> {
     const idx = all.findIndex((m) => m.id === id);
     if (idx === -1) return false;
     all.splice(idx, 1);
-    await saveAllMovements(all);
+    await _saveAllMovementsUnlocked(all);
     try {
-      const tombstones =
-        (await getMeta<{ counts?: Record<string, number>; movements?: Record<string, number> }>(
-          'cloud_sync_tombstones_v1',
-        )) || {};
-      tombstones.movements = tombstones.movements || {};
-      tombstones.movements[id] = Date.now();
-      await setMeta('cloud_sync_tombstones_v1', tombstones);
+      const ts = Date.now();
+      await updateTombstonesAtomic((current) => {
+        const movementsMap = { ...(current.movements || {}), [id]: ts };
+        return { ...current, movements: movementsMap };
+      });
     } catch {}
     return true;
   });
@@ -218,7 +260,7 @@ export async function deleteMovement(id: string): Promise<boolean> {
 
 export async function clearMovements(): Promise<void> {
   return withMovementMutex(async () => {
-    await setMeta(MOVEMENTS_META_KEY, []);
+    await _saveAllMovementsUnlocked([]);
   });
 }
 
@@ -226,12 +268,37 @@ export async function importMovements(
   incoming: Movement[],
   mode: 'append' | 'replace' = 'append',
 ): Promise<{ added: number; duplicates: number }> {
+  const normalizeIncoming = (m: Movement): Movement | null => {
+    if (
+      !m ||
+      !m.id ||
+      typeof m.sku !== 'string' ||
+      !m.sku.trim() ||
+      (m.type !== 'IN' && m.type !== 'OUT') ||
+      typeof m.quantity !== 'number' ||
+      !Number.isFinite(m.quantity) ||
+      m.quantity <= 0
+    ) {
+      return null;
+    }
+    return {
+      ...m,
+      sku: m.sku.trim().toUpperCase(),
+      technicianOrSupplier: (m.technicianOrSupplier || '').trim(),
+      machineOrArea: (m.machineOrArea || '').trim(),
+      folio: (m.folio || '').trim(),
+    };
+  };
+
   return withMovementMutex(async () => {
     if (mode === 'replace') {
-      const valid = incoming.filter(
-        (m) => m.id && m.sku && typeof m.quantity === 'number' && Number.isFinite(m.quantity) && m.quantity > 0,
-      );
-      await saveAllMovements(valid);
+      const map = new Map<string, Movement>();
+      for (const raw of incoming) {
+        const m = normalizeIncoming(raw);
+        if (m) map.set(m.id, m);
+      }
+      const valid = [...map.values()];
+      await _saveAllMovementsUnlocked(valid);
       return { added: valid.length, duplicates: 0 };
     }
 
@@ -240,8 +307,9 @@ export async function importMovements(
     let added = 0;
     let duplicates = 0;
 
-    for (const m of incoming) {
-      if (!m.id || !m.sku || typeof m.quantity !== 'number' || !Number.isFinite(m.quantity) || m.quantity <= 0) continue;
+    for (const raw of incoming) {
+      const m = normalizeIncoming(raw);
+      if (!m) continue;
       if (map.has(m.id)) {
         duplicates++;
       } else {
@@ -250,7 +318,7 @@ export async function importMovements(
       }
     }
 
-    await saveAllMovements([...map.values()]);
+    await _saveAllMovementsUnlocked([...map.values()]);
     return { added, duplicates };
   });
 }
@@ -268,11 +336,11 @@ export async function getMovementSummary(sku?: string): Promise<MovementSummary>
   let lastTimestamp: number | undefined;
 
   for (const m of all) {
-    if (targetSku && m.sku !== targetSku) continue;
+    if (targetSku && (m.sku || '').trim().toUpperCase() !== targetSku) continue;
     if (m.type === 'IN') {
       totalIn += m.quantity;
       inCount++;
-    } else {
+    } else if (m.type === 'OUT') {
       totalOut += m.quantity;
       outCount++;
     }
@@ -296,12 +364,13 @@ export async function getMovementSummary(sku?: string): Promise<MovementSummary>
   };
 }
 
-export async function getMovementSummariesBySku(): Promise<Map<string, MovementSummary>> {
-  const all = await getAllMovements();
+export function summarizeMovementsBySku(all: Movement[]): Map<string, MovementSummary> {
   const map = new Map<string, MovementSummary>();
 
   for (const m of all) {
-    let cur = map.get(m.sku);
+    const key = (m.sku || '').trim().toUpperCase();
+    if (!key) continue;
+    let cur = map.get(key);
     if (!cur) {
       cur = {
         totalIn: 0,
@@ -311,12 +380,12 @@ export async function getMovementSummariesBySku(): Promise<Map<string, MovementS
         inCount: 0,
         outCount: 0,
       };
-      map.set(m.sku, cur);
+      map.set(key, cur);
     }
     if (m.type === 'IN') {
       cur.totalIn += m.quantity;
       cur.inCount++;
-    } else {
+    } else if (m.type === 'OUT') {
       cur.totalOut += m.quantity;
       cur.outCount++;
     }
@@ -333,6 +402,10 @@ export async function getMovementSummariesBySku(): Promise<Map<string, MovementS
   }
 
   return map;
+}
+
+export async function getMovementSummariesBySku(): Promise<Map<string, MovementSummary>> {
+  return summarizeMovementsBySku(await getAllMovements());
 }
 
 // ----------------- IDEAL INVENTORY STORAGE -----------------

@@ -57,23 +57,47 @@ export const DEFAULT_SETTINGS: Settings = {
 };
 
 let cache: Settings | null = null;
+let loadPromise: Promise<Settings> | null = null;
+let saveQueue: Promise<unknown> = Promise.resolve();
 
 export async function loadSettings(): Promise<Settings> {
-  if (!cache) cache = { ...DEFAULT_SETTINGS, ...((await getMeta<Partial<Settings>>('settings')) ?? {}) };
-  return cache;
+  if (cache) return { ...cache };
+  if (!loadPromise) {
+    loadPromise = getMeta<Partial<Settings>>('settings')
+      .then((stored) => {
+        if (!cache) {
+          cache = { ...DEFAULT_SETTINGS, ...(stored ?? {}) };
+        }
+        return { ...cache };
+      })
+      .finally(() => {
+        loadPromise = null;
+      });
+  }
+  return loadPromise;
 }
 
 export function settingsSync(): Settings {
-  return cache ?? DEFAULT_SETTINGS;
+  return { ...(cache ?? DEFAULT_SETTINGS) };
 }
 
-export async function saveSettings(patch: Partial<Settings>): Promise<Settings> {
-  cache = { ...(await loadSettings()), ...patch };
-  await setMeta('settings', cache);
-  return cache;
+export function saveSettings(patch: Partial<Settings>): Promise<Settings> {
+  const run = async (): Promise<Settings> => {
+    const base = cache ? { ...cache } : await loadSettings();
+    const next: Settings = { ...base, ...patch };
+    await setMeta('settings', next);
+    cache = next;
+    return { ...next };
+  };
+  const nextPromise = saveQueue.then(run, run);
+  saveQueue = nextPromise.catch(() => {});
+  return nextPromise;
 }
 
-/** Solo para pruebas */
+/** Solo para pruebas / restablecimiento */
 export function _resetSettings(): void {
   cache = null;
+  loadPromise = null;
 }
+
+export const _resetSettingsCache = _resetSettings;

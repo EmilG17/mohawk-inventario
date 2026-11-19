@@ -65,9 +65,13 @@ export function parseNumber(raw: unknown): number | undefined {
   if (raw === null || raw === undefined || raw === '') return undefined;
   if (typeof raw === 'number') return Number.isFinite(raw) ? raw : undefined;
   let s = String(raw).trim().replace(/[$\s]/g, '');
-  // 1.234,56 → 1234.56 ; 1,234.56 → 1234.56
-  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(s)) s = s.replace(/\./g, '').replace(',', '.');
-  else s = s.replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
+  if (!s) return undefined;
+  // 1.234,56 → 1234.56 ; 1.234.567 → 1234567 ; conserva decimales como 0.500 o 1.250
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)$/.test(s) || /^-?\d{1,3}(\.\d{3}){2,}$/.test(s)) {
+    s = s.replace(/\./g, '').replace(',', '.');
+  } else {
+    s = s.replace(/,(?=\d{3}(\D|$))/g, '').replace(',', '.');
+  }
   const n = Number(s);
   return Number.isFinite(n) ? n : undefined;
 }

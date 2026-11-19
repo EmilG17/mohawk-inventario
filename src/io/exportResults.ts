@@ -2,7 +2,15 @@ import * as XLSX from 'xlsx';
 import type { CountEntry, Product, Session } from '../db/db';
 import type { Movement } from '../db/movements';
 import { displayBarcode } from './normalize';
-import { STATUS_LABEL, round, computeIdealStatus, type IdealStatus, type ReportRow, type ReportSummary } from '../report';
+import {
+  STATUS_LABEL,
+  round,
+  computeIdealStatus,
+  createCanonicalBarcodeResolver,
+  type IdealStatus,
+  type ReportRow,
+  type ReportSummary,
+} from '../report';
 
 export const APP_ID = 'mohawk-inventario';
 
@@ -114,7 +122,17 @@ export function buildReportWorkbook(opts: {
   const { session, rows, summary, counts, products } = opts;
   const wb = XLSX.utils.book_new();
   const pMap = new Map(products.map((p) => [p.barcode, p]));
-  const pBySku = new Map(products.filter((p) => p.sku).map((p) => [p.sku, p]));
+  const pBySku = new Map<string, Product>();
+  for (const p of products) {
+    if (p.sku?.trim()) pBySku.set(p.sku.trim().toUpperCase(), p);
+  }
+  const resolveCanonical = createCanonicalBarcodeResolver(products);
+  const normIdealLevels: Record<string, number> = {};
+  if (opts.idealLevels) {
+    for (const [k, v] of Object.entries(opts.idealLevels)) {
+      if (k.trim()) normIdealLevels[k.trim().toUpperCase()] = v;
+    }
+  }
 
   const techMap = new Map<string, { scans: number; units: number; barcodes: Set<string> }>();
   for (const c of counts) {
@@ -220,7 +238,8 @@ export function buildReportWorkbook(opts: {
     // ----------------- HOJA: Entradas y Salidas (Kardex) -----------------
     const movementsList = [...(opts.movements ?? [])].sort((a, b) => a.timestamp - b.timestamp);
     const kardexRows = movementsList.map((m) => {
-      const prod = (m.barcode ? pMap.get(m.barcode) : undefined) ?? pBySku.get(m.sku);
+      const prod = (m.barcode ? pMap.get(resolveCanonical(m.barcode)) ?? pMap.get(m.barcode) : undefined)
+        ?? pBySku.get((m.sku || '').trim().toUpperCase());
       return {
         'Fecha/Hora': fmtDate(m.timestamp),
         'Folio/Ref': m.folio || '-',
@@ -252,7 +271,8 @@ export function buildReportWorkbook(opts: {
 
     // ----------------- HOJA: Inventario Ideal -----------------
     const idealRows = rows.map((r) => {
-      const prod = pMap.get(r.barcode) ?? pBySku.get(r.sku);
+      const skuKey = (r.sku || '').trim().toUpperCase();
+      const prod = pMap.get(r.barcode) ?? (skuKey ? pBySku.get(skuKey) : undefined);
       const initialExpected = r.expected ?? 0;
       const totalIn = r.totalIn ?? 0;
       const totalOut = r.totalOut ?? 0;
@@ -260,8 +280,8 @@ export function buildReportWorkbook(opts: {
       const counted = r.counted;
 
       const configuredIdeal =
-        (opts.idealLevels && r.sku && opts.idealLevels[r.sku] !== undefined)
-          ? opts.idealLevels[r.sku]
+        skuKey && normIdealLevels[skuKey] !== undefined
+          ? normIdealLevels[skuKey]
           : r.idealQty;
 
       const idealQty = configuredIdeal !== undefined ? configuredIdeal : (prod?.maxQty ?? r.expected ?? '');
@@ -288,7 +308,10 @@ export function buildReportWorkbook(opts: {
           : '';
 
       let alertLabel = 'Óptimo';
-      if (r.idealStatus === 'critical' || (typeof gapNum === 'number' && idealNum !== undefined && counted <= 0.25 * idealNum)) {
+      if (
+        r.idealStatus === 'critical' ||
+        (typeof gapNum === 'number' && idealNum !== undefined && idealNum > 0 && counted <= 0.25 * idealNum)
+      ) {
         alertLabel = 'Crítico (Stockout / Muy bajo)';
       } else if (r.idealStatus === 'deficit' || r.needsReorder || (typeof gapNum === 'number' && gapNum < 0)) {
         alertLabel = 'Reposición Requerida';
@@ -336,14 +359,17 @@ export function buildReportWorkbook(opts: {
   }
 
   // ----------------- HOJA: Detalle de escaneos -----------------
-  const detail = [...counts].sort((a, b) => a.timestamp - b.timestamp).map((c) => ({
-    'Código de barras': displayBarcode(c.barcode),
-    'Descripción': pMap.get(c.barcode)?.description ?? '',
-    'Cantidad': c.qty,
-    'Contador': c.counter,
-    'Fecha/hora': fmtDate(c.timestamp),
-    'Dispositivo': c.deviceId.slice(0, 8),
-  }));
+  const detail = [...counts].sort((a, b) => a.timestamp - b.timestamp).map((c) => {
+    const canonCode = resolveCanonical(c.barcode);
+    return {
+      'Código de barras': displayBarcode(c.barcode),
+      'Descripción': pMap.get(c.barcode)?.description ?? pMap.get(canonCode)?.description ?? '',
+      'Cantidad': c.qty,
+      'Contador': c.counter,
+      'Fecha/hora': fmtDate(c.timestamp),
+      'Dispositivo': c.deviceId.slice(0, 8),
+    };
+  });
   addSheet(wb, 'Detalle de escaneos', detail,
     ['Código de barras', 'Descripción', 'Cantidad', 'Contador', 'Fecha/hora', 'Dispositivo']);
 
@@ -351,9 +377,29 @@ export function buildReportWorkbook(opts: {
   return out instanceof Uint8Array ? out : new Uint8Array(out as ArrayBuffer);
 }
 
+const REPORT_HEADERS = Object.keys(
+  reportSheetRows([
+    {
+      barcode: '',
+      sku: '',
+      description: '',
+      unit: '',
+      expected: 0,
+      counted: 0,
+      diff: 0,
+      unitCost: 0,
+      diffValue: 0,
+      status: 'ok',
+      counters: [],
+      scans: 0,
+      source: undefined,
+    },
+  ])[0],
+);
+
 export function buildReportCsv(rows: ReportRow[]): string {
   const data = reportSheetRows(rows);
-  const ws = XLSX.utils.json_to_sheet(data);
+  const ws = XLSX.utils.json_to_sheet(data, { header: REPORT_HEADERS });
   // BOM para que Excel abra correctamente los acentos
   return '\ufeff' + XLSX.utils.sheet_to_csv(ws);
 }
@@ -409,7 +455,7 @@ export function buildCatalogWorkbook(products: Product[]): Uint8Array {
     'Marca',
     'Origen descripción',
   ];
-  addSheet(wb, 'Catalogo', rows, catHeaders);
+  addSheet(wb, 'Catalogo', rows, catHeaders, [0, 1]);
   const out = XLSX.write(wb, { type: 'array', bookType: 'xlsx' });
   return out instanceof Uint8Array ? out : new Uint8Array(out as ArrayBuffer);
 }

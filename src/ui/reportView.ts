@@ -11,8 +11,9 @@ import {
   buildCountFile, buildReportCsv, buildReportWorkbook, safeFileName,
 } from '../io/exportResults';
 import { L, getLocaleTag } from '../i18n/i18n';
-import { displayBarcode } from '../io/normalize';
+import { displayBarcode, normalizeBarcode } from '../io/normalize';
 import { buildReport, summarize, type ReportRow, type RowStatus } from '../report';
+import { loadSettings } from '../settings';
 
 function statusLabel(status: RowStatus): string {
   switch (status) {
@@ -32,7 +33,7 @@ import {
   clear, confirmDialog, downloadFile, fmtDateTime, fmtMoney, fmtNum, h, icon, MIME, openDialog, shareOrDownload, toast,
 } from './dom';
 import { editProductDialog } from './productDialog';
-import { isMobileCatalogReadOnly } from './catalogMode';
+import { isMobileCatalogReadOnly, isStrictTechnicianClient } from './catalogMode';
 import { openBarcodeSheetDialog } from './barcodeSheet';
 import { createBrandLogo } from './logo';
 import { openUnifyReportsDialog } from './unifyReportsDialog';
@@ -51,6 +52,18 @@ let reportSyncTimer: ReturnType<typeof setTimeout> | null = null;
 let lastReportDataFp = '';
 
 async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq: number): Promise<void> {
+  if (isStrictTechnicianClient()) {
+    clear(root, h('section', { class: 'card' },
+      h('div', { class: 'badge warn', style: 'margin-bottom: 8px; display: inline-block;' }, L('Acceso restringido', 'Restricted access')),
+      h('h2', null, L('Reporte reservado para Supervisores', 'Report reserved for Supervisors')),
+      h('p', { class: 'muted' }, L('Tu dispositivo está configurado como Cliente-Técnico. Consulta el avance o captura tus conteos desde la terminal.', 'Your device is configured as a Technician Client. View progress or capture counts from your terminal.')),
+      h('div', { class: 'row wrap', style: 'gap: 8px; margin-top: 10px;' },
+        h('button', { class: 'btn primary', onclick: () => navigate('/contar') }, L('Ir a Contar', 'Go to Count')),
+        h('button', { class: 'btn', onclick: () => navigate('/') }, L('Ir al inicio', 'Go to home')),
+      ),
+    ));
+    return;
+  }
   if (params?.get('session')) {
     selectedSessionId = params.get('session');
   }
@@ -88,10 +101,18 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
   if (!reportMounted || seq !== reportRenderSeq) return;
 
   const countsByBarcode = new Map<string, CountEntry[]>();
+  const addCountToMap = (key: string, entry: CountEntry) => {
+    const arr = countsByBarcode.get(key);
+    if (arr) {
+      if (!arr.includes(entry)) arr.push(entry);
+    } else {
+      countsByBarcode.set(key, [entry]);
+    }
+  };
   for (const c of counts) {
-    const arr = countsByBarcode.get(c.barcode);
-    if (arr) arr.push(c);
-    else countsByBarcode.set(c.barcode, [c]);
+    addCountToMap(c.barcode, c);
+    const normBc = normalizeBarcode(c.barcode);
+    if (normBc && normBc !== c.barcode) addCountToMap(normBc, c);
   }
 
   const allRows = buildReport(products, counts, {
@@ -126,7 +147,7 @@ async function drawReportContent(root: HTMLElement, params: URLSearchParams, seq
       rows.slice(0, 150).map((r) => {
         const badgeClass = r.status === 'ok' ? 'badge ok' : r.status === 'faltante' ? 'badge error' : r.status === 'sobrante' ? 'badge info' : 'badge warn';
         const idealVal = r.idealQty ?? r.expected;
-        const idealDiff = idealVal !== undefined ? r.counted - idealVal : r.diff;
+        const idealDiff = idealVal !== undefined ? Math.round((r.counted - idealVal) * 1000) / 1000 : r.diff;
         const idealDiffText = idealDiff === undefined ? '' : idealDiff > 0 ? `+${fmtNum(idealDiff)}` : fmtNum(idealDiff);
         return h('li', {
           class: `r-item ${r.status}`,
@@ -407,6 +428,9 @@ export const reportView: View = {
     reportMounted = true;
     const seq = ++reportRenderSeq;
     lastReportDataFp = '';
+
+    await loadSettings();
+    if (!reportMounted || seq !== reportRenderSeq) return;
 
     if (unbindCloudSync) {
       unbindCloudSync();

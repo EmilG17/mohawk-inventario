@@ -1,4 +1,5 @@
 import { allProducts, type Product } from '../db/db';
+import { L } from '../i18n/i18n';
 import { displayBarcode } from '../io/normalize';
 import { renderCode128Svg, renderPrecut3in1Html, stripSkuNumberText } from '../barcode/code128';
 import { applyPrintPageStyle, downloadPng, downloadSvg } from '../barcode/barcodeExport';
@@ -266,7 +267,7 @@ export function renderLabelSlot(
     : displayBarcode(rawCode);
   const codeText = stripSkuNumberText(rawDisplay) || rawDisplay;
   const cleanSku = stripSkuNumberText(product.sku || '');
-  const descText = stripSkuNumberText(product.description?.trim() || '') || 'Sin descripción';
+  const descText = stripSkuNumberText(product.description?.trim() || '') || L('Sin descripción', 'No description');
 
   const tmplConfig = TEMPLATES[template] || TEMPLATES.intermec_composite;
 
@@ -274,13 +275,17 @@ export function renderLabelSlot(
     const compSlot = h('div', {
       class: `sheet-label composite-3in1-label ${border ? 'with-border' : ''}`,
     });
-    compSlot.innerHTML = renderPrecut3in1Html({
-      barcode: codeText,
-      sku: cleanSku || codeText,
-      description: descText,
-      brand: product.brand || 'MOHAWK',
-      unit: product.unit || '',
-    });
+    try {
+      compSlot.innerHTML = renderPrecut3in1Html({
+        barcode: codeText,
+        sku: cleanSku || codeText,
+        description: descText,
+        brand: product.brand || 'MOHAWK',
+        unit: product.unit || '',
+      });
+    } catch {
+      compSlot.innerHTML = `<span class="muted small">${L('Código no compatible con Code128', 'Code128 unsupported barcode')}</span>`;
+    }
     return compSlot;
   }
 
@@ -296,19 +301,28 @@ export function renderLabelSlot(
   const moduleWidth = btProfile ? btProfile.moduleWidthPx : (tmplConfig.moduleWidth ?? 2);
   const includeText = btProfile ? btProfile.includeHumanReadable : true;
 
-  const svgMarkup = renderCode128Svg(codeText, codeText, {
-    height: barHeight,
-    fontSize,
-    width: moduleWidth,
-    margin: 2,
-    includeText,
-  });
+  let svgMarkup = '';
+  try {
+    svgMarkup = renderCode128Svg(codeText, codeText, {
+      height: barHeight,
+      fontSize,
+      width: moduleWidth,
+      margin: 2,
+      includeText,
+    });
+  } catch {
+    svgMarkup = `<span class="muted small">${L('Código no compatible con Code128', 'Code128 unsupported barcode')}</span>`;
+  }
 
   const footerParts: string[] = [];
+  const explicitlyControlledFooter = bartenderProfile?.includeFooter;
   const shouldHideFooter =
-    tmplConfig.hideFooterByDefault &&
-    !options.bartenderProfile?.includeFooter &&
-    (template === 'intermec325x2' || template === 'intermec397x6');
+    explicitlyControlledFooter !== undefined
+      ? !explicitlyControlledFooter
+      : Boolean(
+          tmplConfig.hideFooterByDefault &&
+            (template === 'intermec325x2' || template === 'intermec397x6'),
+        );
 
   if (!shouldHideFooter) {
     if (showSku && cleanSku && cleanSku !== codeText) {
@@ -368,11 +382,12 @@ export interface BarcodeSheetDialogOptions {
  */
 export function openBarcodeSheetDialog(
   productsOrOptions?: Product[] | BarcodeSheetDialogOptions,
-  defaultTitle = 'Generar etiquetas de códigos de barras',
+  defaultTitle = L('Generar etiquetas de códigos de barras', 'Generate barcode labels'),
 ): void {
   let initialProducts: Product[] = [];
   let initialQuantities: Record<string, number> = {};
   let dialogTitle = defaultTitle;
+  let dialogOpen = true;
 
   if (Array.isArray(productsOrOptions)) {
     initialProducts = productsOrOptions;
@@ -389,7 +404,7 @@ export function openBarcodeSheetDialog(
   if (initialProducts.length > 0) {
     const queueMap = new Map<string, PrintQueueItem>();
     for (const item of existingQueue) {
-      queueMap.set(item.product.barcode, { ...item });
+      queueMap.set(item.product.barcode, { product: { ...item.product }, quantity: item.quantity });
     }
 
     for (const p of initialProducts) {
@@ -404,8 +419,8 @@ export function openBarcodeSheetDialog(
       }
     }
 
-    queue = Array.from(queueMap.values());
-    savePrintQueue(queue);
+    savePrintQueue(Array.from(queueMap.values()));
+    queue = getPrintQueue();
   } else {
     queue = existingQueue;
   }
@@ -414,8 +429,13 @@ export function openBarcodeSheetDialog(
   const savedTemplate = (typeof localStorage !== 'undefined' ? localStorage.getItem(PREF_KEY) : null) as LabelTemplate | null;
   let selectedTemplate: LabelTemplate = (savedTemplate && TEMPLATES[savedTemplate]) ? savedTemplate : 'intermec_composite';
   let startingOffset = 0;
-  let showSku = true;
-  let showUnit = true;
+  const savedProfile = getSavedBartenderProfile();
+  let showSku = savedTemplate === 'intermec325x2_full' || savedTemplate === 'intermec397x6_full'
+    ? true
+    : savedTemplate === 'intermec325x2' || savedTemplate === 'intermec397x6'
+      ? Boolean(savedProfile.includeFooter)
+      : true;
+  let showUnit = showSku;
   let showBorder = true;
 
   const previewWrap = h('div', { class: 'sheet-preview-wrap', 'data-testid': 'sheet-preview' });
@@ -426,7 +446,7 @@ export function openBarcodeSheetDialog(
   // Cache del catálogo completo para el buscador interactivo
   let catalogCache: Product[] = [];
   allProducts().then((prods) => {
-    catalogCache = prods;
+    if (dialogOpen) catalogCache = prods;
   }).catch(() => {});
 
   const templateSelect = h(
@@ -478,7 +498,7 @@ export function openBarcodeSheetDialog(
   const searchInput = h('input', {
     type: 'search',
     class: 'input',
-    placeholder: 'Buscar y añadir otro producto a esta hoja (nombre, SKU o código)...',
+    placeholder: L('Buscar y añadir otro producto a esta hoja (nombre, SKU o código)...', 'Search and add another product to this sheet (name, SKU, or code)...'),
   }) as HTMLInputElement;
 
   const searchDropdown = h('div', { class: 'queue-search-dropdown', style: 'display: none;' });
@@ -499,7 +519,7 @@ export function openBarcodeSheetDialog(
     if (matches.length === 0) {
       clear(
         searchDropdown,
-        h('div', { class: 'muted small', style: 'padding: 10px;' }, 'No se encontraron productos coincidentes.'),
+        h('div', { class: 'muted small', style: 'padding: 10px;' }, L('No se encontraron productos coincidentes.', 'No matching products found.')),
       );
       searchDropdown.style.display = 'block';
       return;
@@ -517,16 +537,16 @@ export function openBarcodeSheetDialog(
               searchInput.value = '';
               searchDropdown.style.display = 'none';
               clear(searchDropdown);
-              toast(`"${p.description || p.barcode}" añadido a la hoja`, 'ok');
+              toast(`"${p.description || p.barcode}" ${L('añadido a la hoja', 'added to sheet')}`, 'ok');
             },
           },
           h(
             'div',
             { style: 'min-width: 0;' },
-            h('div', { style: 'font-weight: 600; font-size: 13px;' }, p.description || 'Sin descripción'),
+            h('div', { style: 'font-weight: 600; font-size: 13px;' }, p.description || L('Sin descripción', 'No description')),
             h('div', { class: 'muted small' }, `${displayBarcode(p.barcode)}${p.sku ? ` · ${p.sku}` : ''}`),
           ),
-          h('button', { class: 'btn sm primary', type: 'button' }, icon('plus'), 'Añadir'),
+          h('button', { class: 'btn sm primary', type: 'button' }, icon('plus'), L('Añadir', 'Add')),
         );
         return itemEl;
       }),
@@ -544,16 +564,9 @@ export function openBarcodeSheetDialog(
     }
   };
 
-  // Función para agregar o incrementar producto en la cola
+  // Función para agregar o incrementar producto en la cola sin doble mutación
   const addOrIncrementProduct = (product: Product, qty = 1) => {
-    const existing = queue.find((item) => item.product.barcode === product.barcode);
-    if (existing) {
-      existing.quantity += qty;
-    } else {
-      queue.push({ product: { ...product }, quantity: Math.max(1, qty) });
-    }
-    // Guardar en persistencia global
-    addToPrintQueue(product, qty);
+    queue = addToPrintQueue(product, qty);
     refreshQueueList();
     updatePreview();
   };
@@ -563,7 +576,10 @@ export function openBarcodeSheetDialog(
     const distinctCount = queue.length;
     const totalLabels = queue.reduce((sum, item) => sum + item.quantity, 0);
 
-    queueSummaryEl.textContent = `${distinctCount} producto(s) · ${totalLabels} etiqueta(s) totales`;
+    queueSummaryEl.textContent = L(
+      `${distinctCount} producto(s) · ${totalLabels} etiqueta(s) totales`,
+      `${distinctCount} product(s) · ${totalLabels} total label(s)`,
+    );
 
     if (queue.length === 0) {
       clear(
@@ -571,7 +587,7 @@ export function openBarcodeSheetDialog(
         h(
           'div',
           { class: 'empty', style: 'padding: 12px; text-align: center;' },
-          'No hay productos en la cola. Usa el buscador arriba para añadir productos a esta hoja.',
+          L('No hay productos en la cola. Usa el buscador arriba para añadir productos a esta hoja.', 'No products in queue. Use the search bar above to add items to this sheet.'),
         ),
       );
       return;
@@ -579,7 +595,7 @@ export function openBarcodeSheetDialog(
 
     clear(
       queueListContainer,
-      queue.map((item, index) => {
+      queue.map((item) => {
         const prod = item.product;
         const qtyInput = h('input', {
           type: 'number',
@@ -589,8 +605,7 @@ export function openBarcodeSheetDialog(
           onchange: (e: Event) => {
             const val = parseInt((e.target as HTMLInputElement).value, 10);
             const safe = Number.isNaN(val) || val < 1 ? 1 : val;
-            item.quantity = safe;
-            setPrintQueueItemQty(prod.barcode, safe);
+            queue = setPrintQueueItemQty(prod.barcode, safe);
             refreshQueueList();
             updatePreview();
           },
@@ -604,9 +619,7 @@ export function openBarcodeSheetDialog(
             style: 'padding: 2px 6px;',
             onclick: () => {
               if (item.quantity > 1) {
-                item.quantity -= 1;
-                setPrintQueueItemQty(prod.barcode, item.quantity);
-                qtyInput.value = String(item.quantity);
+                queue = setPrintQueueItemQty(prod.barcode, item.quantity - 1);
                 refreshQueueList();
                 updatePreview();
               } else {
@@ -624,9 +637,7 @@ export function openBarcodeSheetDialog(
             class: 'btn sm ghost',
             style: 'padding: 2px 6px;',
             onclick: () => {
-              item.quantity += 1;
-              setPrintQueueItemQty(prod.barcode, item.quantity);
-              qtyInput.value = String(item.quantity);
+              queue = setPrintQueueItemQty(prod.barcode, item.quantity + 1);
               refreshQueueList();
               updatePreview();
             },
@@ -639,7 +650,7 @@ export function openBarcodeSheetDialog(
           {
             type: 'button',
             class: 'btn sm danger ghost',
-            title: 'Quitar de la hoja',
+            title: L('Quitar de la hoja', 'Remove from sheet'),
             onclick: () => {
               removeProductFromQueue(prod.barcode);
             },
@@ -653,7 +664,7 @@ export function openBarcodeSheetDialog(
           h(
             'div',
             { class: 'queue-item-meta' },
-            h('div', { class: 'queue-item-title', title: prod.description }, prod.description || 'Sin descripción'),
+            h('div', { class: 'queue-item-title', title: prod.description }, prod.description || L('Sin descripción', 'No description')),
             h(
               'div',
               { class: 'queue-item-sub' },
@@ -676,29 +687,26 @@ export function openBarcodeSheetDialog(
   };
 
   const removeProductFromQueue = (barcode: string) => {
-    queue = queue.filter((item) => item.product.barcode !== barcode);
-    removeFromPrintQueue(barcode);
+    queue = removeFromPrintQueue(barcode);
     refreshQueueList();
     updatePreview();
   };
 
   const clearEntireQueue = () => {
-    queue = [];
     clearPrintQueue();
+    queue = [];
     refreshQueueList();
     updatePreview();
-    toast('Cola de impresión vaciada');
+    toast(L('Cola de impresión vaciada', 'Print queue cleared'));
   };
 
   const setAllQuantities = (qty: number | 'expected') => {
-    for (const item of queue) {
-      if (qty === 'expected') {
-        item.quantity = Math.max(1, Math.round(item.product.expectedQty ?? 1));
-      } else {
-        item.quantity = Math.max(1, qty);
-      }
-      setPrintQueueItemQty(item.product.barcode, item.quantity);
-    }
+    const updated = queue.map((item) => ({
+      product: { ...item.product },
+      quantity: qty === 'expected' ? Math.max(1, Math.round(item.product.expectedQty ?? 1)) : Math.max(1, qty),
+    }));
+    savePrintQueue(updated);
+    queue = getPrintQueue();
     refreshQueueList();
     updatePreview();
   };
@@ -741,12 +749,14 @@ export function openBarcodeSheetDialog(
         if (slotItem === null) {
           pageEl.appendChild(renderBlankSlot(selectedTemplate));
         } else {
+          const baseProfile = getSavedBartenderProfile();
           pageEl.appendChild(
             renderLabelSlot(slotItem, {
               showSku,
               showUnit,
               template: selectedTemplate,
               border: isForPrint ? false : showBorder,
+              bartenderProfile: { ...baseProfile, includeFooter: showSku || showUnit },
             }),
           );
         }
@@ -766,16 +776,24 @@ export function openBarcodeSheetDialog(
       (items.length + (startingOffset % config.perSheet)) / config.perSheet,
     );
 
-    countSummary.textContent = `${items.length} etiqueta(s) · ${totalPages || 1} página(s)`;
+    countSummary.textContent = L(
+      `${items.length} etiqueta(s) · ${totalPages || 1} página(s)`,
+      `${items.length} label(s) · ${totalPages || 1} page(s)`,
+    );
     previewHint.textContent =
       config.perSheet === 1
-        ? 'Formato térmico (1 etiqueta por página): en el cuadro de impresión selecciona Margen "Ninguno" y Escala "100%".'
-        : 'Nota para imprimir en hoja Avery: en el cuadro de impresión selecciona Margen "Ninguno" y Escala "100%".';
+        ? L(
+            'Formato térmico (1 etiqueta por página): en el cuadro de impresión selecciona Margen "Ninguno" y Escala "100%".',
+            'Thermal format (1 label per page): in the print dialog select Margins "None" and Scale "100%".',
+          )
+        : L(
+            'Nota para imprimir en hoja Avery: en el cuadro de impresión selecciona Margen "Ninguno" y Escala "100%".',
+            'Avery sheet note: in the print dialog select Margins "None" and Scale "100%".',
+          );
     clear(previewWrap, ...renderPagesDom(false));
   };
 
   const preparePrintContainer = () => {
-    // Limpiar cualquier residuo de impresión individual previo
     const singleRoot = document.getElementById('single-print-root');
     if (singleRoot) {
       singleRoot.innerHTML = '';
@@ -794,39 +812,53 @@ export function openBarcodeSheetDialog(
 
   const doPrint = () => {
     if (queue.length === 0) {
-      toast('No hay productos en la cola para imprimir', 'warn');
+      toast(L('No hay productos en la cola para imprimir', 'No products in queue to print'), 'warn');
       return;
     }
     const config = TEMPLATES[selectedTemplate];
     applyPrintPageStyle(config.pageSize);
     preparePrintContainer();
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+      window.addEventListener('afterprint', () => {
+        const pr = document.getElementById('print-sheet-root');
+        if (pr) pr.innerHTML = '';
+      }, { once: true });
+    }
     window.print();
   };
 
   const doDownloadSvg = () => {
     const first = queue[0]?.product;
     if (!first) {
-      toast('No hay productos en la cola', 'warn');
+      toast(L('No hay productos en la cola', 'No products in queue'), 'warn');
       return;
     }
     const rawCode = first.barcode;
     const codeText = rawCode.startsWith('SKU:') ? first.sku || rawCode.slice(4) : displayBarcode(rawCode);
-    const svgMarkup = renderCode128Svg(codeText, codeText, { height: 40, includeText: true });
-    downloadSvg(svgMarkup, `${codeText}_etiqueta`);
-    toast('Etiqueta SVG descargada', 'ok');
+    try {
+      const svgMarkup = renderCode128Svg(codeText, codeText, { height: 40, includeText: true });
+      downloadSvg(svgMarkup, `${codeText}_etiqueta`);
+      toast(L('Etiqueta SVG descargada', 'SVG label downloaded'), 'ok');
+    } catch {
+      toast(L('El código contiene caracteres incompatibles con Code128', 'Code contains characters incompatible with Code128'), 'error');
+    }
   };
 
   const doDownloadPng = async () => {
     const first = queue[0]?.product;
     if (!first) {
-      toast('No hay productos en la cola', 'warn');
+      toast(L('No hay productos en la cola', 'No products in queue'), 'warn');
       return;
     }
     const rawCode = first.barcode;
     const codeText = rawCode.startsWith('SKU:') ? first.sku || rawCode.slice(4) : displayBarcode(rawCode);
-    const svgMarkup = renderCode128Svg(codeText, codeText, { height: 40, includeText: true });
-    await downloadPng(svgMarkup, `${codeText}_etiqueta`, 3);
-    toast('Etiqueta PNG (300 DPI) descargada', 'ok');
+    try {
+      const svgMarkup = renderCode128Svg(codeText, codeText, { height: 40, includeText: true });
+      await downloadPng(svgMarkup, `${codeText}_etiqueta`, 3);
+      toast(L('Etiqueta PNG (300 DPI) descargada', 'PNG label (300 DPI) downloaded'), 'ok');
+    } catch {
+      toast(L('El código contiene caracteres incompatibles con Code128', 'Code contains characters incompatible with Code128'), 'error');
+    }
   };
 
   // Inicializar vista y dimensiones de página para impresión
@@ -944,14 +976,22 @@ export function openBarcodeSheetDialog(
               saveBartenderProfile(profile);
               selectedTemplate = profile.includeFooter ? 'intermec325x2_full' : 'intermec325x2';
               templateSelect.value = selectedTemplate;
+              showSku = profile.includeFooter;
+              showUnit = profile.includeFooter;
               if (typeof localStorage !== 'undefined') {
                 try { localStorage.setItem(PREF_KEY, selectedTemplate); } catch {}
               }
               applyPrintPageStyle(TEMPLATES[selectedTemplate].pageSize);
               updatePreview();
-              toast(`Formato BarTender "${file.name}" cargado (${profile.labelWidthIn}"×${profile.labelHeightIn}", 1 etiqueta por página)`, 'ok');
+              toast(
+                L(
+                  `Formato BarTender "${file.name}" cargado (${profile.labelWidthIn}"×${profile.labelHeightIn}", 1 etiqueta por página)`,
+                  `BarTender format "${file.name}" loaded (${profile.labelWidthIn}"×${profile.labelHeightIn}", 1 label per page)`,
+                ),
+                'ok',
+              );
             } catch {
-              toast('Error al leer el archivo BarTender', 'error');
+              toast(L('Error al leer el archivo BarTender', 'Failed to read BarTender file'), 'error');
             }
           },
         }) as HTMLInputElement;
@@ -961,13 +1001,12 @@ export function openBarcodeSheetDialog(
             type: 'button',
             class: 'btn sm ghost',
             onclick: () => fileInput.click(),
-            title: 'Importar archivo de etiqueta BarTender (.btw) o archivo de comandos (.prn, .zpl)',
+            title: L('Importar archivo de etiqueta BarTender (.btw) o archivo de comandos (.prn, .zpl)', 'Import BarTender (.btw) or command (.prn, .zpl) file'),
           },
           icon('upload'),
-          'Cargar formato BarTender (.btw)',
-          fileInput,
+          L('Cargar formato BarTender (.btw)', 'Load BarTender format (.btw)'),
         );
-        return uploadBtn;
+        return h('span', { style: 'display: contents;' }, uploadBtn, fileInput);
       })(),
     ),
     // Previsualización de la hoja
@@ -977,7 +1016,7 @@ export function openBarcodeSheetDialog(
         class: 'row',
         style: 'justify-content: space-between; align-items: center; margin: 4px 0;',
       },
-      h('h4', { style: 'margin: 0;' }, 'Previsualización de hoja'),
+      h('h4', { style: 'margin: 0;' }, L('Previsualización de hoja', 'Sheet preview')),
       countSummary,
     ),
     previewHint,
@@ -994,7 +1033,7 @@ export function openBarcodeSheetDialog(
           onclick: doPrint,
         },
         icon('scan'),
-        'Imprimir etiquetas',
+        L('Imprimir etiquetas', 'Print labels'),
       ),
       h(
         'button',
@@ -1004,7 +1043,7 @@ export function openBarcodeSheetDialog(
           onclick: doDownloadSvg,
         },
         icon('download'),
-        'Descargar SVG',
+        L('Descargar SVG', 'Download SVG'),
       ),
       h(
         'button',
@@ -1014,12 +1053,15 @@ export function openBarcodeSheetDialog(
           onclick: () => void doDownloadPng(),
         },
         icon('download'),
-        'Descargar PNG',
+        L('Descargar PNG', 'Download PNG'),
       ),
     ),
   );
 
-  openDialog(dialogTitle, body, [{ label: 'Cerrar' }]);
+  const dlg = openDialog(dialogTitle, body, [{ label: L('Cerrar', 'Close') }]);
+  dlg.addEventListener('close', () => {
+    dialogOpen = false;
+  });
 }
 
 // Exponer en window para E2E testing

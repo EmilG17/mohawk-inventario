@@ -182,9 +182,17 @@ export function parseBartenderBuffer(
 
 let memoryProfile: BartenderFormatProfile | null = null;
 
+function cloneProfile(p: BartenderFormatProfile): BartenderFormatProfile {
+  return {
+    ...p,
+    detectedFonts: [...p.detectedFonts],
+    detectedTexts: [...p.detectedTexts],
+  };
+}
+
 export function getSavedBartenderProfile(): BartenderFormatProfile {
   if (memoryProfile !== null) {
-    return { ...memoryProfile };
+    return cloneProfile(memoryProfile);
   }
   if (typeof localStorage !== 'undefined') {
     try {
@@ -194,15 +202,17 @@ export function getSavedBartenderProfile(): BartenderFormatProfile {
         const merged: BartenderFormatProfile = {
           ...DEFAULT_BARTENDER_PROFILE,
           ...parsed,
+          detectedFonts: Array.isArray(parsed.detectedFonts) ? [...parsed.detectedFonts] : [...DEFAULT_BARTENDER_PROFILE.detectedFonts],
+          detectedTexts: Array.isArray(parsed.detectedTexts) ? [...parsed.detectedTexts] : [],
         };
         memoryProfile = merged;
-        return { ...merged };
+        return cloneProfile(merged);
       }
     } catch {
       // Fallback a memoria
     }
   }
-  return { ...DEFAULT_BARTENDER_PROFILE };
+  return cloneProfile(DEFAULT_BARTENDER_PROFILE);
 }
 
 export function saveBartenderProfile(profile: Partial<BartenderFormatProfile>): BartenderFormatProfile {

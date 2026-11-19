@@ -3,13 +3,14 @@ import { L, detectDeviceLang, type LangPref } from '../i18n/i18n';
 import { buildCatalogFile, buildCatalogWorkbook } from '../io/exportResults';
 import { reconcileCatalogProducts } from '../io/mergeCounts';
 import { loadSampleCatalog } from '../sampleData';
-import { loadSettings, saveSettings } from '../settings';
+import { _resetSettingsCache, loadSettings, saveSettings } from '../settings';
 import {
   checkRoomExistsInDb,
   getCloudConnectionStatus,
   listAvailableRoomsInDb,
   normalizeEndpointBaseUrl,
   normalizeRoomCode,
+  onCloudStatusChange,
   startLiveCloudSync,
   stopLiveCloudSync,
   syncCatalogWithDb,
@@ -17,10 +18,21 @@ import {
   testFirebaseConnection,
   triggerBackgroundSync,
 } from '../sync/cloudSync';
+import { clearLocalStorageRoomMirrors } from '../sync/roomMirror';
 import { notifyLanguageChanged } from './app';
 import { importCatalogFlow } from './catalog';
-import { isMobileCatalogReadOnly, isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
-import { promptSupervisorPin, switchToSupervisorSession, switchToTechnicianSession } from './supervisorAuth';
+import {
+  isMobileCatalogReadOnly,
+  isMobileViewport,
+  isStrictTechnicianClient,
+  isSupervisorModeEnabled,
+} from './catalogMode';
+import {
+  isValidSupervisorPin,
+  promptSupervisorPin,
+  switchToSupervisorSession,
+  switchToTechnicianSession,
+} from './supervisorAuth';
 import {
   clear, confirmDialog, downloadFile, fmtNum, h, icon, MIME, shareOrDownload, toast,
 } from './dom';
@@ -28,15 +40,30 @@ import { navigate, type View } from './router';
 
 let settingsMounted = false;
 let settingsRenderSeq = 0;
+let settingsCheckTimer: ReturnType<typeof setTimeout> | null = null;
+let unsubSettingsCloud: (() => void) | null = null;
+
+function cleanupSettingsResources(): void {
+  if (settingsCheckTimer) {
+    clearTimeout(settingsCheckTimer);
+    settingsCheckTimer = null;
+  }
+  if (unsubSettingsCloud) {
+    unsubSettingsCloud();
+    unsubSettingsCloud = null;
+  }
+}
 
 export const settingsView: View = {
   title: () => L('Ajustes', 'Settings'),
   async render(root, params) {
+    cleanupSettingsResources();
     settingsMounted = true;
     const seq = ++settingsRenderSeq;
     const readOnlyMobile = isMobileCatalogReadOnly();
     const mobileViewport = isMobileViewport();
     const supervisorUI = isSupervisorModeEnabled();
+    const strictTech = isStrictTechnicianClient();
     const [s, products] = await Promise.all([loadSettings(), allProducts()]);
     if (!settingsMounted || seq !== settingsRenderSeq) return;
     const totalProds = products.length;
@@ -75,15 +102,15 @@ export const settingsView: View = {
       placeholder: 'api/upc',
     }) as HTMLInputElement;
 
-    const syncEnabledCheck = h('input', { type: 'checkbox', checked: s.syncEnabled }) as HTMLInputElement;
-    const syncAutoCheck = h('input', { type: 'checkbox', checked: s.syncAuto }) as HTMLInputElement;
+    const syncEnabledCheck = h('input', { type: 'checkbox', checked: s.syncEnabled, disabled: strictTech }) as HTMLInputElement;
+    const syncAutoCheck = h('input', { type: 'checkbox', checked: s.syncAuto, disabled: strictTech }) as HTMLInputElement;
     const supervisorCheck = h('input', {
       type: 'checkbox',
-      checked: Boolean(s.supervisorMode),
+      checked: supervisorUI,
       'data-testid': 'settings-supervisor-mode-toggle',
     }) as HTMLInputElement;
 
-    const isSupervisor = isSupervisorModeEnabled();
+    const isSupervisor = supervisorUI;
     const roleSelect = h('select', {
       class: 'input input-sm',
       'data-testid': 'settings-role-select',
@@ -99,16 +126,18 @@ export const settingsView: View = {
       pattern: '[0-9]*',
       inputmode: 'numeric',
       value: s.supervisorPin || '1234',
-      placeholder: '1234',
+      placeholder: '****',
     }) as HTMLInputElement;
 
     const roomDatalist = h('datalist', { id: 'settings-rooms-datalist' });
     const roomStatusBadge = h('div', { class: 'small muted', style: 'margin-top: 4px; min-height: 18px;' });
 
-    let checkTimer: ReturnType<typeof setTimeout> | null = null;
     const verifyRoomStatus = () => {
-      if (checkTimer) clearTimeout(checkTimer);
-      checkTimer = setTimeout(async () => {
+      if (settingsCheckTimer) clearTimeout(settingsCheckTimer);
+      if (strictTech) return;
+      settingsCheckTimer = setTimeout(async () => {
+        settingsCheckTimer = null;
+        if (!settingsMounted || seq !== settingsRenderSeq) return;
         const cleanRoom = normalizeRoomCode(syncRoomInput.value);
         const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
         if (!cleanRoom || !cleanEndpoint) {
@@ -116,6 +145,7 @@ export const settingsView: View = {
           return;
         }
         const res = await checkRoomExistsInDb(cleanEndpoint, cleanRoom);
+        if (!settingsMounted || seq !== settingsRenderSeq) return;
         if (res.exists) {
           roomStatusBadge.className = 'small pos';
           roomStatusBadge.textContent = `✓ ${L('Sala existente en Firebase', 'Existing room in Firebase')}`;
@@ -127,10 +157,12 @@ export const settingsView: View = {
     };
 
     const loadAvailableRooms = async () => {
+      if (strictTech) return;
       const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
       if (!cleanEndpoint) return;
       try {
         const rooms = await listAvailableRoomsInDb(cleanEndpoint);
+        if (!settingsMounted || seq !== settingsRenderSeq) return;
         clear(roomDatalist);
         for (const r of rooms) {
           roomDatalist.appendChild(h('option', { value: r.roomCode }, r.sessionName || r.roomCode));
@@ -144,6 +176,7 @@ export const settingsView: View = {
       placeholder: L('Ej. MHK-PLANTA-1', 'e.g. MHK-PLANT-1'),
       list: 'settings-rooms-datalist',
       style: 'text-transform: uppercase;',
+      disabled: strictTech,
       oninput: verifyRoomStatus,
       onblur: () => {
         const clean = normalizeRoomCode(syncRoomInput.value);
@@ -156,6 +189,7 @@ export const settingsView: View = {
       class: 'input input-sm',
       value: s.syncEndpointUrl,
       placeholder: 'https://tu-proyecto-default-rtdb.firebaseio.com',
+      disabled: strictTech,
       onblur: () => {
         const clean = normalizeEndpointBaseUrl(syncEndpointInput.value);
         if (clean) syncEndpointInput.value = clean;
@@ -164,22 +198,36 @@ export const settingsView: View = {
       },
     }) as HTMLInputElement;
 
-    void loadAvailableRooms();
-    verifyRoomStatus();
+    if (!strictTech) {
+      void loadAvailableRooms();
+      verifyRoomStatus();
+    }
 
     const diagBox = h('div', { class: 'sup-diag-box', style: 'display:none' });
 
     const persistSettings = async (silent = false) => {
-      const cleanRoom = normalizeRoomCode(syncRoomInput.value);
-      const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value);
-      syncRoomInput.value = cleanRoom;
-      syncEndpointInput.value = cleanEndpoint;
+      const cleanRoom = strictTech ? s.syncRoomCode : normalizeRoomCode(syncRoomInput.value);
+      const cleanEndpoint = strictTech ? s.syncEndpointUrl : normalizeEndpointBaseUrl(syncEndpointInput.value);
+      if (!strictTech) {
+        syncRoomInput.value = cleanRoom;
+        syncEndpointInput.value = cleanEndpoint;
+      }
 
       const prevLang = s.language ?? 'auto';
       const nextLang = (langSelect.value as LangPref) || 'auto';
 
-      const selectedRole = (roleSelect.value as 'supervisor' | 'technician') || 'technician';
-      const isSup = selectedRole === 'supervisor';
+      let nextPin: string | undefined;
+      if (supervisorUI) {
+        const rawPin = pinInput.value.trim();
+        if (!isValidSupervisorPin(rawPin)) {
+          toast(L('El PIN de supervisor debe tener exactamente 4 dígitos numéricos.', 'Supervisor PIN must be exactly 4 numeric digits.'), 'error');
+          return;
+        }
+        nextPin = rawPin;
+      }
+
+      const nextSyncEnabled = strictTech ? s.syncEnabled : syncEnabledCheck.checked;
+      const nextSyncAuto = strictTech ? s.syncAuto : syncAutoCheck.checked;
 
       await saveSettings({
         counterName: nameInput.value.trim(),
@@ -190,23 +238,21 @@ export const settingsView: View = {
         quickMode: quickCheck.checked,
         showExpected: showExpCheck.checked,
         currency: (currInput.value.trim() || 'MXN').toUpperCase(),
-        syncEnabled: syncEnabledCheck.checked,
-        syncAuto: syncAutoCheck.checked,
+        syncEnabled: nextSyncEnabled,
+        syncAuto: nextSyncAuto,
         syncRoomCode: cleanRoom,
         syncEndpointUrl: cleanEndpoint,
-        supervisorMode: supervisorCheck.checked || isSup,
-        userRole: selectedRole,
-        supervisorPin: pinInput.value.trim() || '1234',
+        ...(nextPin ? { supervisorPin: nextPin } : {}),
         language: nextLang,
       });
 
-      document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
-
-      if (syncEnabledCheck.checked && cleanRoom) {
-        startLiveCloudSync({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
-        void syncNow({ roomCode: cleanRoom, endpointUrl: cleanEndpoint }).catch(() => {});
-      } else {
-        stopLiveCloudSync();
+      if (!strictTech) {
+        if (nextSyncEnabled && cleanRoom) {
+          startLiveCloudSync({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
+          void syncNow({ roomCode: cleanRoom, endpointUrl: cleanEndpoint }).catch(() => {});
+        } else {
+          stopLiveCloudSync();
+        }
       }
       if (prevLang !== nextLang) notifyLanguageChanged();
       if (!silent) toast(L('Ajustes guardados', 'Settings saved'), 'ok');
@@ -215,7 +261,9 @@ export const settingsView: View = {
     // Auto-save toggles immediately so the user doesn't forget to hit save
     [beepCheck, vibCheck, quickCheck, showExpCheck, lookupCheck, syncEnabledCheck, syncAutoCheck].forEach((chk) => {
       chk.addEventListener('change', () => {
-        void persistSettings(true);
+        if (!strictTech || (chk !== syncEnabledCheck && chk !== syncAutoCheck)) {
+          void persistSettings(true);
+        }
       });
     });
 
@@ -232,7 +280,7 @@ export const settingsView: View = {
       void (async () => {
         const nextRole = (roleSelect.value as 'supervisor' | 'technician') || 'technician';
         const isSup = nextRole === 'supervisor';
-        if (isSup && !isSupervisorModeEnabled() && isMobileViewport()) {
+        if (isSup && !isSupervisorModeEnabled()) {
           const ok = await promptSupervisorPin();
           if (!ok) {
             roleSelect.value = 'technician';
@@ -242,8 +290,6 @@ export const settingsView: View = {
           await switchToSupervisorSession();
         } else if (!isSup) {
           await switchToTechnicianSession();
-        } else {
-          await saveSettings({ userRole: nextRole, supervisorMode: isSup });
         }
         supervisorCheck.checked = isSupervisorModeEnabled();
         document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
@@ -254,7 +300,7 @@ export const settingsView: View = {
     supervisorCheck.addEventListener('change', () => {
       void (async () => {
         const isSup = supervisorCheck.checked;
-        if (isSup && !isSupervisorModeEnabled() && isMobileViewport()) {
+        if (isSup && !isSupervisorModeEnabled()) {
           const ok = await promptSupervisorPin();
           if (!ok) {
             supervisorCheck.checked = false;
@@ -264,8 +310,6 @@ export const settingsView: View = {
           await switchToSupervisorSession();
         } else if (!isSup) {
           await switchToTechnicianSession();
-        } else {
-          await saveSettings({ supervisorMode: isSup, userRole: isSup ? 'supervisor' : 'technician' });
         }
         roleSelect.value = isSupervisorModeEnabled() ? 'supervisor' : 'technician';
         document.getElementById('app')?.setAttribute('data-supervisor', String(isSupervisorModeEnabled()));
@@ -283,6 +327,20 @@ export const settingsView: View = {
       );
 
     const cloudState = getCloudConnectionStatus();
+    const card3StatusPill = h('span', {
+      class: `sup-live-pill ${cloudState.state === 'connected' ? 'live' : cloudState.state === 'error' ? 'error' : 'local'}`,
+    }, cloudState.state === 'connected' ? L('● En vivo', '● Live') : cloudState.state === 'error' ? L('● Error', '● Error') : L('● Local', '● Local'));
+
+    unsubSettingsCloud = onCloudStatusChange((st) => {
+      if (!settingsMounted || seq !== settingsRenderSeq) return;
+      card3StatusPill.className = `sup-live-pill ${st.state === 'connected' ? 'live' : st.state === 'error' ? 'error' : 'local'}`;
+      card3StatusPill.textContent = st.state === 'connected'
+        ? L('● En vivo', '● Live')
+        : st.state === 'error'
+          ? L('● Error', '● Error')
+          : L('● Local', '● Local');
+    });
+
     const rerender = () => void settingsView.render(root, params);
 
     clear(root,
@@ -406,39 +464,41 @@ export const settingsView: View = {
               )
             : null,
 
-          h('div', { class: 'settings-subactions' },
-            h('button', {
-              class: 'btn ghost small',
-              onclick: async () => {
-                const count = await loadSampleCatalog();
-                if (!readOnlyMobile) triggerBackgroundSync();
-                toast(L(`${count} consumibles de ejemplo cargados`, `${count} sample items loaded`), 'ok');
-                navigate('/catalogo');
-              },
-            }, L('Cargar catálogo de ejemplo', 'Load sample catalog')),
-            !readOnlyMobile && totalProds > 0
-              ? h('button', {
-                class: 'btn ghost danger small',
-                'data-testid': 'settings-clear-catalog-btn',
-                onclick: async () => {
-                  if (await confirmDialog(
-                    L('Vaciar catálogo', 'Clear catalog'),
-                    L(
-                      `Se eliminarán los ${totalProds} productos del catálogo local (tus conteos se conservan). ¿Continuar?`,
-                      `All ${totalProds} products will be removed from the local catalog (your counts are kept). Continue?`,
-                    ),
-                    L('Vaciar', 'Clear'),
-                    true,
-                  )) {
-                    await clearProducts();
-                    triggerBackgroundSync();
-                    toast(L('Catálogo vaciado', 'Catalog cleared'), 'info');
-                    rerender();
-                  }
-                },
-              }, icon('trash'), L('Vaciar catálogo', 'Clear catalog'))
-              : null,
-          ),
+          strictTech
+            ? null
+            : h('div', { class: 'settings-subactions' },
+                h('button', {
+                  class: 'btn ghost small',
+                  onclick: async () => {
+                    const count = await loadSampleCatalog();
+                    if (!readOnlyMobile) triggerBackgroundSync();
+                    toast(L(`${count} consumibles de ejemplo cargados`, `${count} sample items loaded`), 'ok');
+                    navigate('/catalogo');
+                  },
+                }, L('Cargar catálogo de ejemplo', 'Load sample catalog')),
+                !readOnlyMobile && totalProds > 0
+                  ? h('button', {
+                    class: 'btn ghost danger small',
+                    'data-testid': 'settings-clear-catalog-btn',
+                    onclick: async () => {
+                      if (await confirmDialog(
+                        L('Vaciar catálogo', 'Clear catalog'),
+                        L(
+                          `Se eliminarán los ${totalProds} productos del catálogo local (tus conteos se conservan). ¿Continuar?`,
+                          `All ${totalProds} products will be removed from the local catalog (your counts are kept). Continue?`,
+                        ),
+                        L('Vaciar', 'Clear'),
+                        true,
+                      )) {
+                        await clearProducts();
+                        triggerBackgroundSync();
+                        toast(L('Catálogo vaciado', 'Catalog cleared'), 'info');
+                        rerender();
+                      }
+                    },
+                  }, icon('trash'), L('Vaciar catálogo', 'Clear catalog'))
+                  : null,
+              ),
         ),
 
         /* TARJETA 2: PERFIL Y COMPORTAMIENTO DE ESCANEO */
@@ -492,10 +552,17 @@ export const settingsView: View = {
         h('section', { class: 'card settings-card settings-card-wide' },
           h('div', { class: 'settings-card-head' },
             h('h3', { class: 'settings-card-title' }, L('Sincronización en Línea (Firebase Realtime DB)', 'Live Cloud Sync (Firebase Realtime DB)')),
-            h('span', {
-              class: `sup-live-pill ${cloudState.state === 'connected' ? 'live' : cloudState.state === 'error' ? 'error' : 'local'}`,
-            }, cloudState.state === 'connected' ? L('● En vivo', '● Live') : cloudState.state === 'error' ? L('● Error', '● Error') : L('● Local', '● Local')),
+            card3StatusPill,
           ),
+
+          strictTech
+            ? h('div', { class: 'catalog-readonly-banner', 'data-testid': 'settings-sync-readonly-note' },
+                L(
+                  'La sala compartida y la conexión Firebase están administradas por el Supervisor. Cambia a rol Supervisor con tu PIN para modificarlas.',
+                  'The shared room and Firebase connection are managed by the Supervisor. Switch to Supervisor role with your PIN to edit them.',
+                ),
+              )
+            : null,
 
           h('div', { class: 'settings-switch-grid settings-switch-grid-2' },
             compactToggle(L('Activar sincronización en línea', 'Enable live sync'), L('Habilita sala compartida en vivo', 'Enable live shared room'), syncEnabledCheck),
@@ -516,22 +583,26 @@ export const settingsView: View = {
           ),
 
           h('div', { class: 'row wrap', style: 'gap:8px; margin-top:10px' },
-            h('button', {
-              class: 'btn primary small',
-              onclick: () => persistSettings(false),
-            }, icon('check'), L('Guardar y conectar', 'Save & connect')),
-            h('button', {
-              class: 'btn small',
-              onclick: async () => {
-                diagBox.style.display = 'block';
-                diagBox.className = 'sup-diag-box info';
-                diagBox.textContent = L('Probando conexión con Firebase…', 'Testing Firebase connection…');
-                const res = await testFirebaseConnection(syncEndpointInput.value, syncRoomInput.value);
-                diagBox.className = `sup-diag-box ${res.ok ? 'ok' : 'error'}`;
-                diagBox.textContent = res.message;
-                syncEndpointInput.value = normalizeEndpointBaseUrl(syncEndpointInput.value);
-              },
-            }, icon('refresh'), L('Probar conexión', 'Test connection')),
+            strictTech
+              ? null
+              : h('button', {
+                  class: 'btn primary small',
+                  onclick: () => persistSettings(false),
+                }, icon('check'), L('Guardar y conectar', 'Save & connect')),
+            strictTech
+              ? null
+              : h('button', {
+                  class: 'btn small',
+                  onclick: async () => {
+                    diagBox.style.display = 'block';
+                    diagBox.className = 'sup-diag-box info';
+                    diagBox.textContent = L('Probando conexión con Firebase…', 'Testing Firebase connection…');
+                    const res = await testFirebaseConnection(syncEndpointInput.value, syncRoomInput.value);
+                    diagBox.className = `sup-diag-box ${res.ok ? 'ok' : 'error'}`;
+                    diagBox.textContent = res.message;
+                    syncEndpointInput.value = normalizeEndpointBaseUrl(syncEndpointInput.value);
+                  },
+                }, icon('refresh'), L('Probar conexión', 'Test connection')),
             h('button', {
               class: 'btn ghost small',
               onclick: () => navigate('/equipo'),
@@ -568,11 +639,14 @@ export const settingsView: View = {
                       L('Borrar todo', 'Erase all'),
                       true,
                     )) {
+                      stopLiveCloudSync();
                       const db = await getDB();
                       await db.clear('products');
                       await db.clear('counts');
                       await db.clear('sessions');
                       await db.clear('meta');
+                      clearLocalStorageRoomMirrors();
+                      _resetSettingsCache();
                       toast(L('Datos borrados', 'Data cleared'));
                       location.reload();
                     }
@@ -587,5 +661,6 @@ export const settingsView: View = {
   destroy() {
     settingsMounted = false;
     settingsRenderSeq++;
+    cleanupSettingsResources();
   },
 };
