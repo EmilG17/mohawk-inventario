@@ -110,13 +110,12 @@ export const settingsView: View = {
       'data-testid': 'settings-supervisor-mode-toggle',
     }) as HTMLInputElement;
 
-    const isSupervisor = supervisorUI;
     const roleSelect = h('select', {
       class: 'input input-sm',
       'data-testid': 'settings-role-select',
     },
-      h('option', { value: 'supervisor', selected: isSupervisor }, L('Supervisor (Centro de Gestión y Auditoría)', 'Supervisor (Management & Audit Hub)')),
-      h('option', { value: 'technician', selected: !isSupervisor }, L('Cliente-Técnico (Escaneo protegido)', 'Client-Technician (Protected scanning)')),
+      h('option', { value: 'supervisor', selected: supervisorUI }, L('Supervisor (Centro de Gestión)', 'Supervisor (Control Hub)')),
+      h('option', { value: 'technician', selected: !supervisorUI }, L('Cliente-Técnico (Terminal)', 'Technician (Terminal)')),
     ) as HTMLSelectElement;
 
     const pinInput = h('input', {
@@ -462,7 +461,18 @@ export const settingsView: View = {
                   'On mobile the catalog is read-only: you can sync and reconcile with the DB or export files; importing or clearing the catalog is only available on desktop.',
                 ),
               )
-            : null,
+            : h(
+                'div',
+                { class: 'settings-catalog-summary' },
+                h('div', { class: 'settings-catalog-summary-row' },
+                  h('span', { class: 'muted small' }, L('Estado de sincronización', 'Sync status')),
+                  h('b', { class: 'small' }, s.syncEnabled && s.syncRoomCode ? `${L('Sala', 'Room')} ${s.syncRoomCode}` : L('Catálogo local', 'Local catalog')),
+                ),
+                h('div', { class: 'settings-catalog-summary-row' },
+                  h('span', { class: 'muted small' }, L('Modo de edición', 'Edit mode')),
+                  h('b', { class: 'small' }, supervisorUI ? L('Supervisor · Edición completa', 'Supervisor · Full edit') : L('Solo lectura', 'Read-only')),
+                ),
+              ),
 
           strictTech
             ? null
@@ -519,22 +529,24 @@ export const settingsView: View = {
           ),
 
           supervisorUI
-            ? h('div', { class: 'settings-row-2col' },
+            ? h('div', { class: 'settings-row-3col' },
+                h('label', { class: 'field compact-field' },
+                  h('span', null, L('Idioma de la aplicación', 'Application language')),
+                  langSelect,
+                ),
                 h('label', { class: 'field compact-field' },
                   h('span', null, L('Moneda (Reporte)', 'Currency (Report)')),
                   currInput,
                 ),
                 h('label', { class: 'field compact-field' },
-                  h('span', null, L('PIN de Supervisor (Móvil)', 'Supervisor PIN (Mobile)')),
+                  h('span', null, L('PIN Supervisor', 'Supervisor PIN')),
                   pinInput,
                 ),
               )
-            : null,
-
-          h('label', { class: 'field compact-field' },
-            h('span', null, L('Idioma de la aplicación', 'Application language')),
-            langSelect,
-          ),
+            : h('label', { class: 'field compact-field' },
+                h('span', null, L('Idioma de la aplicación', 'Application language')),
+                langSelect,
+              ),
 
           h('div', { class: 'settings-switch-grid' },
             mobileViewport
@@ -605,6 +617,7 @@ export const settingsView: View = {
                 }, icon('refresh'), L('Probar conexión', 'Test connection')),
             h('button', {
               class: 'btn ghost small',
+              style: 'margin-left:auto',
               onclick: () => navigate('/equipo'),
             }, L('Ir al Monitor de Supervisor →', 'Go to Supervisor Monitor →')),
           ),

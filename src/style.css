@@ -728,7 +728,7 @@ html, body {
 .row { display: flex; align-items: center; gap: 8px; }
 .row.wrap { flex-wrap: wrap; }
 .col { display: flex; flex-direction: column; gap: 8px; }
-.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.grid2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 10px; align-items: start; }
 .grow { flex: 1; min-width: 0; }
 
 /* Inputs */
@@ -3289,17 +3289,41 @@ textarea.input { min-height: 60px; resize: vertical; }
   border-top: 1px solid var(--border-subtle);
 }
 
+.settings-catalog-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.settings-catalog-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
 .settings-row-2col {
   display: grid;
-  grid-template-columns: 1fr 120px;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 10px;
-  align-items: end;
+  align-items: start;
+}
+.settings-row-3col {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(88px, 0.7fr) minmax(110px, 0.85fr);
+  gap: 10px;
+  align-items: start;
 }
 .settings-card-wide .settings-row-2col {
-  grid-template-columns: 1fr 1.4fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr);
+  align-items: start;
 }
-@media (max-width: 520px) {
+@media (max-width: 560px) {
   .settings-row-2col,
+  .settings-row-3col,
   .settings-card-wide .settings-row-2col {
     grid-template-columns: 1fr;
   }
@@ -3308,20 +3332,30 @@ textarea.input { min-height: 60px; resize: vertical; }
 .compact-field {
   margin: 0 !important;
   gap: 4px !important;
+  min-width: 0;
 }
 .compact-field > span:first-child {
   font-size: 12px;
   font-weight: 500;
   color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .settings-switch-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 8px;
+}
+.settings-switch-grid > .settings-switch-tile:last-child:nth-child(odd) {
+  grid-column: 1 / -1;
 }
 .settings-switch-grid-2 {
   grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+}
+.settings-switch-grid-2 > .settings-switch-tile:last-child:nth-child(odd) {
+  grid-column: auto;
 }
 
 .settings-switch-tile {
