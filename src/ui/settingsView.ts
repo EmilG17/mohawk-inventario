@@ -14,6 +14,7 @@ import {
   startLiveCloudSync,
   stopLiveCloudSync,
   syncCatalogWithDb,
+  syncDeltaToRemote,
   syncNow,
   testFirebaseConnection,
   triggerBackgroundSync,
@@ -293,7 +294,17 @@ export const settingsView: View = {
           return;
         }
         await saveSettings({ supervisorPin: rawPin });
-        toast(L('PIN de supervisor actualizado', 'Supervisor PIN updated'), 'ok');
+        const cleanRoom = normalizeRoomCode(syncRoomInput.value || s.syncRoomCode);
+        const cleanEndpoint = normalizeEndpointBaseUrl(syncEndpointInput.value || s.syncEndpointUrl);
+        if (cleanRoom) {
+          void syncDeltaToRemote({ roomCode: cleanRoom, endpointUrl: cleanEndpoint, sinceTimestamp: 0 })
+            .then((ok) => {
+              if (!ok) return syncNow({ roomCode: cleanRoom, endpointUrl: cleanEndpoint });
+            })
+            .catch(() => {});
+        }
+        triggerBackgroundSync();
+        toast(L('PIN de supervisor actualizado y sincronizado', 'Supervisor PIN updated and synced'), 'ok');
       })();
     });
 

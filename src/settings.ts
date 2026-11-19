@@ -28,6 +28,8 @@ export interface Settings {
   userRole?: 'supervisor' | 'technician';
   /** PIN de 4 dígitos para proteger el acceso a la sesión de Supervisor en móviles (por defecto: '1234') */
   supervisorPin?: string;
+  /** Marca de tiempo de la última modificación del PIN de supervisor para sincronización LWW en la sala */
+  supervisorPinUpdatedAt?: number;
   /** ID de la sesión activa del técnico guardada al alternar a supervisor en móvil */
   techSessionId?: string | null;
   /** ID de la sesión activa del supervisor guardada al alternar a técnico en móvil */
@@ -52,6 +54,7 @@ export const DEFAULT_SETTINGS: Settings = {
   supervisorMode: false,
   language: 'auto',
   supervisorPin: '1234',
+  supervisorPinUpdatedAt: 0,
   techSessionId: null,
   supervisorSessionId: null,
 };
@@ -85,6 +88,13 @@ export function saveSettings(patch: Partial<Settings>): Promise<Settings> {
   const run = async (): Promise<Settings> => {
     const base = cache ? { ...cache } : await loadSettings();
     const next: Settings = { ...base, ...patch };
+    if (
+      patch.supervisorPin !== undefined &&
+      patch.supervisorPinUpdatedAt === undefined &&
+      (patch.supervisorPin !== base.supervisorPin || !base.supervisorPinUpdatedAt)
+    ) {
+      next.supervisorPinUpdatedAt = Date.now();
+    }
     await setMeta('settings', next);
     cache = next;
     return { ...next };

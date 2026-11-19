@@ -178,6 +178,8 @@ export function mergeRoomStates(
       movements?: Record<string, number>;
       products?: Record<string, number>;
     };
+    supervisorPin?: string;
+    supervisorPinUpdatedAt?: number;
   },
 ): CloudRoomState {
   const roomCode = normalizeRoomCode(incoming.roomCode);
@@ -361,6 +363,21 @@ export function mergeRoomStates(
 
   const mergedLiveScanners = mergeLiveScannersMap(base?.liveScanners, incoming.liveScanners);
 
+  const basePin = base?.supervisorPin && /^\d{4}$/.test(base.supervisorPin.trim()) ? base.supervisorPin.trim() : undefined;
+  const basePinTs = basePin ? (base?.supervisorPinUpdatedAt || 0) : -1;
+  const incPin = incoming.supervisorPin && /^\d{4}$/.test(incoming.supervisorPin.trim()) ? incoming.supervisorPin.trim() : undefined;
+  const incPinTs = incPin ? (incoming.supervisorPinUpdatedAt || 0) : -1;
+
+  let mergedSupervisorPin: string | undefined;
+  let mergedSupervisorPinUpdatedAt: number | undefined;
+  if (incPin && incPinTs >= basePinTs) {
+    mergedSupervisorPin = incPin;
+    mergedSupervisorPinUpdatedAt = incPinTs > 0 ? incPinTs : undefined;
+  } else if (basePin) {
+    mergedSupervisorPin = basePin;
+    mergedSupervisorPinUpdatedAt = basePinTs > 0 ? basePinTs : undefined;
+  }
+
   return {
     app: APP_ID,
     version: 1,
@@ -374,6 +391,8 @@ export function mergeRoomStates(
     movements: mergedMovements,
     idealLevels: mergedIdealLevels,
     tombstones: mergedTombstones,
+    ...(mergedSupervisorPin ? { supervisorPin: mergedSupervisorPin } : {}),
+    ...(mergedSupervisorPinUpdatedAt ? { supervisorPinUpdatedAt: mergedSupervisorPinUpdatedAt } : {}),
   };
 }
 
@@ -411,7 +430,9 @@ export function computeDataFingerprint(state: CloudRoomState | null): string {
     .map(([k, p]) => `${k}:${p.scans}:${p.units}:${p.lastSeen}:${p.lastSku ?? ''}:${p.lastQty ?? ''}`)
     .join(';');
 
-  return `${state.sessionName || ''}|${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}|${partSig}`;
+  const pinSig = `${state.supervisorPin || ''}:${state.supervisorPinUpdatedAt || 0}`;
+
+  return `${state.sessionName || ''}|${state.counts.length}|${lastCountTs}|${countQtySum}|${countSig}|${state.products.length}|${prodSig}|${state.movements?.length ?? 0}|${lastMovTs}|${movQtySum}|${movSig}|${idealKeys}|${tombSig}|${partSig}|${pinSig}`;
 }
 
 export function computeStateFingerprint(state: CloudRoomState | null): string {

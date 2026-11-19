@@ -370,6 +370,19 @@ async function _applyIncomingRoomStateToLocalUnlocked(
     }
   }
 
+  if (mergedState.supervisorPin && /^\d{4}$/.test(mergedState.supervisorPin)) {
+    const curSettings = await loadSettings();
+    const localPinTs = curSettings.supervisorPinUpdatedAt || 0;
+    const incomingPinTs = mergedState.supervisorPinUpdatedAt || 0;
+    if (mergedState.supervisorPin !== curSettings.supervisorPin && incomingPinTs >= localPinTs) {
+      await saveSettings({
+        supervisorPin: mergedState.supervisorPin,
+        supervisorPinUpdatedAt: incomingPinTs || Date.now(),
+      });
+      hasNewChanges = true;
+    }
+  }
+
   const now = Date.now();
   if (sourceTransport === 'remote') {
     await setMeta(`lastSync_${incomingState.roomCode}`, now);
@@ -493,6 +506,8 @@ async function _doSyncNowUnlocked(opts?: {
     movements: localMovements,
     idealLevels: localIdealLevels,
     tombstones: outgoingTombstones,
+    supervisorPin: s.supervisorPin,
+    supervisorPinUpdatedAt: s.supervisorPinUpdatedAt,
   });
 
   if (mergedRoom.tombstones) {
@@ -561,6 +576,17 @@ async function _doSyncNowUnlocked(opts?: {
 
   if (mergedRoom.idealLevels) {
     await setIdealLevels(mergedRoom.idealLevels);
+  }
+
+  if (mergedRoom.supervisorPin && /^\d{4}$/.test(mergedRoom.supervisorPin)) {
+    const localPinTs = s.supervisorPinUpdatedAt || 0;
+    const roomPinTs = mergedRoom.supervisorPinUpdatedAt || 0;
+    if (mergedRoom.supervisorPin !== s.supervisorPin && roomPinTs >= localPinTs) {
+      await saveSettings({
+        supervisorPin: mergedRoom.supervisorPin,
+        supervisorPinUpdatedAt: roomPinTs || Date.now(),
+      });
+    }
   }
 
   saveLocalRoomMirror(roomCode, mergedRoom);
@@ -697,6 +723,18 @@ async function _syncDeltaToRemoteUnlocked(opts: {
     }
   }
 
+  let deltaSupervisorPin: string | undefined;
+  let deltaSupervisorPinUpdatedAt: number | undefined;
+  if (
+    s.supervisorPin &&
+    /^\d{4}$/.test(s.supervisorPin) &&
+    (s.supervisorPinUpdatedAt || 0) > (mirror?.supervisorPinUpdatedAt || 0) &&
+    (s.supervisorPin !== mirror?.supervisorPin || (s.supervisorPinUpdatedAt || 0) >= since)
+  ) {
+    deltaSupervisorPin = s.supervisorPin;
+    deltaSupervisorPinUpdatedAt = s.supervisorPinUpdatedAt;
+  }
+
   const hasDeltas =
     deltaCounts.length > 0 ||
     deltaMovements.length > 0 ||
@@ -704,7 +742,8 @@ async function _syncDeltaToRemoteUnlocked(opts: {
     Object.keys(deltaIdealLevels).length > 0 ||
     Object.keys(deltaTombCounts).length > 0 ||
     Object.keys(deltaTombMovements).length > 0 ||
-    Object.keys(deltaTombProducts).length > 0;
+    Object.keys(deltaTombProducts).length > 0 ||
+    Boolean(deltaSupervisorPin);
 
   if (!hasDeltas) {
     return true;
@@ -772,6 +811,8 @@ async function _syncDeltaToRemoteUnlocked(opts: {
       movements: Object.keys(deltaTombMovements).length > 0 ? deltaTombMovements : undefined,
       products: Object.keys(deltaTombProducts).length > 0 ? deltaTombProducts : undefined,
     },
+    supervisorPin: deltaSupervisorPin,
+    supervisorPinUpdatedAt: deltaSupervisorPinUpdatedAt,
     updatedAt: updateTs,
   };
 
@@ -812,8 +853,15 @@ async function _syncDeltaToRemoteUnlocked(opts: {
           movements: { ...(mirror.tombstones?.movements || {}), ...deltaTombMovements },
           products: { ...(mirror.tombstones?.products || {}), ...deltaTombProducts },
         },
+        ...(deltaSupervisorPin || mirror.supervisorPin
+          ? { supervisorPin: deltaSupervisorPin ?? mirror.supervisorPin }
+          : {}),
+        ...(deltaSupervisorPinUpdatedAt || mirror.supervisorPinUpdatedAt
+          ? { supervisorPinUpdatedAt: deltaSupervisorPinUpdatedAt ?? mirror.supervisorPinUpdatedAt }
+          : {}),
       };
       saveLocalRoomMirror(roomCode, nextMirror);
+      postBroadcastMessage(nextMirror);
       notifyRoomListeners(nextMirror);
     }
 
@@ -1052,7 +1100,34 @@ function connectLiveSse(endpointUrl: string, roomCode: string, subKey: string): 
           const pathStr = parsed.path;
 
           if (pathStr === '/') {
+            if (parsed.data && typeof parsed.data === 'object') {
+              const dataObj = parsed.data as Record<string, unknown>;
+              if (typeof dataObj.supervisorPin === 'string' && /^\d{4}$/.test(dataObj.supervisorPin.trim())) {
+                const newPin = dataObj.supervisorPin.trim();
+                const newPinTs = typeof dataObj.supervisorPinUpdatedAt === 'number' ? dataObj.supervisorPinUpdatedAt : Date.now();
+                const mirror = getLocalRoomMirror(roomCode);
+                if (mirror) {
+                  saveLocalRoomMirror(roomCode, { ...mirror, supervisorPin: newPin, supervisorPinUpdatedAt: newPinTs });
+                }
+                void loadSettings().then(async (cur) => {
+                  if (newPin !== cur.supervisorPin && newPinTs >= (cur.supervisorPinUpdatedAt || 0)) {
+                    await saveSettings({ supervisorPin: newPin, supervisorPinUpdatedAt: newPinTs });
+                  }
+                });
+              }
+            }
             void pullRemoteRoomQuietly(endpointUrl, roomCode);
+            return;
+          }
+
+          if (pathStr === '/supervisorPin' && typeof parsed.data === 'string' && /^\d{4}$/.test(parsed.data.trim())) {
+            const newPin = parsed.data.trim();
+            const nowTs = Date.now();
+            const mirror = getLocalRoomMirror(roomCode);
+            if (mirror) {
+              saveLocalRoomMirror(roomCode, { ...mirror, supervisorPin: newPin, supervisorPinUpdatedAt: nowTs });
+            }
+            void saveSettings({ supervisorPin: newPin, supervisorPinUpdatedAt: nowTs });
             return;
           }
 

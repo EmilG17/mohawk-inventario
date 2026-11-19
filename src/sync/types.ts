@@ -49,6 +49,8 @@ export interface RoomDeltaPayload {
     movements?: Record<string, number>;
     products?: Record<string, number>;
   };
+  supervisorPin?: string;
+  supervisorPinUpdatedAt?: number;
   updatedAt?: number;
   catalogVersion?: number;
 }
@@ -87,6 +89,8 @@ export interface CloudRoomState {
     movements?: Record<string, number>;
     products?: Record<string, number>;
   };
+  supervisorPin?: string;
+  supervisorPinUpdatedAt?: number;
 }
 
 export interface SyncResult {

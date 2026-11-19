@@ -104,6 +104,14 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
   const participants = decodeKeyedDict<CloudParticipant>(obj.participants);
   const liveScanners = decodeKeyedDict<LiveScannerState>(obj.liveScanners);
   const idealLevels = decodeKeyedDict<number>(obj.idealLevels);
+  const supervisorPin =
+    typeof obj.supervisorPin === 'string' && /^\d{4}$/.test(obj.supervisorPin.trim())
+      ? obj.supervisorPin.trim()
+      : undefined;
+  const supervisorPinUpdatedAt =
+    typeof obj.supervisorPinUpdatedAt === 'number' && Number.isFinite(obj.supervisorPinUpdatedAt)
+      ? obj.supervisorPinUpdatedAt
+      : undefined;
 
   let tombstones: CloudRoomState['tombstones'] = undefined;
   if (obj.tombstones && typeof obj.tombstones === 'object' && !Array.isArray(obj.tombstones)) {
@@ -128,6 +136,8 @@ export function coerceRemoteRoomState(data: unknown, fallbackRoomCode: string): 
     movements,
     idealLevels,
     tombstones,
+    ...(supervisorPin ? { supervisorPin } : {}),
+    ...(supervisorPinUpdatedAt ? { supervisorPinUpdatedAt } : {}),
   };
 }
 
@@ -178,6 +188,14 @@ export function serializeRoomForRemote(endpointUrl: string, state: CloudRoomStat
           products: encodeKeyedDict(state.tombstones.products),
         }
       : {},
+    ...(state.supervisorPin && /^\d{4}$/.test(state.supervisorPin)
+      ? {
+          supervisorPin: state.supervisorPin,
+          ...(typeof state.supervisorPinUpdatedAt === 'number'
+            ? { supervisorPinUpdatedAt: state.supervisorPinUpdatedAt }
+            : {}),
+        }
+      : {}),
   };
 }
 
@@ -292,6 +310,13 @@ export async function patchRemoteRoomDelta(
       const cleanSku = sku.trim().toUpperCase();
       if (!cleanSku) continue;
       patchPayload[`idealLevels/${encodeFirebaseKey(cleanSku)}`] = qty;
+    }
+  }
+
+  if (delta.supervisorPin && /^\d{4}$/.test(delta.supervisorPin)) {
+    patchPayload['supervisorPin'] = delta.supervisorPin;
+    if (typeof delta.supervisorPinUpdatedAt === 'number') {
+      patchPayload['supervisorPinUpdatedAt'] = delta.supervisorPinUpdatedAt;
     }
   }
 

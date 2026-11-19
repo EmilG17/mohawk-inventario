@@ -1,6 +1,8 @@
 import { getActiveSession, getSession, setActiveSession } from '../db/db';
 import { L } from '../i18n/i18n';
 import { loadSettings, saveSettings, settingsSync } from '../settings';
+import { fetchRemoteRoom } from '../sync/firebaseTransport';
+import { getCachedRoomState } from '../sync/roomMirror';
 import { isMobileViewport, isSupervisorModeEnabled } from './catalogMode';
 import { h, icon, openDialog, toast } from './dom';
 
@@ -27,10 +29,23 @@ export function isValidSupervisorPin(pin: string): boolean {
 }
 
 /**
- * Obtiene el PIN configurado de supervisor (por defecto: '1234').
+ * Obtiene el PIN configurado de supervisor (por defecto: '1234'), priorizando el PIN más reciente
+ * sincronizado en la sala compartida si existe.
  */
 export function getSupervisorPin(): string {
-  return (settingsSync().supervisorPin || '1234').trim();
+  const s = settingsSync();
+  const localPin = (s.supervisorPin || '1234').trim();
+  const localPinTs = s.supervisorPinUpdatedAt || 0;
+  if (s.syncRoomCode) {
+    const room = getCachedRoomState(s.syncRoomCode);
+    if (room?.supervisorPin && /^\d{4}$/.test(room.supervisorPin.trim())) {
+      const roomPinTs = room.supervisorPinUpdatedAt || 0;
+      if (roomPinTs >= localPinTs) {
+        return room.supervisorPin.trim();
+      }
+    }
+  }
+  return localPin;
 }
 
 /**
@@ -51,7 +66,23 @@ function dispatchAuthEvents(role: 'supervisor' | 'technician'): void {
  * Muestra el diálogo moderno con teclado numérico para autenticar al Supervisor en dispositivos móviles.
  */
 export function promptSupervisorPin(): Promise<boolean> {
-  void loadSettings();
+  void loadSettings().then(async (s) => {
+    if (s.syncRoomCode && s.syncEndpointUrl) {
+      try {
+        const remote = await fetchRemoteRoom(s.syncEndpointUrl, s.syncRoomCode);
+        if (remote?.supervisorPin && /^\d{4}$/.test(remote.supervisorPin)) {
+          const remoteTs = remote.supervisorPinUpdatedAt || 0;
+          const localTs = s.supervisorPinUpdatedAt || 0;
+          if (remote.supervisorPin !== s.supervisorPin && remoteTs >= localTs) {
+            await saveSettings({
+              supervisorPin: remote.supervisorPin,
+              supervisorPinUpdatedAt: remoteTs || Date.now(),
+            });
+          }
+        }
+      } catch {}
+    }
+  });
   return new Promise((resolve) => {
     let currentInput = '';
     let resolved = false;

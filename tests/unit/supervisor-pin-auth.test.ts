@@ -8,6 +8,7 @@ import {
   verifySupervisorPin,
 } from '../../src/ui/supervisorAuth';
 import { isSupervisorModeEnabled, isTechnicianRole } from '../../src/ui/catalogMode';
+import { applyIncomingRoomStateToLocal, mergeRoomStates } from '../../src/sync/cloudSync';
 import 'fake-indexeddb/auto';
 
 describe('Supervisor PIN Authentication and Session Separation Suite', () => {
@@ -106,5 +107,36 @@ describe('Supervisor PIN Authentication and Session Separation Suite', () => {
     } finally {
       (globalThis as any).window = prevWin;
     }
+  });
+
+  it('sincroniza el PIN de supervisor entre los usuarios conectados a la misma sala (LWW)', async () => {
+    await saveSettings({
+      syncEnabled: true,
+      syncRoomCode: 'MHK-PIN-SYNC',
+      supervisorPin: '1234',
+      supervisorPinUpdatedAt: 1000,
+    });
+    expect(getSupervisorPin()).toBe('1234');
+
+    const incomingRoom = mergeRoomStates(null, {
+      roomCode: 'MHK-PIN-SYNC',
+      sessionName: 'Sesión Compartida',
+      counts: [],
+      products: [],
+      supervisorPin: '7890',
+      supervisorPinUpdatedAt: 5000,
+    });
+
+    expect(incomingRoom.supervisorPin).toBe('7890');
+    expect(incomingRoom.supervisorPinUpdatedAt).toBe(5000);
+
+    await applyIncomingRoomStateToLocal(incomingRoom, 'remote');
+
+    const updated = await loadSettings();
+    expect(updated.supervisorPin).toBe('7890');
+    expect(updated.supervisorPinUpdatedAt).toBe(5000);
+    expect(getSupervisorPin()).toBe('7890');
+    expect(verifySupervisorPin('1234')).toBe(false);
+    expect(verifySupervisorPin('7890')).toBe(true);
   });
 });
